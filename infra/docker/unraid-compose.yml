@@ -17,6 +17,7 @@ services:
       - ConnectionStrings__DefaultConnection=Data Source=/app/data/mediacloud.db
 
       # Strongly recommended override in unRAID template
+      - DataProtection__KeysPath=/app/data/dpkeys
       # - Jwt__SigningKey=REPLACE_ME_WITH_LONG_RANDOM_KEY
 
       # Optional auth defaults

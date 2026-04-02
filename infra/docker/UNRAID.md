@@ -19,6 +19,7 @@ Use this if you want the same pattern as WeismanTracker:
 - `ApiBaseUrl=http://127.0.0.1:5299`
 - `ConnectionStrings__DefaultConnection=Data Source=/app/data/mediacloud.db`
 - `Jwt__SigningKey=<set a long random value>`
+- `DataProtection__KeysPath=/app/data/dpkeys`
 
 > The app is SQLite-based and persists to `/app/data/mediacloud.db`.
 

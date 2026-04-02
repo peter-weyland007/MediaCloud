@@ -1,6 +1,8 @@
+using System.IO;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.AspNetCore.Components.Server.ProtectedBrowserStorage;
+using Microsoft.AspNetCore.DataProtection;
 using MudBlazor.Services;
 using web.Components;
 using web.Services.Auth;
@@ -11,6 +13,19 @@ builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
 
 builder.Services.AddMudServices();
+
+var configuredKeysPath = builder.Configuration["DataProtection:KeysPath"];
+var dataProtectionKeysPath = string.IsNullOrWhiteSpace(configuredKeysPath)
+    ? (builder.Environment.IsDevelopment()
+        ? Path.Combine(builder.Environment.ContentRootPath, "DataProtectionKeys")
+        : "/app/data/dpkeys")
+    : configuredKeysPath;
+
+Directory.CreateDirectory(dataProtectionKeysPath);
+builder.Services.AddDataProtection()
+    .SetApplicationName("MediaCloud.Web")
+    .PersistKeysToFileSystem(new DirectoryInfo(dataProtectionKeysPath));
+
 builder.Services
     .AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
     .AddCookie(options =>
