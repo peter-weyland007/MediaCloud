@@ -11,13 +11,77 @@
         <h1 style="margin:0;">Movies</h1>
         <p class="subtitle" style="margin:0.25rem 0 0;">Movie library view.</p>
     </div>
-    <button class="button-secondary" @onclick="ReprobeAllMoviesAsync" disabled="@_reprobingAllMovies">@(_reprobingAllMovies ? "Reprobing all movies..." : "Probe actual runtime for all movies")</button>
+    <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
+        <button class="button-secondary" @onclick="RefreshMoviesFromIntegrationsAsync" disabled="@_syncingMovies">@(_syncingMovies ? "Refreshing movies..." : "Refresh movies from integrations")</button>
+        <button class="button-secondary" @onclick="ReprobeAllMoviesAsync" disabled="@_reprobingAllMovies">@(_reprobingAllMovies ? "Reprobing all movies..." : "Probe actual runtime for all movies")</button>
+    </div>
 </div>
 
-<MediaLibraryTable FixedMediaType="Movie" />
+<MediaLibraryTable FixedMediaType="Movie" RefreshVersion="@_refreshVersion" />
 
 @code {
     private bool _reprobingAllMovies;
+    private bool _syncingMovies;
+    private int _refreshVersion;
+
+    private async Task RefreshMoviesFromIntegrationsAsync()
+    {
+        _syncingMovies = true;
+        try
+        {
+            using var listRequest = new HttpRequestMessage(HttpMethod.Get, "/api/integrations");
+            await AttachBearerAsync(listRequest);
+            using var listResponse = await Http.SendAsync(listRequest);
+            if (!listResponse.IsSuccessStatusCode)
+            {
+                Snackbar.Add($"Failed to load integrations ({(int)listResponse.StatusCode}).", Severity.Error);
+                return;
+            }
+
+            var integrations = await listResponse.Content.ReadFromJsonAsync<List<IntegrationInstanceResponse>>() ?? [];
+            var movieIntegrations = integrations
+                .Where(x => x.Enabled && string.Equals(x.ServiceKey, "Radarr", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            if (movieIntegrations.Count == 0)
+            {
+                Snackbar.Add("No enabled Radarr integrations found.", Severity.Warning);
+                return;
+            }
+
+            var synced = 0;
+            var failed = 0;
+
+            foreach (var integration in movieIntegrations)
+            {
+                using var syncRequest = new HttpRequestMessage(HttpMethod.Post, $"/api/integrations/{integration.Id}/sync")
+                {
+                    Content = JsonContent.Create(new TriggerIntegrationSyncRequest(false))
+                };
+                await AttachBearerAsync(syncRequest);
+                using var syncResponse = await Http.SendAsync(syncRequest);
+                if (syncResponse.IsSuccessStatusCode)
+                {
+                    synced++;
+                }
+                else
+                {
+                    failed++;
+                }
+            }
+
+            _refreshVersion++;
+            Snackbar.Add($"Movie refresh complete. Synced {synced}, failed {failed}.", failed == 0 ? Severity.Success : Severity.Warning);
+        }
+        catch
+        {
+            Snackbar.Add("Movie refresh failed.", Severity.Error);
+        }
+        finally
+        {
+            _syncingMovies = false;
+        }
+    }
 
     private async Task ReprobeAllMoviesAsync()
     {
@@ -44,6 +108,7 @@
             }
 
             Snackbar.Add($"Bulk probe done: updated {payload.Updated}/{payload.Inspected}, missing files {payload.MissingFiles}, probe failures {payload.Failed}.", Severity.Success);
+            _refreshVersion++;
         }
         catch
         {
@@ -66,4 +131,6 @@
 
     private sealed record BatchRuntimeReprobeRequest(string? MediaType, int Take = 200, bool ForceAll = false);
     private sealed record BatchRuntimeReprobeResponse(int Inspected, int Attempted, int Updated, int MissingFiles, int Failed);
+    private sealed record TriggerIntegrationSyncRequest(bool ForceFullResync = false);
+    private sealed record IntegrationInstanceResponse(long Id, string ServiceKey, string InstanceName, string BaseUrl, string AuthType, bool Enabled);
 }

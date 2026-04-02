@@ -161,6 +161,7 @@
     [Parameter] public string? FixedMediaType { get; set; }
     [Parameter] public string[]? MediaTypeOptions { get; set; }
     [Parameter] public string InitialMediaType { get; set; } = "All";
+    [Parameter] public int RefreshVersion { get; set; }
 
     private readonly List<LibraryItemDto> _items = [];
     private readonly int[] _pageSizeOptions = [50, 100, 250];
@@ -201,7 +202,7 @@
                 : "All";
         }
 
-        var key = $"{FixedMediaType}|{InitialMediaType}|{string.Join(',', EffectiveMediaTypeOptions)}";
+        var key = $"{FixedMediaType}|{InitialMediaType}|{string.Join(',', EffectiveMediaTypeOptions)}|{RefreshVersion}";
         if (!_loadedOnce || !string.Equals(_currentParamKey, key, StringComparison.Ordinal))
         {
             _currentParamKey = key;
