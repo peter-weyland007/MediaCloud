@@ -1,0 +1,339 @@
+@page "/media/movies/{Id:long}"
+@attribute [Authorize]
+@inject HttpClient Http
+@inject AuthTokenStore TokenStore
+@inject ISnackbar Snackbar
+
+<PageTitle>Movie Details</PageTitle>
+
+@if (_loading)
+{
+    <p class="card-note">Loading movie details…</p>
+}
+else if (_item is null)
+{
+    <h1>Movie not found</h1>
+    <a href="/media/movies" style="color:#93c5fd; text-decoration:none;">← Back to Movies</a>
+}
+else
+{
+    <a href="/media/movies" style="color:#93c5fd; text-decoration:none;">← Back to Movies</a>
+    <h1 style="margin-top:0.5rem;">@_item.Title</h1>
+    <p class="subtitle">@_item.Year · @_item.MediaType</p>
+
+    <div class="card" style="display:grid; grid-template-columns: repeat(3, minmax(180px, 1fr)); gap:1rem; margin-bottom:1rem;">
+        <div>
+            <p class="card-label">REPORTED RUNTIME</p>
+            <p>@FormatRuntime(_item.RuntimeMinutes)</p>
+        </div>
+        <div>
+            <p class="card-label">ACTUAL RUNTIME (FFPROBE)</p>
+            <p>@FormatRuntime(_item.ActualRuntimeMinutes)</p>
+            <button class="button-secondary" style="margin-top:0.4rem;" @onclick="ProbeRuntimeNowAsync" disabled="@_probingRuntime">@(_probingRuntime ? "Probing..." : "Probe actual runtime now")</button>
+        </div>
+        <div>
+            <p class="card-label">RUNTIME MATCH</p>
+            <div style="margin-top:0.15rem;">
+                <span style="@GetRuntimeMatchBadgeStyle()">@GetRuntimeMatchLabel()</span>
+            </div>
+            <p class="card-note" style="margin-top:0.45rem;">@GetRuntimeMatchDetail()</p>
+        </div>
+    </div>
+
+    <div class="card" style="margin-bottom:1rem;">
+        <p class="card-label">IDENTIFIERS</p>
+        <p>TMDB: @_item.TmdbId</p>
+        <p>IMDB: @_item.ImdbId</p>
+        <p>Available: @(_item.IsAvailable ? "Yes" : "No")</p>
+        <p>File Path: @(string.IsNullOrWhiteSpace(_item.PrimaryFilePath) ? "Not available" : _item.PrimaryFilePath)</p>
+    </div>
+
+    <div class="card">
+        <p class="card-label">SOURCE LINKS</p>
+        @if (_sources.Count == 0)
+        {
+            <p class="card-note">No source links found.</p>
+        }
+        else
+        {
+            <ul>
+                @foreach (var source in _sources)
+                {
+                    <li>@source.ServiceKey / @source.InstanceName / ExternalId: @source.ExternalId</li>
+                }
+            </ul>
+        }
+    </div>
+}
+
+@code {
+    [Parameter] public long Id { get; set; }
+
+    private bool _loading = true;
+    private bool _probingRuntime;
+    private LibraryItemDto? _item;
+    private LibraryIssueDto? _runtimeMismatchIssue;
+    private RuntimeMismatchDetails? _runtimeMismatch;
+    private readonly List<LibraryItemSourceLinkDto> _sources = [];
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _loading = true;
+        try
+        {
+            using var itemRequest = new HttpRequestMessage(HttpMethod.Get, $"/api/library/items/{Id}");
+            await AttachBearerAsync(itemRequest);
+            using var itemResponse = await Http.SendAsync(itemRequest);
+            if (!itemResponse.IsSuccessStatusCode)
+            {
+                _item = null;
+                return;
+            }
+
+            _item = await itemResponse.Content.ReadFromJsonAsync<LibraryItemDto>();
+
+            using var sourceRequest = new HttpRequestMessage(HttpMethod.Get, $"/api/library/items/{Id}/sources");
+            await AttachBearerAsync(sourceRequest);
+            using var sourceResponse = await Http.SendAsync(sourceRequest);
+            _sources.Clear();
+            if (sourceResponse.IsSuccessStatusCode)
+            {
+                var payload = await sourceResponse.Content.ReadFromJsonAsync<List<LibraryItemSourceLinkDto>>() ?? [];
+                _sources.AddRange(payload);
+            }
+
+            await LoadRuntimeMismatchAsync();
+        }
+        catch
+        {
+            Snackbar.Add("Failed to load movie details.", Severity.Error);
+            _item = null;
+            _sources.Clear();
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task ProbeRuntimeNowAsync()
+    {
+        if (_item is null) return;
+
+        _probingRuntime = true;
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, $"/api/library/items/{_item.Id}/reprobe-runtime");
+            await AttachBearerAsync(request);
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add($"Runtime probe failed ({(int)response.StatusCode}). Admin access may be required.", Severity.Error);
+                return;
+            }
+
+            var payload = await response.Content.ReadFromJsonAsync<LibraryItemRuntimeProbeResponse>();
+            if (payload is null)
+            {
+                Snackbar.Add("Runtime probe returned no payload.", Severity.Warning);
+                return;
+            }
+
+            _item = _item with { ActualRuntimeMinutes = payload.ActualRuntimeMinutes, PrimaryFilePath = payload.PrimaryFilePath };
+            var toast = payload.Message;
+            if (!payload.Success && !string.IsNullOrWhiteSpace(payload.ProbeError))
+            {
+                var shortError = payload.ProbeError.Length > 140 ? payload.ProbeError[..140] + "..." : payload.ProbeError;
+                toast = $"{payload.Message} ({shortError})";
+            }
+
+            Snackbar.Add(toast, payload.Success ? Severity.Success : Severity.Warning);
+            await LoadRuntimeMismatchAsync();
+        }
+        catch
+        {
+            Snackbar.Add("Runtime probe failed.", Severity.Error);
+        }
+        finally
+        {
+            _probingRuntime = false;
+        }
+    }
+
+    private async Task LoadRuntimeMismatchAsync()
+    {
+        _runtimeMismatchIssue = null;
+        _runtimeMismatch = null;
+
+        if (_item is null)
+        {
+            return;
+        }
+
+        using var issueRequest = new HttpRequestMessage(HttpMethod.Get, $"/api/library/items/{_item.Id}/issues?issueType=runtime_mismatch&take=1");
+        await AttachBearerAsync(issueRequest);
+        using var issueResponse = await Http.SendAsync(issueRequest);
+        if (!issueResponse.IsSuccessStatusCode)
+        {
+            return;
+        }
+
+        var payload = await issueResponse.Content.ReadFromJsonAsync<List<LibraryIssueDto>>() ?? [];
+        _runtimeMismatchIssue = payload.FirstOrDefault();
+        _runtimeMismatch = ParseRuntimeMismatchDetails(_runtimeMismatchIssue?.DetailsJson);
+    }
+
+    private string GetRuntimeMatchLabel()
+    {
+        if (_item is null || !_item.RuntimeMinutes.HasValue || !_item.ActualRuntimeMinutes.HasValue)
+        {
+            return "Unknown";
+        }
+
+        if (_runtimeMismatchIssue is not null && string.Equals(_runtimeMismatchIssue.Status, "Open", StringComparison.OrdinalIgnoreCase))
+        {
+            return $"Mismatch ({_runtimeMismatchIssue.Severity})";
+        }
+
+        return "Match";
+    }
+
+    private string GetRuntimeMatchBadgeStyle()
+    {
+        const string baseStyle = "display:inline-block; padding:0.22rem 0.55rem; border-radius:999px; font-size:0.8rem; font-weight:700; letter-spacing:0.01em;";
+
+        if (_item is null || !_item.RuntimeMinutes.HasValue || !_item.ActualRuntimeMinutes.HasValue)
+        {
+            return baseStyle + "background:rgba(148,163,184,0.18); color:#cbd5e1; border:1px solid rgba(148,163,184,0.35);";
+        }
+
+        if (_runtimeMismatchIssue is null || !string.Equals(_runtimeMismatchIssue.Status, "Open", StringComparison.OrdinalIgnoreCase))
+        {
+            return baseStyle + "background:rgba(16,185,129,0.18); color:#6ee7b7; border:1px solid rgba(16,185,129,0.45);";
+        }
+
+        var severity = (_runtimeMismatchIssue.Severity ?? string.Empty).Trim().ToLowerInvariant();
+        return severity switch
+        {
+            "critical" => baseStyle + "background:rgba(239,68,68,0.22); color:#fecaca; border:1px solid rgba(239,68,68,0.65);",
+            "high" => baseStyle + "background:rgba(249,115,22,0.22); color:#fed7aa; border:1px solid rgba(249,115,22,0.65);",
+            _ => baseStyle + "background:rgba(234,179,8,0.22); color:#fde68a; border:1px solid rgba(234,179,8,0.65);"
+        };
+    }
+
+    private string GetRuntimeMatchDetail()
+    {
+        if (_item is null || !_item.RuntimeMinutes.HasValue || !_item.ActualRuntimeMinutes.HasValue)
+        {
+            return "Probe actual runtime to compare against reported runtime.";
+        }
+
+        if (_runtimeMismatch is not null)
+        {
+            var thresholdText = _runtimeMismatch.ThresholdMinutes > 0
+                ? $" · threshold {_runtimeMismatch.ThresholdMinutes:0.##}m"
+                : string.Empty;
+            return $"Δ {_runtimeMismatch.DiffMinutes:0.##}m ({_runtimeMismatch.DiffPercent:0.##} %){thresholdText}";
+        }
+
+        var diffMinutes = Math.Abs(_item.ActualRuntimeMinutes.Value - _item.RuntimeMinutes.Value);
+        var diffPercent = (_item.RuntimeMinutes.Value <= 0)
+            ? 0
+            : (diffMinutes / _item.RuntimeMinutes.Value) * 100d;
+        return $"Δ {diffMinutes:0.##}m ({diffPercent:0.##} %)";
+    }
+
+    private static RuntimeMismatchDetails? ParseRuntimeMismatchDetails(string? detailsJson)
+    {
+        if (string.IsNullOrWhiteSpace(detailsJson)) return null;
+
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(detailsJson);
+            var root = doc.RootElement;
+            var diffMinutes = root.TryGetProperty("diffMinutes", out var diffMinutesElement) ? diffMinutesElement.GetDouble() : 0;
+            var diffPercent = root.TryGetProperty("diffPercent", out var diffPercentElement) ? diffPercentElement.GetDouble() : 0;
+            var thresholdMinutes = root.TryGetProperty("thresholdMinutes", out var thresholdElement) ? thresholdElement.GetDouble() : 0;
+            return new RuntimeMismatchDetails(diffMinutes, diffPercent, thresholdMinutes);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private async Task AttachBearerAsync(HttpRequestMessage request)
+    {
+        var token = await TokenStore.GetTokenAsync();
+        if (!string.IsNullOrWhiteSpace(token))
+        {
+            request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+        }
+    }
+
+    private static string FormatRuntime(double? runtimeMinutes)
+        => runtimeMinutes.HasValue && runtimeMinutes.Value > 0 ? $"{runtimeMinutes.Value:0.##} min" : "—";
+
+    private record LibraryItemDto(
+        long Id,
+        string CanonicalKey,
+        string MediaType,
+        string Title,
+        string SortTitle,
+        int? Year,
+        int? TmdbId,
+        int? TvdbId,
+        string ImdbId,
+        string PlexRatingKey,
+        double? RuntimeMinutes,
+        double? ActualRuntimeMinutes,
+        IReadOnlyList<string> AudioLanguages,
+        IReadOnlyList<string> SubtitleLanguages,
+        bool IsAvailable,
+        string QualityProfile,
+        DateTimeOffset? SourceUpdatedAtUtc,
+        DateTimeOffset UpdatedAtUtc,
+        string PrimaryFilePath);
+
+    private record LibraryItemSourceLinkDto(
+        long Id,
+        long LibraryItemId,
+        long IntegrationId,
+        string ServiceKey,
+        string InstanceName,
+        string ExternalId,
+        string ExternalType,
+        DateTimeOffset? ExternalUpdatedAtUtc,
+        DateTimeOffset LastSeenAtUtc,
+        bool IsDeletedAtSource);
+
+    private record LibraryItemRuntimeProbeResponse(
+        long Id,
+        string MediaType,
+        string Title,
+        string PrimaryFilePath,
+        bool FileExists,
+        bool Success,
+        double? ActualRuntimeMinutes,
+        string Message,
+        int? ProbeExitCode,
+        string ProbeError);
+
+    private record LibraryIssueDto(
+        long Id,
+        long LibraryItemId,
+        string IssueType,
+        string Severity,
+        string Status,
+        string Summary,
+        string SuggestedAction,
+        string DetailsJson,
+        DateTimeOffset FirstDetectedAtUtc,
+        DateTimeOffset LastDetectedAtUtc,
+        DateTimeOffset? ResolvedAtUtc);
+
+    private record RuntimeMismatchDetails(
+        double DiffMinutes,
+        double DiffPercent,
+        double ThresholdMinutes);
+}

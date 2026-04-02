@@ -1,0 +1,27 @@
+@page "/media"
+@attribute [Authorize]
+
+<PageTitle>Media</PageTitle>
+
+<h1>Media</h1>
+<p class="subtitle">Choose a media domain to browse normalized library data.</p>
+
+<div style="display:grid; grid-template-columns:repeat(3,minmax(220px,1fr)); gap:1rem;">
+    <a class="card" href="/media/movies" style="text-decoration:none; color:inherit;">
+        <p class="card-label">MEDIA DOMAIN</p>
+        <h2 style="margin:0 0 0.35rem;">Movies</h2>
+        <p class="card-note">Browse movie library items synced from integrations.</p>
+    </a>
+
+    <a class="card" href="/media/tv-shows" style="text-decoration:none; color:inherit;">
+        <p class="card-label">MEDIA DOMAIN</p>
+        <h2 style="margin:0 0 0.35rem;">TV Shows</h2>
+        <p class="card-note">Browse series and episode-level items.</p>
+    </a>
+
+    <a class="card" href="/media/music" style="text-decoration:none; color:inherit;">
+        <p class="card-label">MEDIA DOMAIN</p>
+        <h2 style="margin:0 0 0.35rem;">Music</h2>
+        <p class="card-note">Browse track and album items.</p>
+    </a>
+</div>

@@ -1,0 +1,148 @@
+@page "/register"
+@attribute [AllowAnonymous]
+@inject ApiAuthClient AuthClient
+@inject HttpClient Http
+@inject AuthenticationStateProvider AuthStateProvider
+@inject NavigationManager NavigationManager
+
+<PageTitle>Register</PageTitle>
+
+<section class="auth-shell">
+    <h1>Create account</h1>
+    <p class="subtitle">Self-registration creates a Viewer account. Admin can change roles in Settings.</p>
+
+    @if (!_loadingSignupStatus)
+    {
+        <span class="status-badge @(_allowSelfRegistration ? "status-open" : "status-locked")">
+            @(_allowSelfRegistration ? "Open signup" : "Invite-only")
+        </span>
+    }
+
+    <EditForm Model="_model" FormName="register-form" OnValidSubmit="HandleRegisterAsync">
+        <DataAnnotationsValidator />
+
+        <div class="form-group">
+            <label for="reg-username">Username</label>
+            <InputText id="reg-username" class="input" @bind-Value="_model.Username" />
+            <ValidationMessage For="() => _model.Username" />
+        </div>
+
+        <div class="form-group">
+            <label for="reg-password">Password</label>
+            <InputText id="reg-password" class="input" type="password" @bind-Value="_model.Password" />
+            <ValidationMessage For="() => _model.Password" />
+        </div>
+
+        <div class="form-group">
+            <label for="reg-confirm">Confirm password</label>
+            <InputText id="reg-confirm" class="input" type="password" @bind-Value="_model.ConfirmPassword" />
+            <ValidationMessage For="() => _model.ConfirmPassword" />
+        </div>
+
+        <button class="button-primary" disabled="@(_isSubmitting || !_allowSelfRegistration)">@(_isSubmitting ? "Creating..." : "Create account")</button>
+    </EditForm>
+
+    @if (!_allowSelfRegistration && !_loadingSignupStatus)
+    {
+        <p class="subtitle">Self-registration is currently closed. Ask an admin to create your account.</p>
+    }
+
+    @if (!string.IsNullOrWhiteSpace(_errorMessage))
+    {
+        <p class="error-text">@_errorMessage</p>
+    }
+
+    <p class="subtitle">Already have an account? <a href="/login">Sign in</a></p>
+</section>
+
+@code {
+    private readonly RegisterModel _model = new();
+    private string? _errorMessage;
+    private bool _isSubmitting;
+    private bool _loadingSignupStatus = true;
+    private bool _allowSelfRegistration;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadSignupStatusAsync();
+
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        if (authState.User.Identity?.IsAuthenticated == true)
+        {
+            NavigationManager.NavigateTo("/");
+        }
+    }
+
+    private async Task LoadSignupStatusAsync()
+    {
+        _loadingSignupStatus = true;
+        try
+        {
+            var response = await Http.GetFromJsonAsync<AuthSettingsResponse>("/api/public/auth-status");
+            _allowSelfRegistration = response?.AllowSelfRegistration ?? false;
+        }
+        catch
+        {
+            _allowSelfRegistration = false;
+        }
+        finally
+        {
+            _loadingSignupStatus = false;
+        }
+    }
+
+    private async Task HandleRegisterAsync()
+    {
+        _isSubmitting = true;
+        _errorMessage = null;
+
+        try
+        {
+            if (!_allowSelfRegistration)
+            {
+                _errorMessage = "Self-registration is currently disabled. Ask an admin to create your account.";
+                return;
+            }
+
+            if (!string.Equals(_model.Password, _model.ConfirmPassword, StringComparison.Ordinal))
+            {
+                _errorMessage = "Passwords do not match.";
+                return;
+            }
+
+            var (success, error) = await AuthClient.RegisterAsync(_model.Username, _model.Password);
+            if (!success)
+            {
+                _errorMessage = error ?? "Registration failed.";
+                return;
+            }
+
+            var username = Uri.EscapeDataString(_model.Username);
+            NavigationManager.NavigateTo($"/login?registered=1&username={username}");
+        }
+        finally
+        {
+            _isSubmitting = false;
+        }
+    }
+
+    private class AuthSettingsResponse
+    {
+        public bool AllowSelfRegistration { get; set; }
+    }
+
+    private class RegisterModel
+    {
+        [System.ComponentModel.DataAnnotations.Required]
+        [System.ComponentModel.DataAnnotations.MinLength(3)]
+        [System.ComponentModel.DataAnnotations.MaxLength(64)]
+        public string Username { get; set; } = string.Empty;
+
+        [System.ComponentModel.DataAnnotations.Required]
+        [System.ComponentModel.DataAnnotations.MinLength(8)]
+        public string Password { get; set; } = string.Empty;
+
+        [System.ComponentModel.DataAnnotations.Required]
+        public string ConfirmPassword { get; set; } = string.Empty;
+    }
+}

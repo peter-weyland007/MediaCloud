@@ -1,0 +1,26 @@
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject NavigationManager NavigationManager
+
+@if (_isAuthenticated)
+{
+    <h1>Access denied</h1>
+    <p class="subtitle">Your account is authenticated but does not have permission to view this page.</p>
+}
+else
+{
+    <h1>Authentication required</h1>
+    <p class="subtitle">Please sign in to continue.</p>
+    <button class="button-primary" @onclick="GoToLogin">Go to login</button>
+}
+
+@code {
+    private bool _isAuthenticated;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        _isAuthenticated = state.User.Identity?.IsAuthenticated == true;
+    }
+
+    private void GoToLogin() => NavigationManager.NavigateTo("/login");
+}

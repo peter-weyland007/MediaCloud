@@ -1,0 +1,13 @@
+@page "/media/tv-shows"
+@attribute [Authorize]
+
+<PageTitle>TV Shows</PageTitle>
+
+<h1>TV Shows</h1>
+<p class="subtitle">Series and episode library view.</p>
+
+<MediaLibraryTable MediaTypeOptions="@_tvTypeOptions" InitialMediaType="Series" />
+
+@code {
+    private readonly string[] _tvTypeOptions = ["All", "Series", "Episode"];
+}

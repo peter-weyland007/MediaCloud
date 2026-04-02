@@ -1,0 +1,13 @@
+.git
+.gitignore
+.vs
+.vscode
+.idea
+**/bin
+**/obj
+node_modules
+test-results
+playwright-report
+apps/api/Data/*.db
+apps/api/Data/*.db-wal
+apps/api/Data/*.db-shm

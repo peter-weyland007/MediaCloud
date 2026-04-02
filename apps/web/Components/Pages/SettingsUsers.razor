@@ -1,0 +1,522 @@
+@page "/settings/users"
+@attribute [Authorize(Roles = "Admin")]
+@inject HttpClient Http
+@inject AuthTokenStore TokenStore
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject AuthenticationStateProvider AuthStateProvider
+@using System.Security.Claims
+@using web.Components.Dialogs
+
+<PageTitle>User Settings</PageTitle>
+
+<p class="subtitle"><a href="/settings">Settings</a> / Users &amp; Auth</p>
+<h1>Users & Auth</h1>
+<p class="subtitle">Manage accounts, access policy, and audit history.</p>
+
+<div class="card" style="margin-bottom: 1rem;">
+    <p class="card-label">AUTH SETTINGS</p>
+
+    @if (_loadingAuthSettings)
+    {
+        <p class="card-note">Loading auth settings…</p>
+    }
+    else
+    {
+        <div style="display:flex; align-items:center; gap:0.6rem; margin-bottom:0.35rem;">
+            <InputCheckbox id="allow-self-registration" @bind-Value="_allowSelfRegistration" />
+            <label for="allow-self-registration" style="margin:0;">Open signup (allow self-registration)</label>
+        </div>
+        <p class="subtitle" style="margin-bottom:0.85rem;">When off, only admins can create accounts.</p>
+
+        <button class="button-primary" disabled="@_savingAuthSettings" @onclick="SaveAuthSettingsAsync">
+            @(_savingAuthSettings ? "Saving..." : "Save auth settings")
+        </button>
+    }
+</div>
+
+<div class="card" style="margin-bottom: 1rem;">
+    <p class="card-label">@(_editingUserId is null ? "CREATE USER" : "EDIT USER")</p>
+
+    <EditForm Model="_form" FormName="user-form" OnValidSubmit="SaveUserFormAsync">
+        <DataAnnotationsValidator />
+
+        <div class="form-group">
+            <label for="user-form-username">Username</label>
+            <InputText id="user-form-username" class="input" @bind-Value="_form.Username" />
+            <ValidationMessage For="() => _form.Username" />
+        </div>
+
+        <div class="form-group">
+            <label for="user-form-role">Role</label>
+            <InputSelect id="user-form-role" class="input" @bind-Value="_form.Role">
+                <option value="Viewer">Viewer</option>
+                <option value="User">User</option>
+                <option value="Admin">Admin</option>
+            </InputSelect>
+            <ValidationMessage For="() => _form.Role" />
+        </div>
+
+        <div class="form-group">
+            <label for="user-form-password">@(_editingUserId is null ? "Password" : "New Password (optional)")</label>
+            <InputText id="user-form-password" type="password" class="input" @bind-Value="_form.Password" />
+            @if (_editingUserId is not null)
+            {
+                <small class="subtitle" style="display:block; margin-top:0.35rem;">Leave blank to keep current password.</small>
+            }
+        </div>
+
+        <div style="display:flex; gap:0.5rem;">
+            <button class="button-primary" disabled="@_saving">@(_saving ? "Saving..." : (_editingUserId is null ? "Create user" : "Save changes"))</button>
+            @if (_editingUserId is not null)
+            {
+                <button class="button-primary" type="button" style="background:#334155; border-color:#334155;" @onclick="ResetFormToCreate">Cancel edit</button>
+            }
+        </div>
+    </EditForm>
+</div>
+
+<div class="card" style="margin-bottom: 1rem;">
+    <p class="card-label">USERS</p>
+
+    @if (_loading)
+    {
+        <p class="card-note">Loading users…</p>
+    }
+    else if (_users.Count == 0)
+    {
+        <p class="card-note">No users found.</p>
+    }
+    else
+    {
+        <table style="width:100%; border-collapse: collapse;">
+            <thead>
+                <tr style="text-align:left; border-bottom:1px solid #1e293b;">
+                    <th style="padding:0.4rem 0;">Username</th>
+                    <th style="padding:0.4rem 0;">Role</th>
+                    <th style="padding:0.4rem 0;">Created</th>
+                    <th style="padding:0.4rem 0;">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var user in _users)
+                {
+                    var isSelf = _currentUserId is not null && user.Id == _currentUserId.Value;
+                    <tr style="border-bottom:1px solid #0f172a;">
+                        <td style="padding:0.45rem 0;">@user.Username @(isSelf ? "(You)" : string.Empty)</td>
+                        <td style="padding:0.45rem 0;">@user.Role</td>
+                        <td style="padding:0.45rem 0;">@user.CreatedAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
+                        <td style="padding:0.45rem 0; display:flex; gap:0.45rem;">
+                            <button class="button-primary"
+                                    style="padding: 0.45rem 0.7rem; font-size: 0.85rem;"
+                                    disabled="@isSelf"
+                                    title="@(isSelf ? "You cannot edit your own admin account from this panel." : null)"
+                                    @onclick="() => LoadUserForEdit(user)">
+                                Edit
+                            </button>
+                            <button class="button-danger"
+                                    disabled="@(isSelf || _deletingUserId == user.Id)"
+                                    title="@(isSelf ? "You cannot delete your own account." : null)"
+                                    @onclick="() => DeleteUserAsync(user)">
+                                @(_deletingUserId == user.Id ? "Deleting..." : "Delete")
+                            </button>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+</div>
+
+<div class="card">
+    <p class="card-label">USER AUDIT LOG</p>
+    @if (_loadingAudit)
+    {
+        <p class="card-note">Loading audit log…</p>
+    }
+    else if (_auditLogs.Count == 0)
+    {
+        <p class="card-note">No audit entries yet.</p>
+    }
+    else
+    {
+        <table style="width:100%; border-collapse: collapse;">
+            <thead>
+                <tr style="text-align:left; border-bottom:1px solid #1e293b;">
+                    <th style="padding:0.4rem 0;">When</th>
+                    <th style="padding:0.4rem 0;">Actor</th>
+                    <th style="padding:0.4rem 0;">Action</th>
+                    <th style="padding:0.4rem 0;">Target</th>
+                    <th style="padding:0.4rem 0;">Summary</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var entry in _auditLogs)
+                {
+                    <tr style="border-bottom:1px solid #0f172a; vertical-align: top;">
+                        <td style="padding:0.45rem 0; white-space: nowrap;">@entry.OccurredAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")</td>
+                        <td style="padding:0.45rem 0;">@entry.ActorUsername</td>
+                        <td style="padding:0.45rem 0;">@entry.Action</td>
+                        <td style="padding:0.45rem 0;">@entry.TargetUsername</td>
+                        <td style="padding:0.45rem 0;">@entry.Summary</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+</div>
+
+@code {
+    private readonly UserFormModel _form = new();
+    private readonly List<UserSummaryResponse> _users = [];
+    private readonly List<UserAuditLogResponse> _auditLogs = [];
+    private bool _loading = true;
+    private bool _loadingAudit = true;
+    private bool _loadingAuthSettings = true;
+    private bool _allowSelfRegistration;
+    private bool _savingAuthSettings;
+    private bool _saving;
+    private Guid? _currentUserId;
+    private Guid? _editingUserId;
+    private Guid? _deletingUserId;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadCurrentUserAsync();
+        await LoadAuthSettingsAsync();
+        await LoadUsersAsync();
+        await LoadAuditLogsAsync();
+    }
+
+    private async Task LoadCurrentUserAsync()
+    {
+        var state = await AuthStateProvider.GetAuthenticationStateAsync();
+        var principal = state.User;
+
+        var idRaw = principal.FindFirstValue(ClaimTypes.NameIdentifier) ?? principal.FindFirstValue("sub");
+        if (Guid.TryParse(idRaw, out var parsedId))
+        {
+            _currentUserId = parsedId;
+        }
+    }
+
+    private async Task LoadAuthSettingsAsync()
+    {
+        _loadingAuthSettings = true;
+
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, "/api/settings/auth");
+            await AttachBearerAsync(request);
+
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add($"Failed to load auth settings ({(int)response.StatusCode}).", Severity.Error);
+                return;
+            }
+
+            var settings = await response.Content.ReadFromJsonAsync<AuthSettingsResponse>();
+            _allowSelfRegistration = settings?.AllowSelfRegistration ?? false;
+        }
+        catch
+        {
+            Snackbar.Add("Failed to load auth settings.", Severity.Error);
+        }
+        finally
+        {
+            _loadingAuthSettings = false;
+        }
+    }
+
+    private async Task SaveAuthSettingsAsync()
+    {
+        _savingAuthSettings = true;
+
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Put, "/api/settings/auth")
+            {
+                Content = JsonContent.Create(new { AllowSelfRegistration = _allowSelfRegistration })
+            };
+            await AttachBearerAsync(request);
+
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add($"Failed to save auth settings ({(int)response.StatusCode}).", Severity.Error);
+                return;
+            }
+
+            Snackbar.Add("Auth settings saved.", Severity.Success);
+            await LoadAuditLogsAsync();
+        }
+        catch
+        {
+            Snackbar.Add("Failed to save auth settings.", Severity.Error);
+        }
+        finally
+        {
+            _savingAuthSettings = false;
+        }
+    }
+
+    private async Task LoadUsersAsync()
+    {
+        _loading = true;
+
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, "/api/users");
+            await AttachBearerAsync(request);
+
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add($"Failed to load users ({(int)response.StatusCode}).", Severity.Error);
+                return;
+            }
+
+            var users = await response.Content.ReadFromJsonAsync<List<UserSummaryResponse>>();
+            _users.Clear();
+            if (users is not null)
+            {
+                _users.AddRange(users);
+            }
+
+            if (_editingUserId is not null)
+            {
+                var editingUser = _users.FirstOrDefault(x => x.Id == _editingUserId.Value);
+                if (editingUser is null)
+                {
+                    ResetFormToCreate();
+                }
+                else
+                {
+                    _form.Username = editingUser.Username;
+                    _form.Role = editingUser.Role;
+                }
+            }
+        }
+        catch
+        {
+            Snackbar.Add("Failed to load users.", Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task LoadAuditLogsAsync()
+    {
+        _loadingAudit = true;
+
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, "/api/users/audit?take=50");
+            await AttachBearerAsync(request);
+
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add($"Failed to load audit log ({(int)response.StatusCode}).", Severity.Error);
+                return;
+            }
+
+            var logs = await response.Content.ReadFromJsonAsync<List<UserAuditLogResponse>>();
+            _auditLogs.Clear();
+            if (logs is not null)
+            {
+                _auditLogs.AddRange(logs);
+            }
+        }
+        catch
+        {
+            Snackbar.Add("Failed to load audit log.", Severity.Error);
+        }
+        finally
+        {
+            _loadingAudit = false;
+        }
+    }
+
+    private async Task SaveUserFormAsync()
+    {
+        _saving = true;
+
+        try
+        {
+            if (_editingUserId is null && string.IsNullOrWhiteSpace(_form.Password))
+            {
+                Snackbar.Add("Password is required when creating a user.", Severity.Error);
+                return;
+            }
+
+            if (_editingUserId is null)
+            {
+                using var createRequest = new HttpRequestMessage(HttpMethod.Post, "/api/users")
+                {
+                    Content = JsonContent.Create(new
+                    {
+                        _form.Username,
+                        Password = _form.Password,
+                        _form.Role
+                    })
+                };
+                await AttachBearerAsync(createRequest);
+
+                using var createResponse = await Http.SendAsync(createRequest);
+                if (!createResponse.IsSuccessStatusCode)
+                {
+                    Snackbar.Add($"Create failed ({(int)createResponse.StatusCode}).", Severity.Error);
+                    return;
+                }
+
+                var createdName = _form.Username;
+                ResetFormToCreate();
+                Snackbar.Add($"Created user '{createdName}'.", Severity.Success);
+                await LoadUsersAsync();
+                await LoadAuditLogsAsync();
+                return;
+            }
+
+            if (_currentUserId is not null && _editingUserId == _currentUserId)
+            {
+                Snackbar.Add("You cannot edit your own admin account from this panel.", Severity.Warning);
+                return;
+            }
+
+            using var updateRequest = new HttpRequestMessage(HttpMethod.Put, $"/api/users/{_editingUserId}")
+            {
+                Content = JsonContent.Create(new
+                {
+                    _form.Username,
+                    _form.Role,
+                    Password = string.IsNullOrWhiteSpace(_form.Password) ? null : _form.Password
+                })
+            };
+            await AttachBearerAsync(updateRequest);
+
+            using var updateResponse = await Http.SendAsync(updateRequest);
+            if (!updateResponse.IsSuccessStatusCode)
+            {
+                Snackbar.Add($"Update failed ({(int)updateResponse.StatusCode}).", Severity.Error);
+                return;
+            }
+
+            var editedName = _form.Username;
+            _form.Password = string.Empty;
+            Snackbar.Add($"Updated user '{editedName}'.", Severity.Success);
+            await LoadUsersAsync();
+            await LoadAuditLogsAsync();
+        }
+        catch
+        {
+            Snackbar.Add("User save request failed.", Severity.Error);
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private void LoadUserForEdit(UserSummaryResponse user)
+    {
+        if (_currentUserId is not null && user.Id == _currentUserId)
+        {
+            Snackbar.Add("You cannot edit your own admin account from this panel.", Severity.Warning);
+            return;
+        }
+
+        _editingUserId = user.Id;
+        _form.Username = user.Username;
+        _form.Role = user.Role;
+        _form.Password = string.Empty;
+    }
+
+    private void ResetFormToCreate()
+    {
+        _editingUserId = null;
+        _form.Username = string.Empty;
+        _form.Role = "Viewer";
+        _form.Password = string.Empty;
+    }
+
+    private async Task AttachBearerAsync(HttpRequestMessage request)
+    {
+        var token = await TokenStore.GetTokenAsync();
+        if (!string.IsNullOrWhiteSpace(token))
+        {
+            request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+        }
+    }
+
+    private async Task DeleteUserAsync(UserSummaryResponse user)
+    {
+        if (_currentUserId is not null && user.Id == _currentUserId)
+        {
+            Snackbar.Add("You cannot delete your own account.", Severity.Warning);
+            return;
+        }
+
+        var dialog = await DialogService.ShowAsync<ConfirmDeleteUserDialog>(
+            title: "Confirm delete",
+            parameters: new DialogParameters
+            {
+                ["Username"] = user.Username
+            },
+            options: new DialogOptions { CloseOnEscapeKey = true, MaxWidth = MaxWidth.Small, FullWidth = true });
+
+        var dialogResult = await dialog.Result;
+        if (dialogResult?.Canceled != false)
+        {
+            return;
+        }
+
+        _deletingUserId = user.Id;
+
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Delete, $"/api/users/{user.Id}");
+            await AttachBearerAsync(request);
+
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add($"Delete failed ({(int)response.StatusCode}).", Severity.Error);
+                return;
+            }
+
+            Snackbar.Add($"Deleted user '{user.Username}'.", Severity.Success);
+            await LoadUsersAsync();
+            await LoadAuditLogsAsync();
+        }
+        catch
+        {
+            Snackbar.Add("Delete request failed.", Severity.Error);
+        }
+        finally
+        {
+            _deletingUserId = null;
+        }
+    }
+
+    private class AuthSettingsResponse
+    {
+        public bool AllowSelfRegistration { get; set; }
+    }
+
+    private class UserFormModel
+    {
+        [System.ComponentModel.DataAnnotations.Required]
+        [System.ComponentModel.DataAnnotations.MinLength(3)]
+        [System.ComponentModel.DataAnnotations.MaxLength(64)]
+        public string Username { get; set; } = string.Empty;
+
+        [System.ComponentModel.DataAnnotations.Required]
+        public string Role { get; set; } = "Viewer";
+
+        public string Password { get; set; } = string.Empty;
+    }
+}

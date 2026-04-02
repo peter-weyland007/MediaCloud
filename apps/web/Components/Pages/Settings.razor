@@ -1,0 +1,45 @@
+@page "/settings"
+@attribute [Authorize(Roles = "Admin")]
+
+<PageTitle>Settings</PageTitle>
+
+<h1>Settings</h1>
+<p class="subtitle">Choose a settings area.</p>
+
+<div class="cards-grid" style="grid-template-columns: repeat(4, minmax(0, 1fr));">
+    <div class="card">
+        <p class="card-label">USERS & AUTH</p>
+        <h2>User management</h2>
+        <p class="card-note" style="margin-bottom:0.85rem;">
+            Manage users, roles, self-registration policy, and audit logs.
+        </p>
+        <a class="button-primary" href="/settings/users" style="display:inline-block; text-decoration:none;">Open users settings</a>
+    </div>
+
+    <div class="card">
+        <p class="card-label">INTEGRATIONS</p>
+        <h2>Service connections</h2>
+        <p class="card-note" style="margin-bottom:0.85rem;">
+            Configure Overseerr, Radarr, Sonarr, Lidarr, Prowlarr, and Plex.
+        </p>
+        <a class="button-primary" href="/settings/integrations" style="display:inline-block; text-decoration:none;">Open integrations</a>
+    </div>
+
+    <div class="card">
+        <p class="card-label">LIBRARY PATHS</p>
+        <h2>Physical library folders</h2>
+        <p class="card-note" style="margin-bottom:0.85rem;">
+            Map integration-reported paths (e.g. /movies) to local filesystem paths for runtime probing.
+        </p>
+        <a class="button-primary" href="/settings/libraries" style="display:inline-block; text-decoration:none;">Open library paths</a>
+    </div>
+
+    <div class="card">
+        <p class="card-label">RUNTIME POLICY</p>
+        <h2>Mismatch tolerances</h2>
+        <p class="card-note" style="margin-bottom:0.85rem;">
+            Configure thresholds for reported vs actual runtime mismatch severity and defaults.
+        </p>
+        <a class="button-primary" href="/settings/runtime-policy" style="display:inline-block; text-decoration:none;">Open runtime policy</a>
+    </div>
+</div>

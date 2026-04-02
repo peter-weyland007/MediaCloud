@@ -1,0 +1,571 @@
+@page "/settings/integrations"
+@attribute [Authorize(Roles = "Admin")]
+@inject HttpClient Http
+@inject AuthTokenStore TokenStore
+@inject ISnackbar Snackbar
+
+<PageTitle>Integrations</PageTitle>
+
+<p class="subtitle"><a href="/settings">Settings</a> / Integrations</p>
+<h1>Integrations</h1>
+<p class="subtitle">Manage named service instances and authentication settings.</p>
+
+<div class="card" style="margin-bottom: 1rem;">
+    <p class="card-label">@(_editingId is null ? "ADD INTEGRATION INSTANCE" : "EDIT INTEGRATION INSTANCE")</p>
+
+    <EditForm Model="_form" FormName="integration-form" OnValidSubmit="SaveIntegrationAsync">
+        <DataAnnotationsValidator />
+
+        <div class="form-group">
+            <label for="integration-service">Service</label>
+            <InputSelect id="integration-service" class="input" @bind-Value="_form.ServiceKey" disabled="@(_editingId is not null)">
+                @foreach (var service in _services)
+                {
+                    <option value="@service.ServiceKey">@service.DisplayName</option>
+                }
+            </InputSelect>
+        </div>
+
+        <div class="form-group">
+            <label for="integration-instance-name">Instance Name</label>
+            <InputText id="integration-instance-name" class="input" @bind-Value="_form.InstanceName" @bind-Value:event="oninput" />
+            @if (ShowDuplicateInstanceValidationError())
+            {
+                <p class="error-text" style="margin-top:0.35rem;">An instance with this service + name already exists.</p>
+            }
+            else if (ShouldShowInstanceAvailabilityHint())
+            {
+                <p class="success-text" style="margin-top:0.35rem;">Instance name is available for this service.</p>
+            }
+        </div>
+
+        <div class="form-group">
+            <label for="integration-base-url">Base URL</label>
+            <InputText id="integration-base-url" class="input" @bind-Value="_form.BaseUrl" @bind-Value:event="oninput" />
+            @if (ShowBaseUrlValidationError())
+            {
+                <p class="error-text" style="margin-top:0.35rem;">Base URL must be a valid absolute URL (e.g. http://localhost:7878).</p>
+            }
+        </div>
+
+
+        <div class="form-group">
+            <label for="integration-auth-type">Authentication</label>
+            <InputSelect id="integration-auth-type" class="input" @bind-Value="_form.AuthType">
+                @foreach (var auth in GetAuthOptions())
+                {
+                    <option value="@auth">@GetAuthLabel(auth)</option>
+                }
+            </InputSelect>
+        </div>
+
+        @if (IsAuthSelectionInvalid())
+        {
+            <p class="error-text" style="margin-top:-0.35rem; margin-bottom:0.6rem;">This service requires credentials. Select API Key/Token or Username + Password.</p>
+        }
+
+        @if (_form.AuthType == "ApiKey")
+        {
+            <div class="form-group">
+                <label for="integration-api-key">API Key / Token</label>
+                <InputText id="integration-api-key" class="input" @bind-Value="_form.ApiKey" @bind-Value:event="oninput" />
+                @if (ShowApiKeyValidationError())
+                {
+                    <p class="error-text" style="margin-top:0.35rem;">API key/token is required for API key authentication.</p>
+                }
+            </div>
+        }
+        else if (_form.AuthType == "Basic")
+        {
+            <div class="form-group">
+                <label for="integration-username">Username</label>
+                <InputText id="integration-username" class="input" @bind-Value="_form.Username" @bind-Value:event="oninput" />
+                @if (ShowBasicUsernameValidationError())
+                {
+                    <p class="error-text" style="margin-top:0.35rem;">Username is required for basic authentication.</p>
+                }
+            </div>
+            <div class="form-group">
+                <label for="integration-password">Password</label>
+                <InputText id="integration-password" type="password" class="input" @bind-Value="_form.Password" @bind-Value:event="oninput" />
+                @if (ShowBasicPasswordValidationError())
+                {
+                    <p class="error-text" style="margin-top:0.35rem;">Password is required for basic authentication.</p>
+                }
+            </div>
+        }
+
+        <div style="display:flex; align-items:center; gap:0.55rem; margin-bottom:0.75rem;">
+            <InputCheckbox id="integration-enabled" @bind-Value="_form.Enabled" />
+            <label for="integration-enabled" style="margin:0;">Enabled</label>
+        </div>
+
+        <div style="display:flex; gap:0.5rem;">
+            <button class="button-primary" disabled="@_saving">@(_saving ? "Saving..." : (_editingId is null ? "Add instance" : "Save changes"))</button>
+            @if (_editingId is not null)
+            {
+                <button class="button-primary" type="button" style="background:#334155; border-color:#334155;" @onclick="ResetForm">Cancel edit</button>
+            }
+        </div>
+    </EditForm>
+</div>
+
+<div class="card" style="margin-bottom: 1rem;">
+    <p class="card-label">INSTANCES</p>
+
+    @if (_loading)
+    {
+        <p class="card-note">Loading integration instances…</p>
+    }
+    else if (_instances.Count == 0)
+    {
+        <p class="card-note">No integration instances configured yet.</p>
+    }
+    else
+    {
+        <table style="width:100%; border-collapse: collapse;">
+            <thead>
+                <tr style="text-align:left; border-bottom:1px solid #1e293b;">
+                    <th style="padding:0.4rem 0;">Service</th>
+                    <th style="padding:0.4rem 0;">Instance</th>
+                    <th style="padding:0.4rem 0;">Base URL</th>
+                    <th style="padding:0.4rem 0;">Auth</th>
+                    <th style="padding:0.4rem 0;">Enabled</th>
+                    <th style="padding:0.4rem 0;">Updated</th>
+                    <th style="padding:0.4rem 0;">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var item in _instances)
+                {
+                    <tr style="border-bottom:1px solid #0f172a; vertical-align: top;">
+                        <td style="padding:0.45rem 0;">@item.DisplayName</td>
+                        <td style="padding:0.45rem 0;">@item.InstanceName</td>
+                        <td style="padding:0.45rem 0;">@item.BaseUrl</td>
+                        <td style="padding:0.45rem 0;">@item.AuthType</td>
+                        <td style="padding:0.45rem 0;">@(item.Enabled ? "Yes" : "No")</td>
+                        <td style="padding:0.45rem 0;">@item.UpdatedAtUtc?.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
+                        <td style="padding:0.45rem 0; display:flex; gap:0.45rem;">
+                            <button class="button-primary" style="padding: 0.45rem 0.7rem; font-size: 0.85rem;" @onclick="() => LoadForEdit(item)">Edit</button>
+                            <button class="button-primary" style="padding: 0.45rem 0.7rem; font-size: 0.85rem; background:#334155; border-color:#334155;" disabled="@(_testingId == item.Id)" @onclick="() => TestIntegrationAsync(item)">
+                                @(_testingId == item.Id ? "Testing..." : "Test")
+                            </button>
+                            <button class="button-danger" disabled="@(_deletingId == item.Id)" @onclick="() => DeleteIntegrationAsync(item)">
+                                @(_deletingId == item.Id ? "Deleting..." : "Delete")
+                            </button>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+
+    @if (!string.IsNullOrWhiteSpace(_testMessage))
+    {
+        <p class="@(_testSuccess ? "success-text" : "error-text")" style="margin-top:0.65rem;">
+            @_testMessage
+        </p>
+    }
+</div>
+
+@code {
+    private readonly List<IntegrationServiceResponse> _services = [];
+    private readonly List<IntegrationInstanceResponse> _instances = [];
+    private readonly IntegrationFormModel _form = new();
+    private bool _loading = true;
+    private bool _saving;
+    private long? _editingId;
+    private long? _testingId;
+    private long? _deletingId;
+    private bool _testSuccess;
+    private bool _attemptedSave;
+    private string _testMessage = string.Empty;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadServicesAsync();
+        await LoadInstancesAsync();
+    }
+
+    private async Task LoadServicesAsync()
+    {
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, "/api/integration-services");
+            await AttachBearerAsync(request);
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add($"Failed to load integration services ({(int)response.StatusCode}).", Severity.Error);
+                return;
+            }
+
+            var services = await response.Content.ReadFromJsonAsync<List<IntegrationServiceResponse>>();
+            _services.Clear();
+            if (services is not null)
+            {
+                _services.AddRange(services);
+            }
+
+            if (_services.Count > 0 && string.IsNullOrWhiteSpace(_form.ServiceKey))
+            {
+                _form.ServiceKey = _services[0].ServiceKey;
+            }
+
+            var selected = SelectedService();
+            if (selected is not null && !selected.AllowedAuthTypes.Contains(_form.AuthType, StringComparer.OrdinalIgnoreCase))
+            {
+                _form.AuthType = selected.AllowedAuthTypes.FirstOrDefault() ?? "ApiKey";
+            }
+        }
+        catch
+        {
+            Snackbar.Add("Failed to load integration services.", Severity.Error);
+        }
+    }
+
+    private async Task LoadInstancesAsync()
+    {
+        _loading = true;
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, "/api/integrations");
+            await AttachBearerAsync(request);
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add($"Failed to load integrations ({(int)response.StatusCode}).", Severity.Error);
+                return;
+            }
+
+            var items = await response.Content.ReadFromJsonAsync<List<IntegrationInstanceResponse>>();
+            _instances.Clear();
+            if (items is not null)
+            {
+                _instances.AddRange(items);
+            }
+        }
+        catch
+        {
+            Snackbar.Add("Failed to load integrations.", Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private void LoadForEdit(IntegrationInstanceResponse item)
+    {
+        _attemptedSave = false;
+        _editingId = item.Id;
+        _form.ServiceKey = item.ServiceKey;
+        _form.InstanceName = item.InstanceName;
+        _form.BaseUrl = item.BaseUrl;
+        _form.AuthType = item.AuthType;
+        _form.ApiKey = item.ApiKey;
+        _form.Username = item.Username;
+        _form.Password = item.Password;
+        _form.Enabled = item.Enabled;
+    }
+
+    private void ResetForm()
+    {
+        _attemptedSave = false;
+        _editingId = null;
+        _form.InstanceName = string.Empty;
+        _form.BaseUrl = string.Empty;
+        _form.AuthType = "ApiKey";
+        _form.ApiKey = string.Empty;
+        _form.Username = string.Empty;
+        _form.Password = string.Empty;
+        _form.Enabled = false;
+        _testMessage = string.Empty;
+    }
+
+    private async Task SaveIntegrationAsync()
+    {
+        _attemptedSave = true;
+
+        if (!CanSubmitForm())
+        {
+            Snackbar.Add(GetFormValidationMessage(), Severity.Warning);
+            return;
+        }
+
+        _saving = true;
+        try
+        {
+            if (_editingId is null)
+            {
+                var createRequest = new CreateIntegrationInstanceRequest(
+                    _form.ServiceKey,
+                    _form.InstanceName,
+                    _form.BaseUrl,
+                    _form.AuthType,
+                    _form.ApiKey,
+                    _form.Username,
+                    _form.Password,
+                    _form.Enabled);
+
+                using var request = new HttpRequestMessage(HttpMethod.Post, "/api/integrations")
+                {
+                    Content = JsonContent.Create(createRequest)
+                };
+                await AttachBearerAsync(request);
+                using var response = await Http.SendAsync(request);
+                if (!response.IsSuccessStatusCode)
+                {
+                    Snackbar.Add($"Failed to create integration ({(int)response.StatusCode}).", Severity.Error);
+                    return;
+                }
+
+                Snackbar.Add("Integration instance created.", Severity.Success);
+            }
+            else
+            {
+                var updateRequest = new UpdateIntegrationInstanceRequest(
+                    _form.InstanceName,
+                    _form.BaseUrl,
+                    _form.AuthType,
+                    _form.ApiKey,
+                    _form.Username,
+                    _form.Password,
+                    _form.Enabled);
+
+                using var request = new HttpRequestMessage(HttpMethod.Put, $"/api/integrations/{_editingId.Value}")
+                {
+                    Content = JsonContent.Create(updateRequest)
+                };
+                await AttachBearerAsync(request);
+                using var response = await Http.SendAsync(request);
+                if (!response.IsSuccessStatusCode)
+                {
+                    Snackbar.Add($"Failed to update integration ({(int)response.StatusCode}).", Severity.Error);
+                    return;
+                }
+
+                Snackbar.Add("Integration instance updated.", Severity.Success);
+            }
+
+            ResetForm();
+            await LoadInstancesAsync();
+        }
+        catch
+        {
+            Snackbar.Add("Failed to save integration instance.", Severity.Error);
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private async Task TestIntegrationAsync(IntegrationInstanceResponse item)
+    {
+        _testingId = item.Id;
+        _testMessage = string.Empty;
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, $"/api/integrations/{item.Id}/test");
+            await AttachBearerAsync(request);
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                _testSuccess = false;
+                _testMessage = $"Connection test failed ({(int)response.StatusCode}).";
+                return;
+            }
+
+            var result = await response.Content.ReadFromJsonAsync<IntegrationTestResponse>();
+            if (result is null)
+            {
+                _testSuccess = false;
+                _testMessage = "Connection test returned no data.";
+                return;
+            }
+
+            _testSuccess = result.Success;
+            _testMessage = result.Success
+                ? $"{item.DisplayName} / {item.InstanceName}: connection successful ({result.StatusCode})."
+                : $"{item.DisplayName} / {item.InstanceName}: connection failed ({result.StatusCode}) — {result.Message}";
+        }
+        catch
+        {
+            _testSuccess = false;
+            _testMessage = "Connection test failed.";
+        }
+        finally
+        {
+            _testingId = null;
+        }
+    }
+
+    private async Task DeleteIntegrationAsync(IntegrationInstanceResponse item)
+    {
+        _deletingId = item.Id;
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Delete, $"/api/integrations/{item.Id}");
+            await AttachBearerAsync(request);
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add($"Failed to delete integration ({(int)response.StatusCode}).", Severity.Error);
+                return;
+            }
+
+            Snackbar.Add("Integration instance deleted.", Severity.Success);
+            await LoadInstancesAsync();
+            if (_editingId == item.Id)
+            {
+                ResetForm();
+            }
+        }
+        catch
+        {
+            Snackbar.Add("Failed to delete integration instance.", Severity.Error);
+        }
+        finally
+        {
+            _deletingId = null;
+        }
+    }
+
+    private async Task AttachBearerAsync(HttpRequestMessage request)
+    {
+        var token = await TokenStore.GetTokenAsync();
+        if (!string.IsNullOrWhiteSpace(token))
+        {
+            request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+        }
+    }
+
+    private IntegrationServiceResponse? SelectedService()
+        => _services.FirstOrDefault(x => x.ServiceKey == _form.ServiceKey);
+
+    private bool IsAuthSelectionInvalid()
+    {
+        var service = SelectedService();
+        if (service is null) return false;
+        if (!service.RequiresAuth) return false;
+        return string.Equals(_form.AuthType, "None", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private bool ShowApiKeyValidationError()
+        => _attemptedSave
+           && string.Equals(_form.AuthType, "ApiKey", StringComparison.OrdinalIgnoreCase)
+           && string.IsNullOrWhiteSpace(_form.ApiKey);
+
+    private bool ShowBasicUsernameValidationError()
+        => _attemptedSave
+           && string.Equals(_form.AuthType, "Basic", StringComparison.OrdinalIgnoreCase)
+           && string.IsNullOrWhiteSpace(_form.Username);
+
+    private bool ShowBasicPasswordValidationError()
+        => _attemptedSave
+           && string.Equals(_form.AuthType, "Basic", StringComparison.OrdinalIgnoreCase)
+           && string.IsNullOrWhiteSpace(_form.Password);
+
+    private bool ShowBaseUrlValidationError()
+        => _attemptedSave && !IsBaseUrlValid();
+
+    private bool ShowDuplicateInstanceValidationError()
+        => _attemptedSave && IsDuplicateInstanceName();
+
+    private bool ShouldShowInstanceAvailabilityHint()
+    {
+        var service = (_form.ServiceKey ?? string.Empty).Trim();
+        var name = (_form.InstanceName ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(service) || string.IsNullOrWhiteSpace(name))
+        {
+            return false;
+        }
+
+        return !IsDuplicateInstanceName();
+    }
+
+    private bool IsBaseUrlValid()
+        => Uri.TryCreate((_form.BaseUrl ?? string.Empty).Trim(), UriKind.Absolute, out _);
+
+    private bool IsDuplicateInstanceName()
+    {
+        var service = (_form.ServiceKey ?? string.Empty).Trim();
+        var name = (_form.InstanceName ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(service) || string.IsNullOrWhiteSpace(name))
+        {
+            return false;
+        }
+
+        return _instances.Any(x =>
+            x.Id != (_editingId ?? 0) &&
+            string.Equals(x.ServiceKey, service, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(x.InstanceName, name, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private bool CanSubmitForm()
+    {
+        if (string.IsNullOrWhiteSpace(_form.ServiceKey)) return false;
+        if (string.IsNullOrWhiteSpace(_form.InstanceName)) return false;
+        if (string.IsNullOrWhiteSpace(_form.BaseUrl)) return false;
+        if (!IsBaseUrlValid()) return false;
+        if (IsDuplicateInstanceName()) return false;
+        if (IsAuthSelectionInvalid()) return false;
+        if (ShowApiKeyValidationError()) return false;
+        if (ShowBasicUsernameValidationError()) return false;
+        if (ShowBasicPasswordValidationError()) return false;
+        return true;
+    }
+
+    private string GetFormValidationMessage()
+    {
+        if (string.IsNullOrWhiteSpace(_form.InstanceName)) return "Instance name is required.";
+        if (string.IsNullOrWhiteSpace(_form.BaseUrl)) return "Base URL is required.";
+        if (!IsBaseUrlValid()) return "Base URL must be a valid absolute URL.";
+        if (IsDuplicateInstanceName()) return "An instance with this service + name already exists.";
+        if (IsAuthSelectionInvalid()) return "This service requires credentials. Select API key or basic auth.";
+        if (ShowApiKeyValidationError()) return "API key/token is required for API key authentication.";
+        if (ShowBasicUsernameValidationError()) return "Username is required for basic authentication.";
+        if (ShowBasicPasswordValidationError()) return "Password is required for basic authentication.";
+        return "Please correct the form and try again.";
+    }
+
+    private IEnumerable<string> GetAuthOptions()
+    {
+        var service = SelectedService();
+        if (service is null || service.AllowedAuthTypes is null || service.AllowedAuthTypes.Count == 0)
+        {
+            return new[] { "None", "ApiKey", "Basic" };
+        }
+
+        return service.AllowedAuthTypes;
+    }
+
+    private static string GetAuthLabel(string authType) => authType switch
+    {
+        "ApiKey" => "API Key / Token",
+        "Basic" => "Username + Password",
+        _ => "None"
+    };
+
+    private class IntegrationFormModel
+    {
+        [System.ComponentModel.DataAnnotations.Required]
+        public string ServiceKey { get; set; } = string.Empty;
+
+        [System.ComponentModel.DataAnnotations.Required]
+        [System.ComponentModel.DataAnnotations.MaxLength(64)]
+        public string InstanceName { get; set; } = string.Empty;
+
+        [System.ComponentModel.DataAnnotations.Required]
+        public string BaseUrl { get; set; } = string.Empty;
+
+        [System.ComponentModel.DataAnnotations.Required]
+        public string AuthType { get; set; } = "ApiKey";
+
+        public string ApiKey { get; set; } = string.Empty;
+        public string Username { get; set; } = string.Empty;
+        public string Password { get; set; } = string.Empty;
+        public bool Enabled { get; set; }
+    }
+}

@@ -1,0 +1,15 @@
+name: Promote GHCR image to prod (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      source_tag:
+        required: false
+        type: string
+        default: main
+
+jobs:
+  noop:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Use promote-ghcr-to-prod.yml for manual promotion."

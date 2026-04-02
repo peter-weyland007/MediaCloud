@@ -1,0 +1,13 @@
+@page "/media/music"
+@attribute [Authorize]
+
+<PageTitle>Music</PageTitle>
+
+<h1>Music</h1>
+<p class="subtitle">Track and album library view.</p>
+
+<MediaLibraryTable MediaTypeOptions="@_musicTypeOptions" InitialMediaType="Track" />
+
+@code {
+    private readonly string[] _musicTypeOptions = ["All", "Track", "Album"];
+}

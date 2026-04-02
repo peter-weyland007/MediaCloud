@@ -1,0 +1,75 @@
+@inject ApiAuthClient AuthClient
+@inject NavigationManager NavigationManager
+@implements IDisposable
+
+<nav class="nav-menu">
+    <AuthorizeView>
+        <Authorized Context="authState">
+            <NavLink class="nav-link" href="" Match="NavLinkMatch.All">Dashboard</NavLink>
+            <NavLink class="nav-link" href="issues">Issues</NavLink>
+
+            <button type="button" class="nav-link nav-parent" @onclick="ToggleMediaGroup" aria-expanded="@_mediaExpanded" aria-controls="media-subitems">
+                <span>Media</span>
+                <span class="nav-chevron">@(_mediaExpanded ? "▾" : "▸")</span>
+            </button>
+            <div id="media-subitems" class="nav-subitems @(_mediaExpanded ? "expanded" : "collapsed")" role="group" aria-label="Media sections">
+                <NavLink class="nav-link nav-sublink" href="media/movies">Movies</NavLink>
+                <NavLink class="nav-link nav-sublink" href="media/tv-shows">TV Shows</NavLink>
+                <NavLink class="nav-link nav-sublink" href="media/music">Music</NavLink>
+            </div>
+
+            <AuthorizeView Roles="Admin" Context="adminState">
+                <NavLink class="nav-link" href="settings">Settings</NavLink>
+            </AuthorizeView>
+
+            <button class="nav-link nav-button" @onclick="LogoutAsync">Log out</button>
+        </Authorized>
+        <NotAuthorized>
+            <NavLink class="nav-link" href="login">Login</NavLink>
+        </NotAuthorized>
+    </AuthorizeView>
+</nav>
+
+@code {
+    private bool _mediaExpanded;
+
+    protected override void OnInitialized()
+    {
+        SetMediaExpandedFromCurrentRoute();
+        NavigationManager.LocationChanged += HandleLocationChanged;
+    }
+
+    private void HandleLocationChanged(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs e)
+    {
+        if (IsMediaRoute(e.Location) && !_mediaExpanded)
+        {
+            _mediaExpanded = true;
+            _ = InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private void ToggleMediaGroup() => _mediaExpanded = !_mediaExpanded;
+
+    private void SetMediaExpandedFromCurrentRoute() => _mediaExpanded = IsMediaRoute(NavigationManager.Uri);
+
+    private static bool IsMediaRoute(string absoluteUri)
+    {
+        if (!Uri.TryCreate(absoluteUri, UriKind.Absolute, out var uri))
+        {
+            return false;
+        }
+
+        return uri.AbsolutePath.StartsWith("/media", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private async Task LogoutAsync()
+    {
+        await AuthClient.LogoutAsync();
+        NavigationManager.NavigateTo("/login", forceLoad: false);
+    }
+
+    public void Dispose()
+    {
+        NavigationManager.LocationChanged -= HandleLocationChanged;
+    }
+}

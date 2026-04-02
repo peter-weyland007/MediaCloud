@@ -1,0 +1,59 @@
+@page "/"
+@attribute [Authorize]
+@inject HttpClient Http
+
+<PageTitle>MediaCloud Dashboard</PageTitle>
+
+<section>
+    <h1>MediaCloud Dashboard</h1>
+    <p class="subtitle">Unified visibility across your media stack.</p>
+</section>
+
+<section class="cards-grid">
+    <article class="card">
+        <p class="card-label">API HEALTH</p>
+        <h2>@_healthLabel</h2>
+        <p class="card-note">@_healthDetail</p>
+    </article>
+
+    <article class="card">
+        <p class="card-label">OPEN ISSUES</p>
+        <h2>0</h2>
+        <p class="card-note">Issue ingestion scaffolded next</p>
+    </article>
+
+    <article class="card">
+        <p class="card-label">LIBRARY CHECKS</p>
+        <h2>Pending</h2>
+        <p class="card-note">Runtime/language validation not wired yet</p>
+    </article>
+</section>
+
+@code {
+    private string _healthLabel = "Checking...";
+    private string _healthDetail = "Calling /api/health";
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+            var response = await Http.GetAsync("/api/health", cts.Token);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                _healthLabel = "Unhealthy";
+                _healthDetail = $"HTTP {(int)response.StatusCode}";
+                return;
+            }
+
+            _healthLabel = "Healthy";
+            _healthDetail = "API is responding";
+        }
+        catch
+        {
+            _healthLabel = "Unreachable";
+            _healthDetail = "Could not contact API";
+        }
+    }
+}

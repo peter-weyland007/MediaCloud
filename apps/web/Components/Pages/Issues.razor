@@ -1,0 +1,276 @@
+@page "/issues"
+@attribute [Authorize]
+@inject HttpClient Http
+@inject AuthTokenStore TokenStore
+@inject ISnackbar Snackbar
+
+<PageTitle>Issues</PageTitle>
+
+<h1>Issues</h1>
+<p class="subtitle">Runtime mismatches are flagged when actual runtime falls outside tolerance.</p>
+
+<div class="card" style="margin-bottom:1rem;">
+    <div style="display:flex; gap:0.6rem; align-items:end; flex-wrap:wrap;">
+        <div class="form-group" style="min-width:180px;">
+            <label>Status</label>
+            <select class="input" @bind="_statusFilter" @bind:after="ReloadAsync">
+                <option value="Open">Open</option>
+                <option value="Resolved">Resolved</option>
+                <option value="">All</option>
+            </select>
+        </div>
+
+        <div class="form-group" style="min-width:180px;">
+            <label>Media Type</label>
+            <select class="input" @bind="_mediaTypeFilter">
+                @foreach (var option in MediaTypeOptions)
+                {
+                    <option value="@option">@option</option>
+                }
+            </select>
+        </div>
+
+        <button class="button-secondary" @onclick="ReloadAsync" disabled="@_loading">@(_loading ? "Refreshing..." : "Refresh")</button>
+    </div>
+</div>
+
+<div class="card">
+    @if (_loading)
+    {
+        <p class="card-note">Loading issues…</p>
+    }
+    else if (VisibleIssues.Count == 0)
+    {
+        <p class="card-note">No runtime mismatch issues for the selected filter.</p>
+    }
+    else
+    {
+        <table class="data-table" style="width:100%; border-collapse:collapse;">
+            <thead>
+                <tr>
+                    <th style="text-align:left; padding:0.5rem;"><button style="all:unset; cursor:pointer;" @onclick='() => ToggleSort("detected")'>Detected @SortGlyph("detected")</button></th>
+                    <th style="text-align:left; padding:0.5rem;"><button style="all:unset; cursor:pointer;" @onclick='() => ToggleSort("item")'>Item @SortGlyph("item")</button></th>
+                    <th style="text-align:left; padding:0.5rem;"><button style="all:unset; cursor:pointer;" @onclick='() => ToggleSort("media")'>Media Type @SortGlyph("media")</button></th>
+                    <th style="text-align:left; padding:0.5rem;"><button style="all:unset; cursor:pointer;" @onclick='() => ToggleSort("severity")'>Severity @SortGlyph("severity")</button></th>
+                    <th style="text-align:left; padding:0.5rem;"><button style="all:unset; cursor:pointer;" @onclick='() => ToggleSort("status")'>Status @SortGlyph("status")</button></th>
+                    <th style="text-align:left; padding:0.5rem;"><button style="all:unset; cursor:pointer;" @onclick='() => ToggleSort("difference")'>Difference @SortGlyph("difference")</button></th>
+                    <th style="text-align:left; padding:0.5rem;">Summary</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var row in VisibleIssues)
+                {
+                    var details = ParseRuntimeMismatchDetails(row.DetailsJson);
+                    <tr>
+                        <td style="padding:0.5rem; border-top:1px solid rgba(148,163,184,0.15);">@row.LastDetectedAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
+                        <td style="padding:0.5rem; border-top:1px solid rgba(148,163,184,0.15);">
+                            <a href="/media/movies/@row.LibraryItemId" style="color:#93c5fd; text-decoration:none;">@GetItemDisplayName(row)</a>
+                        </td>
+                        <td style="padding:0.5rem; border-top:1px solid rgba(148,163,184,0.15);">@(string.IsNullOrWhiteSpace(row.MediaType) ? "—" : row.MediaType)</td>
+                        <td style="padding:0.5rem; border-top:1px solid rgba(148,163,184,0.15);"><span style="@GetSeverityBadgeStyle(row.Severity)">@row.Severity</span></td>
+                        <td style="padding:0.5rem; border-top:1px solid rgba(148,163,184,0.15);">@row.Status</td>
+                        <td style="padding:0.5rem; border-top:1px solid rgba(148,163,184,0.15);">
+                            @if (details is null)
+                            {
+                                <span>—</span>
+                            }
+                            else
+                            {
+                                <span>Δ @details.DiffMinutes.ToString("0.##")m (@details.DiffPercent.ToString("0.##")%)</span>
+                            }
+                        </td>
+                        <td style="padding:0.5rem; border-top:1px solid rgba(148,163,184,0.15);">@row.Summary</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+</div>
+
+@code {
+    private bool _loading = true;
+    private string _statusFilter = "Open";
+    private string _mediaTypeFilter = "All";
+    private string _sortBy = "detected";
+    private string _sortDir = "desc";
+    private readonly List<LibraryIssueDto> _issues = [];
+
+    private IReadOnlyList<string> MediaTypeOptions => ["All", .. _issues.Select(x => x.MediaType).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(x => x, StringComparer.OrdinalIgnoreCase)];
+
+    private List<LibraryIssueDto> VisibleIssues
+    {
+        get
+        {
+            IEnumerable<LibraryIssueDto> query = _issues;
+
+            if (!string.Equals(_mediaTypeFilter, "All", StringComparison.OrdinalIgnoreCase))
+            {
+                query = query.Where(x => string.Equals(x.MediaType, _mediaTypeFilter, StringComparison.OrdinalIgnoreCase));
+            }
+
+            query = ApplySort(query);
+            return query.ToList();
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        _loading = true;
+        try
+        {
+            var statusQuery = string.IsNullOrWhiteSpace(_statusFilter) ? string.Empty : $"&status={Uri.EscapeDataString(_statusFilter)}";
+            using var request = new HttpRequestMessage(HttpMethod.Get, $"/api/library/issues?issueType=runtime_mismatch{statusQuery}&take=300");
+            await AttachBearerAsync(request);
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add($"Failed to load issues ({(int)response.StatusCode}).", Severity.Error);
+                return;
+            }
+
+            var payload = await response.Content.ReadFromJsonAsync<List<LibraryIssueDto>>() ?? [];
+            _issues.Clear();
+            _issues.AddRange(payload);
+        }
+        catch
+        {
+            Snackbar.Add("Failed to load issues.", Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private IEnumerable<LibraryIssueDto> ApplySort(IEnumerable<LibraryIssueDto> source)
+    {
+        var desc = string.Equals(_sortDir, "desc", StringComparison.OrdinalIgnoreCase);
+        return _sortBy switch
+        {
+            "item" => desc
+                ? source.OrderByDescending(x => GetItemDisplayName(x), StringComparer.OrdinalIgnoreCase)
+                : source.OrderBy(x => GetItemDisplayName(x), StringComparer.OrdinalIgnoreCase),
+            "media" => desc
+                ? source.OrderByDescending(x => x.MediaType ?? string.Empty, StringComparer.OrdinalIgnoreCase)
+                : source.OrderBy(x => x.MediaType ?? string.Empty, StringComparer.OrdinalIgnoreCase),
+            "severity" => desc
+                ? source.OrderByDescending(x => SeverityRank(x.Severity))
+                : source.OrderBy(x => SeverityRank(x.Severity)),
+            "status" => desc
+                ? source.OrderByDescending(x => x.Status ?? string.Empty, StringComparer.OrdinalIgnoreCase)
+                : source.OrderBy(x => x.Status ?? string.Empty, StringComparer.OrdinalIgnoreCase),
+            "difference" => desc
+                ? source.OrderByDescending(GetDiffPercent)
+                : source.OrderBy(GetDiffPercent),
+            _ => desc
+                ? source.OrderByDescending(x => x.LastDetectedAtUtc)
+                : source.OrderBy(x => x.LastDetectedAtUtc)
+        };
+    }
+
+    private static double GetDiffPercent(LibraryIssueDto issue)
+        => ParseRuntimeMismatchDetails(issue.DetailsJson)?.DiffPercent ?? 0;
+
+    private static int SeverityRank(string severity)
+    {
+        var value = (severity ?? string.Empty).Trim().ToLowerInvariant();
+        return value switch
+        {
+            "critical" => 3,
+            "high" => 2,
+            "warning" => 1,
+            _ => 0
+        };
+    }
+
+    private void ToggleSort(string field)
+    {
+        if (string.Equals(_sortBy, field, StringComparison.OrdinalIgnoreCase))
+        {
+            _sortDir = string.Equals(_sortDir, "asc", StringComparison.OrdinalIgnoreCase) ? "desc" : "asc";
+        }
+        else
+        {
+            _sortBy = field;
+            _sortDir = field == "detected" ? "desc" : "asc";
+        }
+    }
+
+    private string SortGlyph(string field)
+        => !string.Equals(_sortBy, field, StringComparison.OrdinalIgnoreCase)
+            ? "↕"
+            : (string.Equals(_sortDir, "asc", StringComparison.OrdinalIgnoreCase) ? "↑" : "↓");
+
+    private static string GetItemDisplayName(LibraryIssueDto issue)
+    {
+        var title = (issue.LibraryItemTitle ?? string.Empty).Trim();
+        if (!string.IsNullOrWhiteSpace(title)) return title;
+        return issue.LibraryItemId > 0 ? $"Movie #{issue.LibraryItemId}" : "Unknown item";
+    }
+
+    private static string GetSeverityBadgeStyle(string severity)
+    {
+        const string baseStyle = "display:inline-block; padding:0.2rem 0.52rem; border-radius:999px; font-size:0.78rem; font-weight:700; letter-spacing:0.01em;";
+        var value = (severity ?? string.Empty).Trim().ToLowerInvariant();
+        return value switch
+        {
+            "critical" => baseStyle + "background:rgba(239,68,68,0.22); color:#fecaca; border:1px solid rgba(239,68,68,0.65);",
+            "high" => baseStyle + "background:rgba(249,115,22,0.22); color:#fed7aa; border:1px solid rgba(249,115,22,0.65);",
+            "warning" => baseStyle + "background:rgba(234,179,8,0.22); color:#fde68a; border:1px solid rgba(234,179,8,0.65);",
+            _ => baseStyle + "background:rgba(148,163,184,0.18); color:#cbd5e1; border:1px solid rgba(148,163,184,0.35);"
+        };
+    }
+
+    private static RuntimeMismatchDetails? ParseRuntimeMismatchDetails(string? detailsJson)
+    {
+        if (string.IsNullOrWhiteSpace(detailsJson)) return null;
+
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(detailsJson);
+            var root = doc.RootElement;
+            var diffMinutes = root.TryGetProperty("diffMinutes", out var diffMinutesElement) ? diffMinutesElement.GetDouble() : 0;
+            var diffPercent = root.TryGetProperty("diffPercent", out var diffPercentElement) ? diffPercentElement.GetDouble() : 0;
+            var thresholdMinutes = root.TryGetProperty("thresholdMinutes", out var thresholdElement) ? thresholdElement.GetDouble() : 0;
+            return new RuntimeMismatchDetails(diffMinutes, diffPercent, thresholdMinutes);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private async Task AttachBearerAsync(HttpRequestMessage request)
+    {
+        var token = await TokenStore.GetTokenAsync();
+        if (!string.IsNullOrWhiteSpace(token))
+        {
+            request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+        }
+    }
+
+    private record LibraryIssueDto(
+        long Id,
+        long LibraryItemId,
+        string IssueType,
+        string Severity,
+        string Status,
+        string Summary,
+        string SuggestedAction,
+        string DetailsJson,
+        DateTimeOffset FirstDetectedAtUtc,
+        DateTimeOffset LastDetectedAtUtc,
+        DateTimeOffset? ResolvedAtUtc,
+        string LibraryItemTitle,
+        string MediaType);
+
+    private record RuntimeMismatchDetails(
+        double DiffMinutes,
+        double DiffPercent,
+        double ThresholdMinutes);
+}

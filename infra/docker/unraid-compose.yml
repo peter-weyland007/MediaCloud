@@ -1,0 +1,25 @@
+services:
+  mediacloud:
+    image: ghcr.io/peter-weyland007/mediacloud:prod
+    container_name: mediacloud
+    restart: unless-stopped
+    ports:
+      - "5288:8080"
+    environment:
+      # Internal container ports
+      - API_PORT=5299
+      - WEB_PORT=8080
+
+      # Web -> API internal URL
+      - ApiBaseUrl=http://127.0.0.1:5299
+
+      # Persist SQLite DB on unRAID appdata share
+      - ConnectionStrings__DefaultConnection=Data Source=/app/data/mediacloud.db
+
+      # Strongly recommended override in unRAID template
+      # - Jwt__SigningKey=REPLACE_ME_WITH_LONG_RANDOM_KEY
+
+      # Optional auth defaults
+      # - Auth__AllowSelfRegistration=false
+    volumes:
+      - /mnt/user/appdata/mediacloud:/app/data

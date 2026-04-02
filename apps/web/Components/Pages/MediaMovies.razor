@@ -1,0 +1,69 @@
+@page "/media/movies"
+@attribute [Authorize]
+@inject HttpClient Http
+@inject AuthTokenStore TokenStore
+@inject ISnackbar Snackbar
+
+<PageTitle>Movies</PageTitle>
+
+<div style="display:flex; justify-content:space-between; align-items:center; gap:0.6rem; flex-wrap:wrap;">
+    <div>
+        <h1 style="margin:0;">Movies</h1>
+        <p class="subtitle" style="margin:0.25rem 0 0;">Movie library view.</p>
+    </div>
+    <button class="button-secondary" @onclick="ReprobeAllMoviesAsync" disabled="@_reprobingAllMovies">@(_reprobingAllMovies ? "Reprobing all movies..." : "Probe actual runtime for all movies")</button>
+</div>
+
+<MediaLibraryTable FixedMediaType="Movie" />
+
+@code {
+    private bool _reprobingAllMovies;
+
+    private async Task ReprobeAllMoviesAsync()
+    {
+        _reprobingAllMovies = true;
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, "/api/library/items/reprobe-missing-runtimes")
+            {
+                Content = JsonContent.Create(new BatchRuntimeReprobeRequest("Movie", 2000, true))
+            };
+            await AttachBearerAsync(request);
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add($"Bulk probe failed ({(int)response.StatusCode}). Admin access may be required.", Severity.Error);
+                return;
+            }
+
+            var payload = await response.Content.ReadFromJsonAsync<BatchRuntimeReprobeResponse>();
+            if (payload is null)
+            {
+                Snackbar.Add("Bulk probe completed with no result payload.", Severity.Warning);
+                return;
+            }
+
+            Snackbar.Add($"Bulk probe done: updated {payload.Updated}/{payload.Inspected}, missing files {payload.MissingFiles}, probe failures {payload.Failed}.", Severity.Success);
+        }
+        catch
+        {
+            Snackbar.Add("Bulk probe failed.", Severity.Error);
+        }
+        finally
+        {
+            _reprobingAllMovies = false;
+        }
+    }
+
+    private async Task AttachBearerAsync(HttpRequestMessage request)
+    {
+        var token = await TokenStore.GetTokenAsync();
+        if (!string.IsNullOrWhiteSpace(token))
+        {
+            request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+        }
+    }
+
+    private sealed record BatchRuntimeReprobeRequest(string? MediaType, int Take = 200, bool ForceAll = false);
+    private sealed record BatchRuntimeReprobeResponse(int Inspected, int Attempted, int Updated, int MissingFiles, int Failed);
+}

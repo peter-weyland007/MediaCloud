@@ -1,0 +1,156 @@
+@page "/login"
+@attribute [AllowAnonymous]
+@inject ApiAuthClient AuthClient
+@inject HttpClient Http
+@inject AuthenticationStateProvider AuthStateProvider
+@inject NavigationManager NavigationManager
+
+<PageTitle>Login</PageTitle>
+
+<section class="auth-shell">
+    <h1>Sign in</h1>
+    <p class="subtitle">Use your MediaCloud account to access dashboard, issues, and media pages.</p>
+
+    @if (!_loadingSignupStatus)
+    {
+        <span class="status-badge @(_allowSelfRegistration ? "status-open" : "status-locked")">
+            @(_allowSelfRegistration ? "Open signup" : "Invite-only")
+        </span>
+    }
+
+    <EditForm Model="_model" FormName="login-form" OnValidSubmit="HandleLoginAsync">
+        <DataAnnotationsValidator />
+
+        <div class="form-group">
+            <label for="username">Username</label>
+            <InputText id="username" class="input" @bind-Value="_model.Username" />
+            <ValidationMessage For="() => _model.Username" />
+        </div>
+
+        <div class="form-group">
+            <label for="password">Password</label>
+            <InputText id="password" class="input" type="password" @bind-Value="_model.Password" />
+            <ValidationMessage For="() => _model.Password" />
+        </div>
+
+        <button class="button-primary" disabled="@_isSubmitting">@(_isSubmitting ? "Signing in..." : "Sign in")</button>
+    </EditForm>
+
+    @if (!string.IsNullOrWhiteSpace(_errorMessage))
+    {
+        <p class="error-text">@_errorMessage</p>
+    }
+
+    @if (!string.IsNullOrWhiteSpace(_successMessage))
+    {
+        <p class="success-text">@_successMessage</p>
+    }
+
+    <p class="subtitle">Default admin bootstrap: <code>admin / changeme</code></p>
+    <p class="subtitle">
+        @if (_allowSelfRegistration)
+        {
+            <span>Need an account? <a href="/register">Create one</a></span>
+        }
+        else
+        {
+            <span>Need an account? Ask an admin to create one.</span>
+        }
+    </p>
+</section>
+
+@code {
+    [SupplyParameterFromQuery(Name = "registered")]
+    public string? Registered { get; set; }
+
+    [SupplyParameterFromQuery(Name = "username")]
+    public string? RegisteredUsername { get; set; }
+
+    private readonly LoginModel _model = new();
+    private string? _errorMessage;
+    private string? _successMessage;
+    private bool _isSubmitting;
+    private bool _loadingSignupStatus = true;
+    private bool _allowSelfRegistration;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadSignupStatusAsync();
+
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        if (authState.User.Identity?.IsAuthenticated == true)
+        {
+            NavigationManager.NavigateTo("/");
+        }
+    }
+
+    private async Task LoadSignupStatusAsync()
+    {
+        _loadingSignupStatus = true;
+        try
+        {
+            var response = await Http.GetFromJsonAsync<AuthSettingsResponse>("/api/public/auth-status");
+            _allowSelfRegistration = response?.AllowSelfRegistration ?? false;
+        }
+        catch
+        {
+            _allowSelfRegistration = false;
+        }
+        finally
+        {
+            _loadingSignupStatus = false;
+        }
+    }
+
+    protected override void OnParametersSet()
+    {
+        if (string.Equals(Registered, "1", StringComparison.Ordinal))
+        {
+            _successMessage = "Account created successfully. Sign in below.";
+            if (!string.IsNullOrWhiteSpace(RegisteredUsername))
+            {
+                _model.Username = RegisteredUsername;
+            }
+        }
+        else
+        {
+            _successMessage = null;
+        }
+    }
+
+    private async Task HandleLoginAsync()
+    {
+        _isSubmitting = true;
+        _errorMessage = null;
+
+        try
+        {
+            var (success, error) = await AuthClient.LoginAsync(_model.Username, _model.Password);
+            if (!success)
+            {
+                _errorMessage = error ?? "Login failed.";
+                return;
+            }
+
+            NavigationManager.NavigateTo("/");
+        }
+        finally
+        {
+            _isSubmitting = false;
+        }
+    }
+
+    private class AuthSettingsResponse
+    {
+        public bool AllowSelfRegistration { get; set; }
+    }
+
+    private class LoginModel
+    {
+        [System.ComponentModel.DataAnnotations.Required]
+        public string Username { get; set; } = string.Empty;
+
+        [System.ComponentModel.DataAnnotations.Required]
+        public string Password { get; set; } = string.Empty;
+    }
+}

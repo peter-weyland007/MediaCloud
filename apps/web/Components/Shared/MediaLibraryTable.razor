@@ -1,0 +1,462 @@
+@inject HttpClient Http
+@inject AuthTokenStore TokenStore
+@inject ISnackbar Snackbar
+@inject IJSRuntime JS
+
+<div class="card" style="margin-bottom: 1rem; display:flex; justify-content:space-between; align-items:center; gap:1rem;">
+    <div>
+        <p class="card-label">LIBRARY STATUS</p>
+        <h2 style="margin:0;">@_totalCount total · @(_items.Count) on page</h2>
+        <p class="card-note" style="margin:0.35rem 0 0;">Page @(_pageIndex + 1) of @TotalPages</p>
+    </div>
+    <button class="button-primary" @onclick="RefreshItemsAsync" disabled="@_loading">@(_loading ? "Refreshing..." : "Refresh")</button>
+</div>
+
+<div class="card" style="margin-bottom: 1rem;">
+    <p class="card-label">FILTERS</p>
+    <div style="display:grid; grid-template-columns: 1.8fr 1fr 1fr 120px auto auto; gap:0.5rem; align-items:end;">
+        <div>
+            <label for="media-filter-search">Search</label>
+            <input id="media-filter-search" class="input" @bind="_searchText" @bind:event="oninput" />
+        </div>
+
+        @if (!HasFixedMediaType)
+        {
+            <div>
+                <label for="media-filter-type">Type</label>
+                <InputSelect id="media-filter-type" class="input" @bind-Value="_selectedMediaType">
+                    @foreach (var option in EffectiveMediaTypeOptions)
+                    {
+                        <option value="@option">@option</option>
+                    }
+                </InputSelect>
+            </div>
+        }
+        else
+        {
+            <div>
+                <label>Type</label>
+                <input class="input" value="@FixedMediaType" disabled />
+            </div>
+        }
+
+        <div>
+            <label for="media-filter-availability">Availability</label>
+            <InputSelect id="media-filter-availability" class="input" @bind-Value="_selectedAvailability">
+                <option value="All">All</option>
+                <option value="Available">Available</option>
+                <option value="Unavailable">Unavailable</option>
+            </InputSelect>
+        </div>
+        <div>
+            <label for="media-page-size">Page size</label>
+            <select id="media-page-size" class="input" value="@_pageSize" @onchange="OnPageSizeChangedAsync">
+                @foreach (var size in _pageSizeOptions)
+                {
+                    <option value="@size">@size</option>
+                }
+            </select>
+        </div>
+        <button class="button-primary" @onclick="ApplyFiltersAsync" disabled="@_loading">Apply</button>
+        <button class="button-primary" style="background:#334155; border-color:#334155;" @onclick="ResetFiltersAsync" disabled="@_loading">Reset</button>
+    </div>
+</div>
+
+<div class="card">
+    <p class="card-label">MEDIA ITEMS</p>
+
+    @if (_loading)
+    {
+        <p class="card-note">Loading media…</p>
+    }
+    else if (_items.Count == 0)
+    {
+        <p class="card-note">No items match current filters.</p>
+    }
+    else
+    {
+        <div style="display:flex; flex-wrap:wrap; gap:0.35rem; margin-bottom:0.65rem;">
+            @foreach (var token in JumpTokens)
+            {
+                <button class="button-primary"
+                        style="padding:0.2rem 0.45rem; min-width:2rem; background:#334155; border-color:#334155;"
+                        disabled="@_loading"
+                        @onclick="() => JumpToTokenAsync(token)">@token</button>
+            }
+        </div>
+
+        <div id="media-table-scroll" style="max-height:65vh; overflow-y:auto; border:1px solid #1e293b; border-radius:0.5rem; padding:0 0.5rem 0.25rem; background:#0b1220;">
+            <table style="width:100%; border-collapse:separate; border-spacing:0; background:#0b1220;">
+                <thead>
+                    <tr style="text-align:left; border-bottom:1px solid #1e293b;">
+                        <th style="position:sticky; top:0; z-index:20; background:#0b1220; padding:0.4rem 0; border-bottom:1px solid #1e293b; box-shadow:0 2px 0 #0b1220;"><button style="all:unset; cursor:pointer;" @onclick='() => ToggleSortAsync("title")'>Title @SortGlyph("title")</button></th>
+                        <th style="position:sticky; top:0; z-index:20; background:#0b1220; padding:0.4rem 0; border-bottom:1px solid #1e293b; box-shadow:0 2px 0 #0b1220;"><button style="all:unset; cursor:pointer;" @onclick='() => ToggleSortAsync("year")'>Year @SortGlyph("year")</button></th>
+                        @if (ShowTypeColumn)
+                        {
+                            <th style="position:sticky; top:0; z-index:20; background:#0b1220; padding:0.4rem 0; border-bottom:1px solid #1e293b; box-shadow:0 2px 0 #0b1220;">Type</th>
+                        }
+                        <th style="position:sticky; top:0; z-index:20; background:#0b1220; padding:0.4rem 0; border-bottom:1px solid #1e293b; box-shadow:0 2px 0 #0b1220;">Available</th>
+                        <th style="position:sticky; top:0; z-index:20; background:#0b1220; padding:0.4rem 0; border-bottom:1px solid #1e293b; box-shadow:0 2px 0 #0b1220;">Quality</th>
+                        <th style="position:sticky; top:0; z-index:20; background:#0b1220; padding:0.4rem 0; border-bottom:1px solid #1e293b; box-shadow:0 2px 0 #0b1220;"><button style="all:unset; cursor:pointer;" @onclick='() => ToggleSortAsync("runtime")'>Runtimes (Reported/Actual) @SortGlyph("runtime")</button></th>
+                        <th style="position:sticky; top:0; z-index:20; background:#0b1220; padding:0.4rem 0; border-bottom:1px solid #1e293b; box-shadow:0 2px 0 #0b1220;">Runtime Match</th>
+                        <th style="position:sticky; top:0; z-index:20; background:#0b1220; padding:0.4rem 0; border-bottom:1px solid #1e293b; box-shadow:0 2px 0 #0b1220;"><button style="all:unset; cursor:pointer;" @onclick='() => ToggleSortAsync("updated")'>Updated @SortGlyph("updated")</button></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var item in _items)
+                    {
+                        <tr id="@RowId(item.Id)" style="border-bottom:1px solid #0f172a; vertical-align: top;">
+                            <td style="padding:0.45rem 0;">
+                                @if (string.Equals(item.MediaType, "Movie", StringComparison.OrdinalIgnoreCase))
+                                {
+                                    <a href="@($"/media/movies/{item.Id}")" style="color:#93c5fd; text-decoration:none;">@item.Title</a>
+                                }
+                                else
+                                {
+                                    @item.Title
+                                }
+                            </td>
+                            <td style="padding:0.45rem 0;">@item.Year</td>
+                            @if (ShowTypeColumn)
+                            {
+                                <td style="padding:0.45rem 0;">@item.MediaType</td>
+                            }
+                            <td style="padding:0.45rem 0;">@(item.IsAvailable ? "Yes" : "No")</td>
+                            <td style="padding:0.45rem 0;">@item.QualityProfile</td>
+                            <td style="padding:0.45rem 0;">@FormatRuntimePair(item.RuntimeMinutes, item.ActualRuntimeMinutes)</td>
+                            <td style="padding:0.45rem 0;">
+                                <span style="@GetRuntimeMatchBadgeStyle(item)">@GetRuntimeMatchLabel(item)</span>
+                            </td>
+                            <td style="padding:0.45rem 0;">@item.UpdatedAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+
+    <div style="margin-top:0.75rem; display:flex; justify-content:space-between; align-items:center;">
+        <span class="card-note">Sorted by @_sortBy (@_sortDir)</span>
+        <div style="display:flex; gap:0.5rem;">
+            <button class="button-primary" style="background:#334155; border-color:#334155;" @onclick="PreviousPageAsync" disabled="@(_loading || _pageIndex == 0)">Previous</button>
+            <button class="button-primary" style="background:#334155; border-color:#334155;" @onclick="NextPageAsync" disabled="@(_loading || !_hasNextPage)">Next</button>
+        </div>
+    </div>
+</div>
+
+<script>
+    window.mediaScrollToRow = (rowId) => {
+        if (!rowId) return;
+        const row = document.getElementById(rowId);
+        const container = document.getElementById('media-table-scroll');
+        if (!row || !container) return;
+        const stickyHeader = container.querySelector('thead th');
+        const headerHeight = stickyHeader ? stickyHeader.getBoundingClientRect().height : 0;
+        const top = row.offsetTop - headerHeight - 4;
+        container.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
+    };
+</script>
+
+@code {
+    [Parameter] public string? FixedMediaType { get; set; }
+    [Parameter] public string[]? MediaTypeOptions { get; set; }
+    [Parameter] public string InitialMediaType { get; set; } = "All";
+
+    private readonly List<LibraryItemDto> _items = [];
+    private readonly int[] _pageSizeOptions = [50, 100, 250];
+    private bool _loading;
+    private int _pageIndex;
+    private bool _hasNextPage;
+    private int _totalCount;
+    private int _pageSize = 100;
+    private string? _pendingScrollRowId;
+
+    private string _searchText = string.Empty;
+    private string _selectedMediaType = "All";
+    private string _selectedAvailability = "All";
+    private string _sortBy = "title";
+    private string _sortDir = "asc";
+    private string _currentParamKey = string.Empty;
+    private bool _loadedOnce;
+    private RuntimePolicySettingsResponse _runtimePolicy = new(3, 5, 10, 12, 20, 25);
+
+    private static readonly string[] JumpTokens = ["#", "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z"];
+    private static readonly string[] DefaultTypeOptions = ["All", "Movie", "Series", "Episode", "Track", "Album"];
+    private bool HasFixedMediaType => !string.IsNullOrWhiteSpace(FixedMediaType);
+    private bool ShowTypeColumn => !string.Equals(FixedMediaType, "Movie", StringComparison.OrdinalIgnoreCase);
+    private string[] EffectiveMediaTypeOptions => MediaTypeOptions is { Length: > 0 } ? MediaTypeOptions : DefaultTypeOptions;
+    private int TotalPages => Math.Max(1, (int)Math.Ceiling((double)Math.Max(_totalCount, 1) / _pageSize));
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (HasFixedMediaType)
+        {
+            _selectedMediaType = FixedMediaType!;
+        }
+        else
+        {
+            var candidate = string.IsNullOrWhiteSpace(InitialMediaType) ? "All" : InitialMediaType;
+            _selectedMediaType = EffectiveMediaTypeOptions.Contains(candidate, StringComparer.OrdinalIgnoreCase)
+                ? candidate
+                : "All";
+        }
+
+        var key = $"{FixedMediaType}|{InitialMediaType}|{string.Join(',', EffectiveMediaTypeOptions)}";
+        if (!_loadedOnce || !string.Equals(_currentParamKey, key, StringComparison.Ordinal))
+        {
+            _currentParamKey = key;
+            _loadedOnce = true;
+            _searchText = string.Empty;
+            _selectedAvailability = "All";
+            _sortBy = "title";
+            _sortDir = "asc";
+            await TryLoadRuntimePolicyAsync();
+            await LoadPageAsync(0);
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (string.IsNullOrWhiteSpace(_pendingScrollRowId)) return;
+        var rowId = _pendingScrollRowId;
+        _pendingScrollRowId = null;
+        await JS.InvokeVoidAsync("mediaScrollToRow", rowId);
+    }
+
+    private async Task RefreshItemsAsync() => await LoadPageAsync(_pageIndex);
+    private async Task ApplyFiltersAsync() => await LoadPageAsync(0);
+
+    private async Task ResetFiltersAsync()
+    {
+        _searchText = string.Empty;
+        _selectedMediaType = HasFixedMediaType ? FixedMediaType! : "All";
+        _selectedAvailability = "All";
+        _sortBy = "title";
+        _sortDir = "asc";
+        await LoadPageAsync(0);
+    }
+
+    private async Task OnPageSizeChangedAsync(ChangeEventArgs e)
+    {
+        if (e.Value is null) return;
+        if (int.TryParse(e.Value.ToString(), out var size))
+        {
+            _pageSize = size;
+            await LoadPageAsync(0);
+        }
+    }
+
+    private async Task ToggleSortAsync(string field)
+    {
+        if (string.Equals(_sortBy, field, StringComparison.OrdinalIgnoreCase))
+            _sortDir = string.Equals(_sortDir, "asc", StringComparison.OrdinalIgnoreCase) ? "desc" : "asc";
+        else
+        {
+            _sortBy = field;
+            _sortDir = "asc";
+        }
+        await LoadPageAsync(0);
+    }
+
+    private string SortGlyph(string field)
+        => !string.Equals(_sortBy, field, StringComparison.OrdinalIgnoreCase) ? "↕" : (string.Equals(_sortDir, "asc", StringComparison.OrdinalIgnoreCase) ? "↑" : "↓");
+
+    private async Task TryLoadRuntimePolicyAsync()
+    {
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, "/api/settings/runtime-policy");
+            await AttachBearerAsync(request);
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                return;
+            }
+
+            var payload = await response.Content.ReadFromJsonAsync<RuntimePolicySettingsResponse>();
+            if (payload is not null)
+            {
+                _runtimePolicy = payload;
+            }
+        }
+        catch
+        {
+            // Keep defaults when unavailable
+        }
+    }
+
+    private static string FormatRuntime(double? runtimeMinutes)
+        => runtimeMinutes.HasValue && runtimeMinutes.Value > 0 ? $"{runtimeMinutes.Value:0.##} min" : "—";
+
+    private static string FormatRuntimePair(double? reported, double? actual)
+        => $"{FormatRuntime(reported)} / {FormatRuntime(actual)}";
+
+    private RuntimeMatchResult EvaluateRuntimeMatch(LibraryItemDto item)
+    {
+        if (!item.RuntimeMinutes.HasValue || !item.ActualRuntimeMinutes.HasValue || item.RuntimeMinutes.Value <= 0 || item.ActualRuntimeMinutes.Value <= 0)
+        {
+            return new RuntimeMatchResult("Unknown", "unknown");
+        }
+
+        var diffMinutes = Math.Abs(item.ActualRuntimeMinutes.Value - item.RuntimeMinutes.Value);
+        var diffPercent = (diffMinutes / item.RuntimeMinutes.Value) * 100d;
+        var thresholdMinutes = Math.Max(_runtimePolicy.ToleranceMinutesFloor, item.RuntimeMinutes.Value * (_runtimePolicy.TolerancePercent / 100d));
+
+        if (diffMinutes <= thresholdMinutes)
+        {
+            return new RuntimeMatchResult("Match", "match");
+        }
+
+        var severity = diffPercent >= _runtimePolicy.CriticalPercent || diffMinutes >= _runtimePolicy.CriticalMinutes
+            ? "Critical"
+            : (diffPercent >= _runtimePolicy.WarningPercent || diffMinutes >= _runtimePolicy.HighMinutes)
+                ? "High"
+                : "Warning";
+
+        return new RuntimeMatchResult($"Mismatch ({severity})", severity.ToLowerInvariant());
+    }
+
+    private string GetRuntimeMatchLabel(LibraryItemDto item)
+        => EvaluateRuntimeMatch(item).Label;
+
+    private string GetRuntimeMatchBadgeStyle(LibraryItemDto item)
+    {
+        const string baseStyle = "display:inline-block; padding:0.2rem 0.52rem; border-radius:999px; font-size:0.78rem; font-weight:700; letter-spacing:0.01em;";
+        var match = EvaluateRuntimeMatch(item);
+        return match.Kind switch
+        {
+            "critical" => baseStyle + "background:rgba(239,68,68,0.22); color:#fecaca; border:1px solid rgba(239,68,68,0.65);",
+            "high" => baseStyle + "background:rgba(249,115,22,0.22); color:#fed7aa; border:1px solid rgba(249,115,22,0.65);",
+            "warning" => baseStyle + "background:rgba(234,179,8,0.22); color:#fde68a; border:1px solid rgba(234,179,8,0.65);",
+            "match" => baseStyle + "background:rgba(16,185,129,0.18); color:#6ee7b7; border:1px solid rgba(16,185,129,0.45);",
+            _ => baseStyle + "background:rgba(148,163,184,0.18); color:#cbd5e1; border:1px solid rgba(148,163,184,0.35);"
+        };
+    }
+
+    private string RowId(long itemId) => $"media-row-{itemId}";
+
+    private async Task JumpToTokenAsync(string token)
+    {
+        if (_loading) return;
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, BuildJumpRequestUrl(token));
+            await AttachBearerAsync(request);
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add("Jump failed.", Severity.Warning);
+                return;
+            }
+            var payload = await response.Content.ReadFromJsonAsync<LibraryJumpDto>();
+            if (payload is null || !payload.Found || payload.TargetId is null)
+            {
+                Snackbar.Add($"No items found for '{token}'.", Severity.Info);
+                return;
+            }
+            await LoadPageAsync(payload.PageIndex, RowId(payload.TargetId.Value));
+        }
+        catch { Snackbar.Add("Jump failed.", Severity.Warning); }
+    }
+
+    private async Task NextPageAsync() { if (_hasNextPage) await LoadPageAsync(_pageIndex + 1); }
+    private async Task PreviousPageAsync() { if (_pageIndex > 0) await LoadPageAsync(_pageIndex - 1); }
+
+    private async Task LoadPageAsync(int requestedPageIndex, string? scrollToRowId = null)
+    {
+        if (_loading) return;
+        _loading = true;
+        try
+        {
+            _totalCount = await LoadCountAsync();
+            if (_totalCount == 0)
+            {
+                _items.Clear();
+                _pageIndex = 0;
+                _hasNextPage = false;
+                return;
+            }
+            var maxPageIndex = Math.Max(0, (int)Math.Ceiling((double)_totalCount / _pageSize) - 1);
+            var pageIndex = Math.Clamp(requestedPageIndex, 0, maxPageIndex);
+            var offset = pageIndex * _pageSize;
+
+            using var request = new HttpRequestMessage(HttpMethod.Get, BuildItemsRequestUrl(offset));
+            await AttachBearerAsync(request);
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add($"Failed to load media ({(int)response.StatusCode}).", Severity.Error);
+                return;
+            }
+
+            var rows = await response.Content.ReadFromJsonAsync<List<LibraryItemDto>>() ?? [];
+            _items.Clear();
+            _items.AddRange(rows);
+            _pageIndex = pageIndex;
+            _hasNextPage = (_pageIndex + 1) * _pageSize < _totalCount;
+            if (!string.IsNullOrWhiteSpace(scrollToRowId) && _items.Any(x => RowId(x.Id) == scrollToRowId))
+                _pendingScrollRowId = scrollToRowId;
+        }
+        catch { Snackbar.Add("Failed to load media items.", Severity.Error); }
+        finally { _loading = false; }
+    }
+
+    private async Task<int> LoadCountAsync()
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, BuildCountRequestUrl());
+        await AttachBearerAsync(request);
+        using var response = await Http.SendAsync(request);
+        if (!response.IsSuccessStatusCode) return 0;
+        var payload = await response.Content.ReadFromJsonAsync<LibraryItemCountDto>();
+        return payload?.Total ?? 0;
+    }
+
+    private string BuildItemsRequestUrl(int offset)
+    {
+        var qs = BuildFilterQueryParts();
+        qs.Add($"sortBy={Uri.EscapeDataString(_sortBy)}");
+        qs.Add($"sortDir={Uri.EscapeDataString(_sortDir)}");
+        qs.Add($"take={_pageSize}");
+        qs.Add($"offset={offset}");
+        return $"/api/library/items?{string.Join("&", qs)}";
+    }
+
+    private string BuildCountRequestUrl() => $"/api/library/items/count?{string.Join("&", BuildFilterQueryParts())}";
+
+    private string BuildJumpRequestUrl(string token)
+    {
+        var qs = BuildFilterQueryParts();
+        qs.Add($"sortBy={Uri.EscapeDataString(_sortBy)}");
+        qs.Add($"sortDir={Uri.EscapeDataString(_sortDir)}");
+        qs.Add($"pageSize={_pageSize}");
+        qs.Add($"token={Uri.EscapeDataString(token)}");
+        return $"/api/library/items/jump?{string.Join("&", qs)}";
+    }
+
+    private List<string> BuildFilterQueryParts()
+    {
+        var qs = new List<string>();
+        if (!string.IsNullOrWhiteSpace(_searchText)) qs.Add($"q={Uri.EscapeDataString(_searchText.Trim())}");
+
+        var mediaType = HasFixedMediaType ? FixedMediaType : _selectedMediaType;
+        if (!string.IsNullOrWhiteSpace(mediaType) && !string.Equals(mediaType, "All", StringComparison.OrdinalIgnoreCase))
+            qs.Add($"mediaType={Uri.EscapeDataString(mediaType)}");
+
+        if (string.Equals(_selectedAvailability, "Available", StringComparison.OrdinalIgnoreCase)) qs.Add("available=true");
+        else if (string.Equals(_selectedAvailability, "Unavailable", StringComparison.OrdinalIgnoreCase)) qs.Add("available=false");
+        return qs;
+    }
+
+    private async Task AttachBearerAsync(HttpRequestMessage request)
+    {
+        var token = await TokenStore.GetTokenAsync();
+        if (!string.IsNullOrWhiteSpace(token))
+            request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+    }
+
+    private record LibraryItemCountDto(int Total);
+    private record LibraryJumpDto(bool Found, string Token, int PageIndex, long? TargetId);
+    private record LibraryItemDto(long Id, string CanonicalKey, string MediaType, string Title, string SortTitle, int? Year, int? TmdbId, int? TvdbId, string ImdbId, string PlexRatingKey, double? RuntimeMinutes, double? ActualRuntimeMinutes, IReadOnlyList<string> AudioLanguages, IReadOnlyList<string> SubtitleLanguages, bool IsAvailable, string QualityProfile, DateTimeOffset? SourceUpdatedAtUtc, DateTimeOffset UpdatedAtUtc, string PrimaryFilePath);
+    private record RuntimePolicySettingsResponse(double ToleranceMinutesFloor, double TolerancePercent, double WarningPercent, double HighMinutes, double CriticalPercent, double CriticalMinutes);
+    private record RuntimeMatchResult(string Label, string Kind);
+}
