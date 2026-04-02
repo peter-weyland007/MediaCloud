@@ -29,6 +29,20 @@ public class AuthTokenStore(ProtectedSessionStorage storage)
         {
             return _cachedToken;
         }
+        catch
+        {
+            _cachedToken = null;
+            try
+            {
+                await storage.DeleteAsync(TokenKey);
+            }
+            catch
+            {
+                // best effort
+            }
+
+            return null;
+        }
     }
 
     public async Task SetTokenAsync(string token)
