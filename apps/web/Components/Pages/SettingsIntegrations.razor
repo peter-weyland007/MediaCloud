@@ -28,7 +28,7 @@
 
         <div class="form-group">
             <label for="integration-instance-name">Instance Name</label>
-            <InputText id="integration-instance-name" class="input" @bind-Value="_form.InstanceName" @bind-Value:event="oninput" />
+            <InputText id="integration-instance-name" class="input" @bind-Value="_form.InstanceName" />
             @if (ShowDuplicateInstanceValidationError())
             {
                 <p class="error-text" style="margin-top:0.35rem;">An instance with this service + name already exists.</p>
@@ -41,7 +41,7 @@
 
         <div class="form-group">
             <label for="integration-base-url">Base URL</label>
-            <InputText id="integration-base-url" class="input" @bind-Value="_form.BaseUrl" @bind-Value:event="oninput" />
+            <InputText id="integration-base-url" class="input" @bind-Value="_form.BaseUrl" />
             @if (ShowBaseUrlValidationError())
             {
                 <p class="error-text" style="margin-top:0.35rem;">Base URL must be a valid absolute URL (e.g. http://localhost:7878).</p>
@@ -68,7 +68,7 @@
         {
             <div class="form-group">
                 <label for="integration-api-key">API Key / Token</label>
-                <InputText id="integration-api-key" class="input" @bind-Value="_form.ApiKey" @bind-Value:event="oninput" />
+                <InputText id="integration-api-key" class="input" @bind-Value="_form.ApiKey" />
                 @if (ShowApiKeyValidationError())
                 {
                     <p class="error-text" style="margin-top:0.35rem;">API key/token is required for API key authentication.</p>
@@ -79,7 +79,7 @@
         {
             <div class="form-group">
                 <label for="integration-username">Username</label>
-                <InputText id="integration-username" class="input" @bind-Value="_form.Username" @bind-Value:event="oninput" />
+                <InputText id="integration-username" class="input" @bind-Value="_form.Username" />
                 @if (ShowBasicUsernameValidationError())
                 {
                     <p class="error-text" style="margin-top:0.35rem;">Username is required for basic authentication.</p>
@@ -87,7 +87,7 @@
             </div>
             <div class="form-group">
                 <label for="integration-password">Password</label>
-                <InputText id="integration-password" type="password" class="input" @bind-Value="_form.Password" @bind-Value:event="oninput" />
+                <InputText id="integration-password" type="password" class="input" @bind-Value="_form.Password" />
                 @if (ShowBasicPasswordValidationError())
                 {
                     <p class="error-text" style="margin-top:0.35rem;">Password is required for basic authentication.</p>
