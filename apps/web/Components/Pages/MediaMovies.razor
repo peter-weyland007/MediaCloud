@@ -14,16 +14,14 @@
 
     <div style="display:flex; flex-direction:column; align-items:flex-end; gap:0.35rem;">
         <p class="card-label" style="margin:0;">ACTIONS</p>
-        <div style="display:inline-flex; border:1px solid #334155; border-radius:0.6rem; overflow:hidden; background:#0f172a;">
-            <button class="button-secondary"
-                    style="border:none; border-right:1px solid #334155; border-radius:0;"
-                    @onclick="RefreshMoviesFromIntegrationsAsync"
-                    disabled="@_syncingMovies">@(_syncingMovies ? "Refreshing movies..." : "Refresh from integrations")</button>
-            <button class="button-secondary"
-                    style="border:none; border-radius:0;"
-                    @onclick="ReprobeAllMoviesAsync"
-                    disabled="@_reprobingAllMovies">@(_reprobingAllMovies ? "Reprobing runtimes..." : "Probe all runtimes")</button>
-        </div>
+        <MudButtonGroup Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Small">
+            <MudButton OnClick="RefreshMoviesFromIntegrationsAsync" Disabled="@_syncingMovies">
+                @(_syncingMovies ? "Refreshing movies..." : "Refresh from integrations")
+            </MudButton>
+            <MudButton OnClick="ReprobeAllMoviesAsync" Disabled="@_reprobingAllMovies">
+                @(_reprobingAllMovies ? "Reprobing runtimes..." : "Probe all runtimes")
+            </MudButton>
+        </MudButtonGroup>
     </div>
 </div>
 
