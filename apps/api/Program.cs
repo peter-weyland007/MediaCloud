@@ -2067,6 +2067,13 @@ static RuntimeProbeResult ProbeRuntime(string filePath)
     catch (Exception ex)
     {
         var error = ex.Message;
+        if (error.Contains("ffprobe", StringComparison.OrdinalIgnoreCase) &&
+            (error.Contains("No such file or directory", StringComparison.OrdinalIgnoreCase) ||
+             error.Contains("cannot find the file", StringComparison.OrdinalIgnoreCase)))
+        {
+            error = "ffprobe is not available in this runtime container. Install ffmpeg/ffprobe in the image and redeploy.";
+        }
+
         if (error.Length > 300) error = error[..300];
         return new RuntimeProbeResult(null, null, error);
     }

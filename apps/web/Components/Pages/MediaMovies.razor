@@ -13,12 +13,11 @@
     </div>
 
     <div style="display:flex; flex-direction:column; align-items:flex-end; gap:0.35rem;">
-        <p class="card-label" style="margin:0;">ACTIONS</p>
-        <MudButtonGroup Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Small">
-            <MudButton OnClick="RefreshMoviesFromIntegrationsAsync" Disabled="@_syncingMovies">
+        <MudButtonGroup Class="movies-action-group" Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small">
+            <MudButton Class="movies-action-btn movies-action-btn--primary" OnClick="RefreshMoviesFromIntegrationsAsync" Disabled="@_syncingMovies">
                 @(_syncingMovies ? "Refreshing movies..." : "Refresh from integrations")
             </MudButton>
-            <MudButton OnClick="ReprobeAllMoviesAsync" Disabled="@_reprobingAllMovies">
+            <MudButton Class="movies-action-btn movies-action-btn--secondary" OnClick="ReprobeAllMoviesAsync" Disabled="@_reprobingAllMovies">
                 @(_reprobingAllMovies ? "Reprobing runtimes..." : "Probe all runtimes")
             </MudButton>
         </MudButtonGroup>
@@ -26,6 +25,27 @@
 </div>
 
 <MediaLibraryTable FixedMediaType="Movie" RefreshVersion="@_refreshVersion" />
+
+<style>
+    .movies-action-btn.mud-button-root {
+        text-transform: none !important;
+        font-weight: 600;
+        min-height: 34px;
+        padding-inline: 0.8rem;
+    }
+
+    .movies-action-btn--primary {
+        background: var(--mud-palette-primary);
+        color: var(--mud-palette-primary-text);
+        border-color: var(--mud-palette-primary);
+    }
+
+    .movies-action-btn--secondary {
+        background: var(--mud-palette-primary);
+        color: var(--mud-palette-primary-text);
+        border-color: var(--mud-palette-primary);
+    }
+</style>
 
 @code {
     private bool _reprobingAllMovies;

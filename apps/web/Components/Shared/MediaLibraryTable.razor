@@ -9,7 +9,7 @@
         <h2 style="margin:0;">@_totalCount total · @(_items.Count) on page</h2>
         <p class="card-note" style="margin:0.35rem 0 0;">Page @(_pageIndex + 1) of @TotalPages</p>
     </div>
-    <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small" OnClick="RefreshItemsAsync" Disabled="@_loading">@(_loading ? "Refreshing..." : "Refresh")</MudButton>
+    <MudButton Class="media-btn media-btn--primary" Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small" OnClick="RefreshItemsAsync" Disabled="@_loading">@(_loading ? "Refreshing..." : "Refresh")</MudButton>
 </div>
 
 <div class="card" style="margin-bottom: 1rem;">
@@ -57,8 +57,8 @@
                 }
             </select>
         </div>
-        <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small" OnClick="ApplyFiltersAsync" Disabled="@_loading">Apply</MudButton>
-        <MudButton Variant="Variant.Outlined" Color="Color.Secondary" Size="Size.Small" OnClick="ResetFiltersAsync" Disabled="@_loading">Reset</MudButton>
+        <MudButton Class="media-btn media-btn--primary" Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small" OnClick="ApplyFiltersAsync" Disabled="@_loading">Apply</MudButton>
+        <MudButton Class="media-btn media-btn--primary" Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small" OnClick="ResetFiltersAsync" Disabled="@_loading">Reset</MudButton>
     </div>
 </div>
 
@@ -78,8 +78,9 @@
         <div style="display:flex; flex-wrap:wrap; gap:0.35rem; margin-bottom:0.65rem;">
             @foreach (var token in JumpTokens)
             {
-                <MudButton Variant="Variant.Outlined"
-                           Color="Color.Secondary"
+                <MudButton Class="media-chip"
+                           Variant="Variant.Outlined"
+                           Color="Color.Primary"
                            Size="Size.Small"
                            Disabled="@_loading"
                            OnClick="() => JumpToTokenAsync(token)">@token</MudButton>
@@ -139,11 +140,43 @@
     <div style="margin-top:0.75rem; display:flex; justify-content:space-between; align-items:center;">
         <span class="card-note">Sorted by @_sortBy (@_sortDir)</span>
         <div style="display:flex; gap:0.5rem;">
-            <MudButton Variant="Variant.Outlined" Color="Color.Secondary" Size="Size.Small" OnClick="PreviousPageAsync" Disabled="@(_loading || _pageIndex == 0)">Previous</MudButton>
-            <MudButton Variant="Variant.Outlined" Color="Color.Secondary" Size="Size.Small" OnClick="NextPageAsync" Disabled="@(_loading || !_hasNextPage)">Next</MudButton>
+            <MudButton Class="media-btn media-btn--secondary" Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Small" OnClick="PreviousPageAsync" Disabled="@(_loading || _pageIndex == 0)">Previous</MudButton>
+            <MudButton Class="media-btn media-btn--secondary" Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Small" OnClick="NextPageAsync" Disabled="@(_loading || !_hasNextPage)">Next</MudButton>
         </div>
     </div>
 </div>
+
+<style>
+    .media-btn.mud-button-root,
+    .media-chip.mud-button-root {
+        text-transform: none;
+        font-weight: 600;
+        letter-spacing: 0;
+    }
+
+    .media-btn.mud-button-root {
+        min-height: 34px;
+        padding-inline: 0.9rem;
+    }
+
+    .media-btn--primary.mud-button-root {
+        background: var(--mud-palette-primary);
+        border-color: var(--mud-palette-primary);
+        color: var(--mud-palette-primary-text);
+    }
+
+    .media-btn--secondary.mud-button-root,
+    .media-chip.mud-button-root {
+        background: rgba(15, 23, 42, 0.55);
+        border-color: #334155;
+        color: #93c5fd;
+    }
+
+    .media-chip.mud-button-root {
+        min-width: 2.1rem;
+        padding-inline: 0.5rem;
+    }
+</style>
 
 <script>
     window.mediaScrollToRow = (rowId) => {
