@@ -20,6 +20,9 @@
             <MudButton Class="movies-action-btn movies-action-btn--secondary" OnClick="ReprobeAllMoviesAsync" Disabled="@_isActionRunning">
                 @(_reprobingAllMovies ? "Reprobing runtimes..." : "Probe all runtimes")
             </MudButton>
+            <MudButton Class="movies-action-btn movies-action-btn--danger" OnClick="PurgeMoviesAsync" Disabled="@_isActionRunning">
+                @(_purgingMovies ? "Purging movies..." : "Purge movie data")
+            </MudButton>
         </MudButtonGroup>
 
         <div class="movies-action-progress" role="status" aria-live="polite">
@@ -60,6 +63,12 @@
         border-color: var(--mud-palette-primary);
     }
 
+    .movies-action-btn--danger {
+        background: var(--mud-palette-error);
+        color: var(--mud-palette-error-text);
+        border-color: var(--mud-palette-error);
+    }
+
     .movies-action-group {
         width: 100%;
     }
@@ -91,12 +100,13 @@
 @code {
     private bool _reprobingAllMovies;
     private bool _syncingMovies;
+    private bool _purgingMovies;
     private int _refreshVersion;
     private bool _actionProgressIndeterminate;
     private double _actionProgressPercent;
     private string _actionStatusText = "Ready";
 
-    private bool _isActionRunning => _syncingMovies || _reprobingAllMovies;
+    private bool _isActionRunning => _syncingMovies || _reprobingAllMovies || _purgingMovies;
     private string ActionPercentLabel => _actionProgressIndeterminate && _isActionRunning ? "--" : $"{Math.Round(_actionProgressPercent),3}%";
 
     private async Task RefreshMoviesFromIntegrationsAsync()
@@ -116,12 +126,15 @@
 
             var integrations = await listResponse.Content.ReadFromJsonAsync<List<IntegrationInstanceResponse>>() ?? [];
             var movieIntegrations = integrations
-                .Where(x => x.Enabled && string.Equals(x.ServiceKey, "Radarr", StringComparison.OrdinalIgnoreCase))
+                .Where(x => x.Enabled &&
+                            (string.Equals(x.ServiceKey, "Plex", StringComparison.OrdinalIgnoreCase)
+                             || string.Equals(x.ServiceKey, "Radarr", StringComparison.OrdinalIgnoreCase)
+                             || string.Equals(x.ServiceKey, "Overseerr", StringComparison.OrdinalIgnoreCase)))
                 .ToList();
 
             if (movieIntegrations.Count == 0)
             {
-                Snackbar.Add("No enabled Radarr integrations found.", Severity.Warning);
+                Snackbar.Add("No enabled Plex/Radarr/Overseerr integrations found.", Severity.Warning);
                 return;
             }
 
@@ -129,6 +142,7 @@
             var failed = 0;
             var completed = 0;
             var total = movieIntegrations.Count;
+            var failedMessages = new List<string>();
             await SetActionProgressAsync($"Syncing 0/{total} integrations...", 0, indeterminate: false);
 
             foreach (var integration in movieIntegrations)
@@ -139,13 +153,24 @@
                 };
                 await AttachBearerAsync(syncRequest);
                 using var syncResponse = await Http.SendAsync(syncRequest);
-                if (syncResponse.IsSuccessStatusCode)
+
+                if (!syncResponse.IsSuccessStatusCode)
                 {
-                    synced++;
+                    failed++;
+                    failedMessages.Add($"{integration.InstanceName}: HTTP {(int)syncResponse.StatusCode}");
                 }
                 else
                 {
-                    failed++;
+                    var payload = await syncResponse.Content.ReadFromJsonAsync<TriggerIntegrationSyncResponse>();
+                    if (payload?.Accepted == true)
+                    {
+                        synced++;
+                    }
+                    else
+                    {
+                        failed++;
+                        failedMessages.Add($"{integration.InstanceName}: {payload?.Message ?? "sync not accepted"}");
+                    }
                 }
 
                 completed++;
@@ -156,6 +181,10 @@
             await SetActionProgressAsync("Finalizing refresh...", 100, indeterminate: false);
             _refreshVersion++;
             Snackbar.Add($"Movie refresh complete. Synced {synced}, failed {failed}.", failed == 0 ? Severity.Success : Severity.Warning);
+            if (failedMessages.Count > 0)
+            {
+                Snackbar.Add(string.Join(" | ", failedMessages.Take(2)), Severity.Warning);
+            }
         }
         catch
         {
@@ -164,6 +193,40 @@
         finally
         {
             _syncingMovies = false;
+            ClearActionProgress();
+        }
+    }
+
+    private async Task PurgeMoviesAsync()
+    {
+        _purgingMovies = true;
+        await SetActionProgressAsync("Purging movie data...", 20, indeterminate: false);
+        try
+        {
+            using var purgeRequest = new HttpRequestMessage(HttpMethod.Post, "/api/library/purge")
+            {
+                Content = JsonContent.Create(new PurgeLibraryRequest("Movie", true, true))
+            };
+            await AttachBearerAsync(purgeRequest);
+            using var purgeResponse = await Http.SendAsync(purgeRequest);
+            if (!purgeResponse.IsSuccessStatusCode)
+            {
+                Snackbar.Add($"Purge failed ({(int)purgeResponse.StatusCode}).", Severity.Error);
+                return;
+            }
+
+            var payload = await purgeResponse.Content.ReadFromJsonAsync<PurgeLibraryResponse>();
+            await SetActionProgressAsync("Finalizing purge...", 100, indeterminate: false);
+            _refreshVersion++;
+            Snackbar.Add($"Purged movies: items {payload?.ItemsDeleted ?? 0}, links {payload?.SourceLinksDeleted ?? 0}, issues {payload?.IssuesDeleted ?? 0}.", Severity.Success);
+        }
+        catch
+        {
+            Snackbar.Add("Purge failed.", Severity.Error);
+        }
+        finally
+        {
+            _purgingMovies = false;
             ClearActionProgress();
         }
     }
@@ -276,5 +339,8 @@
     private sealed record StartRuntimeReprobeJobResponse(Guid JobId);
     private sealed record RuntimeReprobeJobStatusResponse(Guid JobId, string Status, string Message, int TotalCandidates, int Inspected, int Attempted, int Updated, int MissingFiles, int Failed, DateTimeOffset StartedAtUtc, DateTimeOffset? FinishedAtUtc);
     private sealed record TriggerIntegrationSyncRequest(bool ForceFullResync = false);
+    private sealed record TriggerIntegrationSyncResponse(long IntegrationId, bool Accepted, string Message);
+    private sealed record PurgeLibraryRequest(string? MediaType = null, bool ResetSyncState = true, bool ClearMonitoringState = true);
+    private sealed record PurgeLibraryResponse(string MediaType, int ItemsDeleted, int SourceLinksDeleted, int IssuesDeleted, int MonitoringStateDeleted);
     private sealed record IntegrationInstanceResponse(long Id, string ServiceKey, string InstanceName, string BaseUrl, string AuthType, bool Enabled);
 }

@@ -1347,6 +1347,59 @@ app.MapGet("/api/library/items/count", async (MediaCloudDbContext db, string? me
     return Results.Ok(new LibraryItemCountResponse(total));
 }).RequireAuthorization();
 
+app.MapPost("/api/library/purge", async (PurgeLibraryRequest request, MediaCloudDbContext db, ClaimsPrincipal principal) =>
+{
+    var normalizedMediaType = (request.MediaType ?? string.Empty).Trim();
+    IQueryable<LibraryItem> itemQuery = db.LibraryItems;
+    if (!string.IsNullOrWhiteSpace(normalizedMediaType))
+    {
+        itemQuery = itemQuery.Where(x => x.MediaType == normalizedMediaType);
+    }
+
+    var itemIds = await itemQuery.Select(x => x.Id).ToListAsync();
+    if (itemIds.Count == 0)
+    {
+        return Results.Ok(new PurgeLibraryResponse(normalizedMediaType, 0, 0, 0, 0));
+    }
+
+    var issuesDeleted = await db.LibraryIssues.Where(x => itemIds.Contains(x.LibraryItemId)).ExecuteDeleteAsync();
+    var linksDeleted = await db.LibraryItemSourceLinks.Where(x => itemIds.Contains(x.LibraryItemId)).ExecuteDeleteAsync();
+    var itemsDeleted = await db.LibraryItems.Where(x => itemIds.Contains(x.Id)).ExecuteDeleteAsync();
+
+    var monitoringSettingsDeleted = 0;
+    if (request.ClearMonitoringState)
+    {
+        var keys = itemIds.Select(GetMovieDesiredMonitoringKey).ToList();
+        if (keys.Count > 0)
+        {
+            monitoringSettingsDeleted = await db.AppConfigEntries.Where(x => keys.Contains(x.Key)).ExecuteDeleteAsync();
+        }
+    }
+
+    if (request.ResetSyncState)
+    {
+        var syncStates = await (
+            from state in db.IntegrationSyncStates
+            join integration in db.IntegrationConfigs on state.IntegrationId equals integration.Id
+            where integration.Enabled
+                && (integration.ServiceKey.ToLower() == "plex" || integration.ServiceKey.ToLower() == "radarr" || integration.ServiceKey.ToLower() == "overseerr")
+            select state)
+            .ToListAsync();
+
+        foreach (var sync in syncStates)
+        {
+            sync.LastCursor = string.Empty;
+            sync.LastEtag = string.Empty;
+            sync.UpdatedAtUtc = DateTimeOffset.UtcNow;
+        }
+    }
+
+    await WriteAuditAsync(db, principal, "library_purge", principal.Identity?.Name ?? "admin", $"Purged library mediaType={(string.IsNullOrWhiteSpace(normalizedMediaType) ? "all" : normalizedMediaType)} items={itemsDeleted} links={linksDeleted} issues={issuesDeleted}");
+    await db.SaveChangesAsync();
+
+    return Results.Ok(new PurgeLibraryResponse(normalizedMediaType, itemsDeleted, linksDeleted, issuesDeleted, monitoringSettingsDeleted));
+}).RequireAuthorization("AdminOnly");
+
 app.MapGet("/api/library/items/jump", async (MediaCloudDbContext db, string token, string? mediaType, string? q, bool? available, string? sortBy, string? sortDir, int? pageSize) =>
 {
     if (string.IsNullOrWhiteSpace(token))
@@ -4119,6 +4172,8 @@ public record MonitoringSettingsResponse(bool ManagedByMediaCloud, bool AutoSync
 public record LibraryItemMonitoringStateResponse(long LibraryItemId, bool? DesiredMonitored, bool? RadarrMonitored, bool? MonitoringDrift, bool OverseerrSignalPresent, bool RadarrExists, bool AutoSyncEnabled);
 public record LibraryItemMonitoringApplyResponse(long LibraryItemId, bool Success, bool? DesiredMonitored, bool? RadarrMonitoredBefore, bool? RadarrMonitoredAfter, bool? MonitoringDriftAfter, bool ActionAttempted, string Message);
 public record LibraryItemCountResponse(int Total);
+public record PurgeLibraryRequest(string? MediaType = null, bool ResetSyncState = true, bool ClearMonitoringState = true);
+public record PurgeLibraryResponse(string MediaType, int ItemsDeleted, int SourceLinksDeleted, int IssuesDeleted, int MonitoringStateDeleted);
 public record LibraryJumpResponse(bool Found, string Token, int PageIndex, long? TargetId);
 public record LibraryIssueDto(long Id, long LibraryItemId, string IssueType, string Severity, string Status, string Summary, string SuggestedAction, string DetailsJson, DateTimeOffset FirstDetectedAtUtc, DateTimeOffset LastDetectedAtUtc, DateTimeOffset? ResolvedAtUtc, string LibraryItemTitle, string MediaType);
 public record UserSummaryResponse(Guid Id, string Username, string Role, DateTimeOffset CreatedAtUtc);
