@@ -12,15 +12,29 @@
         <p class="subtitle" style="margin:0.25rem 0 0;">Movie library view.</p>
     </div>
 
-    <div style="display:flex; flex-direction:column; align-items:flex-end; gap:0.35rem;">
+    <div style="display:flex; flex-direction:column; align-items:flex-end; gap:0.35rem; min-width:360px;">
         <MudButtonGroup Class="movies-action-group" Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small">
-            <MudButton Class="movies-action-btn movies-action-btn--primary" OnClick="RefreshMoviesFromIntegrationsAsync" Disabled="@_syncingMovies">
+            <MudButton Class="movies-action-btn movies-action-btn--primary" OnClick="RefreshMoviesFromIntegrationsAsync" Disabled="@_isActionRunning">
                 @(_syncingMovies ? "Refreshing movies..." : "Refresh from integrations")
             </MudButton>
-            <MudButton Class="movies-action-btn movies-action-btn--secondary" OnClick="ReprobeAllMoviesAsync" Disabled="@_reprobingAllMovies">
+            <MudButton Class="movies-action-btn movies-action-btn--secondary" OnClick="ReprobeAllMoviesAsync" Disabled="@_isActionRunning">
                 @(_reprobingAllMovies ? "Reprobing runtimes..." : "Probe all runtimes")
             </MudButton>
         </MudButtonGroup>
+
+        <div class="movies-action-progress" role="status" aria-live="polite">
+            @if (_isActionRunning && _actionProgressIndeterminate)
+            {
+                <MudProgressLinear Color="Color.Primary" Indeterminate="true" Rounded="true" Class="movies-action-progress-bar" />
+            }
+            else
+            {
+                <MudProgressLinear Color="Color.Primary" Value="@_actionProgressPercent" Rounded="true" Class="movies-action-progress-bar" />
+            }
+            <div class="movies-action-progress-meta">
+                <span class="movies-action-progress-text">@_actionStatusText (@ActionPercentLabel)</span>
+            </div>
+        </div>
     </div>
 </div>
 
@@ -45,16 +59,50 @@
         color: var(--mud-palette-primary-text);
         border-color: var(--mud-palette-primary);
     }
+
+    .movies-action-group {
+        width: 100%;
+    }
+
+    .movies-action-progress {
+        width: 100%;
+        display: grid;
+        gap: 0.35rem;
+    }
+
+    .movies-action-progress-bar {
+        width: 100%;
+    }
+
+    .movies-action-progress-meta {
+        display: flex;
+        align-items: center;
+        min-height: 1rem;
+    }
+
+    .movies-action-progress-text {
+        color: var(--mud-palette-primary-text);
+        font-size: 0.84rem;
+        font-weight: 600;
+        white-space: nowrap;
+    }
 </style>
 
 @code {
     private bool _reprobingAllMovies;
     private bool _syncingMovies;
     private int _refreshVersion;
+    private bool _actionProgressIndeterminate;
+    private double _actionProgressPercent;
+    private string _actionStatusText = "Ready";
+
+    private bool _isActionRunning => _syncingMovies || _reprobingAllMovies;
+    private string ActionPercentLabel => _actionProgressIndeterminate && _isActionRunning ? "--" : $"{Math.Round(_actionProgressPercent),3}%";
 
     private async Task RefreshMoviesFromIntegrationsAsync()
     {
         _syncingMovies = true;
+        await SetActionProgressAsync("Loading integrations...", 0, indeterminate: true);
         try
         {
             using var listRequest = new HttpRequestMessage(HttpMethod.Get, "/api/integrations");
@@ -79,6 +127,9 @@
 
             var synced = 0;
             var failed = 0;
+            var completed = 0;
+            var total = movieIntegrations.Count;
+            await SetActionProgressAsync($"Syncing 0/{total} integrations...", 0, indeterminate: false);
 
             foreach (var integration in movieIntegrations)
             {
@@ -96,8 +147,13 @@
                 {
                     failed++;
                 }
+
+                completed++;
+                var percent = total == 0 ? 0 : (completed * 100d) / total;
+                await SetActionProgressAsync($"Syncing {completed}/{total} integrations ({Math.Round(percent)}%)...", percent, indeterminate: false);
             }
 
+            await SetActionProgressAsync("Finalizing refresh...", 100, indeterminate: false);
             _refreshVersion++;
             Snackbar.Add($"Movie refresh complete. Synced {synced}, failed {failed}.", failed == 0 ? Severity.Success : Severity.Warning);
         }
@@ -108,35 +164,78 @@
         finally
         {
             _syncingMovies = false;
+            ClearActionProgress();
         }
     }
 
     private async Task ReprobeAllMoviesAsync()
     {
         _reprobingAllMovies = true;
+        await SetActionProgressAsync("Starting runtime probe job...", 0, indeterminate: true);
         try
         {
-            using var request = new HttpRequestMessage(HttpMethod.Post, "/api/library/items/reprobe-missing-runtimes")
+            using var startRequest = new HttpRequestMessage(HttpMethod.Post, "/api/library/items/reprobe-runtimes/jobs")
             {
                 Content = JsonContent.Create(new BatchRuntimeReprobeRequest("Movie", 2000, true))
             };
-            await AttachBearerAsync(request);
-            using var response = await Http.SendAsync(request);
-            if (!response.IsSuccessStatusCode)
+            await AttachBearerAsync(startRequest);
+            using var startResponse = await Http.SendAsync(startRequest);
+            if (!startResponse.IsSuccessStatusCode)
             {
-                Snackbar.Add($"Bulk probe failed ({(int)response.StatusCode}). Admin access may be required.", Severity.Error);
+                Snackbar.Add($"Bulk probe failed to start ({(int)startResponse.StatusCode}). Admin access may be required.", Severity.Error);
                 return;
             }
 
-            var payload = await response.Content.ReadFromJsonAsync<BatchRuntimeReprobeResponse>();
-            if (payload is null)
+            var startPayload = await startResponse.Content.ReadFromJsonAsync<StartRuntimeReprobeJobResponse>();
+            if (startPayload is null || startPayload.JobId == Guid.Empty)
             {
-                Snackbar.Add("Bulk probe completed with no result payload.", Severity.Warning);
+                Snackbar.Add("Bulk probe failed to start (no job id returned).", Severity.Error);
                 return;
             }
 
-            Snackbar.Add($"Bulk probe done: updated {payload.Updated}/{payload.Inspected}, missing files {payload.MissingFiles}, probe failures {payload.Failed}.", Severity.Success);
-            _refreshVersion++;
+            while (true)
+            {
+                using var statusRequest = new HttpRequestMessage(HttpMethod.Get, $"/api/library/items/reprobe-runtimes/jobs/{startPayload.JobId}");
+                await AttachBearerAsync(statusRequest);
+                using var statusResponse = await Http.SendAsync(statusRequest);
+                if (!statusResponse.IsSuccessStatusCode)
+                {
+                    Snackbar.Add($"Bulk probe status check failed ({(int)statusResponse.StatusCode}).", Severity.Error);
+                    return;
+                }
+
+                var status = await statusResponse.Content.ReadFromJsonAsync<RuntimeReprobeJobStatusResponse>();
+                if (status is null)
+                {
+                    Snackbar.Add("Bulk probe status payload was empty.", Severity.Error);
+                    return;
+                }
+
+                var message = string.IsNullOrWhiteSpace(status.Message)
+                    ? "Runtime probe in progress..."
+                    : status.Message;
+
+                var percent = status.TotalCandidates <= 0
+                    ? (status.Status.Equals("completed", StringComparison.OrdinalIgnoreCase) ? 100 : 0)
+                    : Math.Min(100, (status.Inspected * 100d) / status.TotalCandidates);
+
+                await SetActionProgressAsync(message, percent, indeterminate: false);
+
+                if (status.Status.Equals("completed", StringComparison.OrdinalIgnoreCase))
+                {
+                    Snackbar.Add($"Bulk probe done: updated {status.Updated}/{status.Inspected}, missing files {status.MissingFiles}, probe failures {status.Failed}.", Severity.Success);
+                    _refreshVersion++;
+                    return;
+                }
+
+                if (status.Status.Equals("failed", StringComparison.OrdinalIgnoreCase))
+                {
+                    Snackbar.Add(status.Message, Severity.Error);
+                    return;
+                }
+
+                await Task.Delay(700);
+            }
         }
         catch
         {
@@ -145,7 +244,23 @@
         finally
         {
             _reprobingAllMovies = false;
+            ClearActionProgress();
         }
+    }
+
+    private async Task SetActionProgressAsync(string text, double percent, bool indeterminate)
+    {
+        _actionStatusText = text;
+        _actionProgressPercent = Math.Clamp(percent, 0, 100);
+        _actionProgressIndeterminate = indeterminate;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void ClearActionProgress()
+    {
+        _actionStatusText = "Ready";
+        _actionProgressPercent = 0;
+        _actionProgressIndeterminate = false;
     }
 
     private async Task AttachBearerAsync(HttpRequestMessage request)
@@ -158,7 +273,8 @@
     }
 
     private sealed record BatchRuntimeReprobeRequest(string? MediaType, int Take = 200, bool ForceAll = false);
-    private sealed record BatchRuntimeReprobeResponse(int Inspected, int Attempted, int Updated, int MissingFiles, int Failed);
+    private sealed record StartRuntimeReprobeJobResponse(Guid JobId);
+    private sealed record RuntimeReprobeJobStatusResponse(Guid JobId, string Status, string Message, int TotalCandidates, int Inspected, int Attempted, int Updated, int MissingFiles, int Failed, DateTimeOffset StartedAtUtc, DateTimeOffset? FinishedAtUtc);
     private sealed record TriggerIntegrationSyncRequest(bool ForceFullResync = false);
     private sealed record IntegrationInstanceResponse(long Id, string ServiceKey, string InstanceName, string BaseUrl, string AuthType, bool Enabled);
 }

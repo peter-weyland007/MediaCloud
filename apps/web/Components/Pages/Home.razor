@@ -1,6 +1,8 @@
 @page "/"
 @attribute [Authorize]
+@implements IAsyncDisposable
 @inject HttpClient Http
+@inject AuthTokenStore TokenStore
 
 <PageTitle>MediaCloud Dashboard</PageTitle>
 
@@ -18,28 +20,214 @@
 
     <article class="card">
         <p class="card-label">OPEN ISSUES</p>
-        <h2>0</h2>
-        <p class="card-note">Issue ingestion scaffolded next</p>
+        <h2>@_openIssueCount</h2>
+        <p class="card-note">@_issuesDetail</p>
     </article>
 
     <article class="card">
-        <p class="card-label">LIBRARY CHECKS</p>
-        <h2>Pending</h2>
-        <p class="card-note">Runtime/language validation not wired yet</p>
+        <p class="card-label">LIBRARY ITEMS</p>
+        <h2>@_libraryTotal</h2>
+        <p class="card-note">@_libraryDetail</p>
     </article>
+</section>
+
+<section class="card" style="margin-top:1rem;">
+    <p class="card-label">SOURCE OF TRUTH FLOW</p>
+    <div style="display:grid; gap:0.5rem; margin-top:0.5rem;">
+        <div><strong>Radarr</strong> → base catalog ingestion (movie identity, runtime baseline, file path mapping).</div>
+        <div><strong>Plex</strong> → file playback truth (actual stream metadata: audio/subtitle languages, runtime reality).</div>
+        <div><strong>Overseerr</strong> → request intent truth (what users requested, request lifecycle, demand context).</div>
+        <div><strong>MediaCloud</strong> fuses all three into one per-title record and opens issues when truths conflict.</div>
+    </div>
+</section>
+
+<section class="card" style="margin-top:1rem;">
+    <p class="card-label">INTEGRATION CONTRIBUTIONS</p>
+    @if (_sourceTruth.Integrations.Count == 0)
+    {
+        <p class="card-note">No integrations configured yet.</p>
+    }
+    else
+    {
+        <table style="width:100%; border-collapse:collapse; font-size:0.86rem; margin-top:0.45rem;">
+            <thead>
+                <tr style="text-align:left; border-bottom:1px solid rgba(148,163,184,0.25);">
+                    <th style="padding:0.35rem 0.45rem;">Service</th>
+                    <th style="padding:0.35rem 0.45rem;">Instance</th>
+                    <th style="padding:0.35rem 0.45rem;">Role</th>
+                    <th style="padding:0.35rem 0.45rem;">Enabled</th>
+                    <th style="padding:0.35rem 0.45rem;">Source Links</th>
+                    <th style="padding:0.35rem 0.45rem;">Last Success</th>
+                    <th style="padding:0.35rem 0.45rem;">Last Error</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var integration in _sourceTruth.Integrations)
+                {
+                    <tr style="vertical-align:top; border-bottom:1px solid rgba(148,163,184,0.12);">
+                        <td style="padding:0.35rem 0.45rem;">@integration.DisplayName</td>
+                        <td style="padding:0.35rem 0.45rem;">@integration.InstanceName</td>
+                        <td style="padding:0.35rem 0.45rem;">@integration.RoleSummary</td>
+                        <td style="padding:0.35rem 0.45rem;">@(integration.Enabled ? "Yes" : "No")</td>
+                        <td style="padding:0.35rem 0.45rem;">@integration.SourceLinkCount</td>
+                        <td style="padding:0.35rem 0.45rem;">@FormatTime(integration.LastSuccessfulAtUtc)</td>
+                        <td style="padding:0.35rem 0.45rem;">@FormatError(integration.LastError)</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+</section>
+
+<section class="card" style="margin-top:1rem;">
+    <p class="card-label">PLEX BACKFILL → RADARR / OVERSEERR</p>
+    <p class="card-note" style="margin-top:0.2rem;">Preview Plex-only drift, then push missing movies into Radarr and optional requests into Overseerr.</p>
+
+    <div style="display:flex; flex-wrap:wrap; gap:0.9rem; align-items:center; margin:0.55rem 0;">
+        <label style="display:flex; align-items:center; gap:0.35rem; font-size:0.86rem;">
+            <input type="checkbox" @bind="_backfillCreateOverseerrRequests" />
+            Create Overseerr requests during Apply
+        </label>
+        <label style="display:flex; align-items:center; gap:0.35rem; font-size:0.86rem;">
+            <input type="checkbox" @bind="_backfillIncludeAlreadyRequested" />
+            Preview only missing-Radarr items
+        </label>
+        <button class="button-secondary" @onclick="EnrichPlexBackfillIdsAsync" disabled="@_backfillWorking">@(_backfillEnriching ? "Enriching..." : "Enrich IDs from Plex")</button>
+        <button class="button-secondary" @onclick="PreviewPlexBackfillAsync" disabled="@_backfillWorking">@(_backfillPreviewing ? "Previewing..." : "Preview")</button>
+        <button class="button-primary" @onclick="ApplyPlexBackfillAsync" disabled="@(_backfillWorking || _selectedBackfillIds.Count == 0)">@(_backfillApplying ? "Applying..." : "Apply selected")</button>
+    </div>
+
+    <p class="card-note">@_backfillStatus</p>
+    <p class="card-note">Selected for apply: @_selectedBackfillIds.Count</p>
+
+    @if (_backfillPreview is not null)
+    {
+        <div style="display:flex; gap:1rem; flex-wrap:wrap; margin-top:0.45rem;">
+            <span class="card-note">Plex movies: @_backfillPreview.TotalPlexMovies</span>
+            <span class="card-note">Missing Radarr: @_backfillPreview.MissingRadarrCount</span>
+            <span class="card-note">Missing Overseerr request: @_backfillPreview.MissingOverseerrRequestCount</span>
+            <span class="card-note">Missing both: @_backfillPreview.MissingBothCount</span>
+            <span class="card-note">Candidates: @_backfillPreview.CandidateCount</span>
+        </div>
+
+        @if (_backfillPreview.Items.Count > 0)
+        {
+            <table style="width:100%; border-collapse:collapse; font-size:0.84rem; margin-top:0.55rem;">
+                <thead>
+                    <tr style="text-align:left; border-bottom:1px solid rgba(148,163,184,0.25);">
+                        <th style="padding:0.3rem 0.4rem; width:80px;">
+                            <label style="display:flex; gap:0.35rem; align-items:center;">
+                                <input type="checkbox" checked="@AreAllVisibleBackfillRowsSelected" @onchange="ToggleSelectAllBackfillRows" />
+                                All
+                            </label>
+                        </th>
+                        <th style="padding:0.3rem 0.4rem;">Title</th>
+                        <th style="padding:0.3rem 0.4rem;">Year</th>
+                        <th style="padding:0.3rem 0.4rem;">Missing Radarr</th>
+                        <th style="padding:0.3rem 0.4rem;">Missing Overseerr request</th>
+                        <th style="padding:0.3rem 0.4rem;">In Overseerr media</th>
+                        <th style="padding:0.3rem 0.4rem;">TMDB</th>
+                        <th style="padding:0.3rem 0.4rem;">Sources</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var row in VisibleBackfillRows)
+                    {
+                        <tr style="border-bottom:1px solid rgba(148,163,184,0.12);">
+                            <td style="padding:0.3rem 0.4rem;">
+                                <input type="checkbox" checked="@_selectedBackfillIds.Contains(row.LibraryItemId)" disabled="@(!row.CanBackfill)" @onchange="(e => ToggleBackfillRowSelection(row.LibraryItemId, e.Value))" />
+                            </td>
+                            <td style="padding:0.3rem 0.4rem;">@row.Title</td>
+                            <td style="padding:0.3rem 0.4rem;">@row.Year</td>
+                            <td style="padding:0.3rem 0.4rem;">@(row.MissingRadarr ? "Yes" : "No")</td>
+                            <td style="padding:0.3rem 0.4rem;">@(row.MissingOverseerrRequest ? "Yes" : "No")</td>
+                            <td style="padding:0.3rem 0.4rem;">@(row.InOverseerrMedia ? "Yes" : "No")</td>
+                            <td style="padding:0.3rem 0.4rem;">@(row.TmdbId?.ToString() ?? "—")</td>
+                            <td style="padding:0.3rem 0.4rem;">@row.SourceServicesCsv</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    }
+
+    @if (_backfillLastErrors.Count > 0)
+    {
+        <div style="margin-top:0.65rem;">
+            <p class="card-label">LAST APPLY ERRORS</p>
+            <ul style="margin:0.35rem 0 0 1rem; padding:0;">
+                @foreach (var err in _backfillLastErrors.Take(10))
+                {
+                    <li class="card-note">@err</li>
+                }
+            </ul>
+        </div>
+    }
 </section>
 
 @code {
     private string _healthLabel = "Checking...";
     private string _healthDetail = "Calling /api/health";
+    private int _openIssueCount;
+    private string _issuesDetail = "Loading issues...";
+    private int _libraryTotal;
+    private string _libraryDetail = "Loading library stats...";
+    private DashboardSourceTruthResponse _sourceTruth = new([]);
+    private bool _backfillPreviewing;
+    private bool _backfillApplying;
+    private bool _backfillEnriching;
+    private bool _backfillCreateOverseerrRequests;
+    private bool _backfillIncludeAlreadyRequested;
+    private PlexBackfillPreviewResponse _backfillPreview = new(0, 0, 0, 0, 0, []);
+    private readonly HashSet<long> _selectedBackfillIds = [];
+    private IReadOnlyList<string> _backfillLastErrors = [];
+    private string _backfillStatus = "Run preview to see Plex-only drift.";
+    private bool _backfillWorking => _backfillPreviewing || _backfillApplying || _backfillEnriching;
+    private IReadOnlyList<PlexBackfillCandidateDto> VisibleBackfillRows => _backfillPreview.Items.Take(20).ToList();
+    private bool AreAllVisibleBackfillRowsSelected => VisibleBackfillRows.Where(x => x.CanBackfill).All(x => _selectedBackfillIds.Contains(x.LibraryItemId)) && VisibleBackfillRows.Any(x => x.CanBackfill);
+    private PeriodicTimer? _pollTimer;
+    private CancellationTokenSource? _pollCts;
 
     protected override async Task OnInitializedAsync()
+    {
+        await RefreshDashboardAsync();
+        _pollCts = new CancellationTokenSource();
+        _pollTimer = new PeriodicTimer(TimeSpan.FromSeconds(10));
+        _ = PollLoopAsync(_pollCts.Token);
+    }
+
+    private async Task PollLoopAsync(CancellationToken token)
+    {
+        if (_pollTimer is null) return;
+
+        try
+        {
+            while (await _pollTimer.WaitForNextTickAsync(token))
+            {
+                await RefreshDashboardAsync();
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // normal shutdown
+        }
+    }
+
+    private async Task RefreshDashboardAsync()
+    {
+        await RefreshHealthAsync();
+        await RefreshOpenIssuesAsync();
+        await RefreshLibraryStatsAsync();
+        await RefreshSourceTruthAsync();
+    }
+
+    private async Task RefreshHealthAsync()
     {
         try
         {
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
             var response = await Http.GetAsync("/api/health", cts.Token);
-
             if (!response.IsSuccessStatusCode)
             {
                 _healthLabel = "Unhealthy";
@@ -48,7 +236,7 @@
             }
 
             _healthLabel = "Healthy";
-            _healthDetail = "API is responding";
+            _healthDetail = $"API responding · {DateTime.Now:hh:mm:ss tt}";
         }
         catch
         {
@@ -56,4 +244,290 @@
             _healthDetail = "Could not contact API";
         }
     }
+
+    private async Task RefreshOpenIssuesAsync()
+    {
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, "/api/library/issues?status=Open&take=500");
+            await AttachBearerAsync(request);
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                _issuesDetail = $"Failed to load issues (HTTP {(int)response.StatusCode})";
+                return;
+            }
+
+            var payload = await response.Content.ReadFromJsonAsync<List<LibraryIssueDto>>() ?? [];
+            _openIssueCount = payload.Count;
+
+            var runtimeCount = payload.Count(x => string.Equals(x.IssueType, "runtime_mismatch", StringComparison.OrdinalIgnoreCase));
+            var languageCount = payload.Count(x => string.Equals(x.IssueType, "audio_language_mismatch", StringComparison.OrdinalIgnoreCase));
+            _issuesDetail = $"Runtime {runtimeCount} · Language {languageCount} · Updated {DateTime.Now:hh:mm:ss tt}";
+        }
+        catch
+        {
+            _issuesDetail = "Could not load issues";
+        }
+    }
+
+    private async Task RefreshLibraryStatsAsync()
+    {
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, "/api/library/items/count?mediaType=Movie");
+            await AttachBearerAsync(request);
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                _libraryDetail = $"Failed to load library count (HTTP {(int)response.StatusCode})";
+                return;
+            }
+
+            var payload = await response.Content.ReadFromJsonAsync<LibraryItemCountResponse>();
+            _libraryTotal = payload?.Total ?? 0;
+            _libraryDetail = $"Movies tracked · Updated {DateTime.Now:hh:mm:ss tt}";
+        }
+        catch
+        {
+            _libraryDetail = "Could not load library stats";
+        }
+    }
+
+    private async Task RefreshSourceTruthAsync()
+    {
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, "/api/dashboard/source-truth");
+            await AttachBearerAsync(request);
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                return;
+            }
+
+            _sourceTruth = await response.Content.ReadFromJsonAsync<DashboardSourceTruthResponse>() ?? new DashboardSourceTruthResponse([]);
+        }
+        catch
+        {
+            // keep prior snapshot
+        }
+    }
+
+    private async Task EnrichPlexBackfillIdsAsync()
+    {
+        _backfillEnriching = true;
+        _backfillStatus = "Enriching missing TMDB/IMDB IDs from Plex metadata...";
+
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, "/api/reconcile/plex-backfill/enrich-ids")
+            {
+                Content = JsonContent.Create(new PlexBackfillEnrichRequest(400))
+            };
+            await AttachBearerAsync(request);
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                _backfillStatus = $"ID enrich failed (HTTP {(int)response.StatusCode}).";
+                return;
+            }
+
+            var payload = await response.Content.ReadFromJsonAsync<PlexBackfillEnrichResponse>();
+            if (payload is null)
+            {
+                _backfillStatus = "ID enrich returned empty payload.";
+                return;
+            }
+
+            _backfillStatus = $"ID enrich complete. Scanned {payload.Scanned}, updated {payload.Updated}, failed {payload.Failed}.";
+            await PreviewPlexBackfillAsync();
+        }
+        catch
+        {
+            _backfillStatus = "ID enrich failed.";
+        }
+        finally
+        {
+            _backfillEnriching = false;
+        }
+    }
+
+    private async Task PreviewPlexBackfillAsync()
+    {
+        _backfillPreviewing = true;
+        _backfillStatus = "Loading Plex backfill preview...";
+
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, "/api/reconcile/plex-backfill/preview")
+            {
+                Content = JsonContent.Create(new PlexBackfillPreviewRequest(200, _backfillIncludeAlreadyRequested))
+            };
+            await AttachBearerAsync(request);
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                _backfillStatus = $"Preview failed (HTTP {(int)response.StatusCode}).";
+                return;
+            }
+
+            _backfillPreview = await response.Content.ReadFromJsonAsync<PlexBackfillPreviewResponse>() ?? new PlexBackfillPreviewResponse(0, 0, 0, 0, 0, []);
+            var selectable = _backfillPreview.Items.Where(x => x.CanBackfill).Select(x => x.LibraryItemId).ToHashSet();
+            _selectedBackfillIds.RemoveWhere(id => !selectable.Contains(id));
+            if (_selectedBackfillIds.Count == 0)
+            {
+                foreach (var id in selectable)
+                {
+                    _selectedBackfillIds.Add(id);
+                }
+            }
+            _backfillStatus = $"Preview ready. {_backfillPreview.CandidateCount} candidate(s).";
+        }
+        catch
+        {
+            _backfillStatus = "Preview failed.";
+        }
+        finally
+        {
+            _backfillPreviewing = false;
+        }
+    }
+
+    private async Task ApplyPlexBackfillAsync()
+    {
+        _backfillApplying = true;
+        _backfillStatus = "Applying Plex backfill...";
+
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, "/api/reconcile/plex-backfill/apply")
+            {
+                Content = JsonContent.Create(new PlexBackfillApplyRequest(200, _backfillCreateOverseerrRequests, _backfillIncludeAlreadyRequested, _selectedBackfillIds.ToList()))
+            };
+            await AttachBearerAsync(request);
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                _backfillStatus = $"Apply failed (HTTP {(int)response.StatusCode}).";
+                return;
+            }
+
+            var payload = await response.Content.ReadFromJsonAsync<PlexBackfillApplyResponse>();
+            if (payload is null)
+            {
+                _backfillStatus = "Apply returned empty payload.";
+                return;
+            }
+
+            _backfillLastErrors = payload.Errors;
+            _backfillStatus = $"Apply complete. Added Radarr {payload.AddedToRadarr}, Overseerr {payload.AddedToOverseerr}, skipped {payload.Skipped}, errors {payload.Errors.Count}.";
+            await PreviewPlexBackfillAsync();
+            await RefreshSourceTruthAsync();
+        }
+        catch
+        {
+            _backfillStatus = "Apply failed.";
+        }
+        finally
+        {
+            _backfillApplying = false;
+        }
+    }
+
+    private void ToggleBackfillRowSelection(long libraryItemId, object? checkedValue)
+    {
+        var isChecked = checkedValue is bool b && b;
+        if (isChecked)
+        {
+            _selectedBackfillIds.Add(libraryItemId);
+        }
+        else
+        {
+            _selectedBackfillIds.Remove(libraryItemId);
+        }
+    }
+
+    private void ToggleSelectAllBackfillRows(ChangeEventArgs args)
+    {
+        var shouldSelect = args.Value is bool b && b;
+        foreach (var row in VisibleBackfillRows.Where(x => x.CanBackfill))
+        {
+            if (shouldSelect)
+            {
+                _selectedBackfillIds.Add(row.LibraryItemId);
+            }
+            else
+            {
+                _selectedBackfillIds.Remove(row.LibraryItemId);
+            }
+        }
+    }
+
+    private static string FormatTime(DateTimeOffset? timestamp)
+        => timestamp is null ? "—" : timestamp.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
+
+    private static string FormatError(string raw)
+        => string.IsNullOrWhiteSpace(raw) ? "—" : raw;
+
+    private async Task AttachBearerAsync(HttpRequestMessage request)
+    {
+        var token = await TokenStore.GetTokenAsync();
+        if (!string.IsNullOrWhiteSpace(token))
+        {
+            request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_pollCts is not null)
+        {
+            await _pollCts.CancelAsync();
+            _pollCts.Dispose();
+            _pollCts = null;
+        }
+
+        _pollTimer?.Dispose();
+        _pollTimer = null;
+    }
+
+    private sealed record DashboardSourceTruthIntegrationDto(
+        long IntegrationId,
+        string ServiceKey,
+        string DisplayName,
+        string InstanceName,
+        bool Enabled,
+        string RoleSummary,
+        int SourceLinkCount,
+        DateTimeOffset? LastAttemptedAtUtc,
+        DateTimeOffset? LastSuccessfulAtUtc,
+        string LastError,
+        int ConsecutiveFailureCount);
+
+    private sealed record DashboardSourceTruthResponse(IReadOnlyList<DashboardSourceTruthIntegrationDto> Integrations);
+
+    private sealed record LibraryIssueDto(
+        long Id,
+        long LibraryItemId,
+        string IssueType,
+        string Severity,
+        string Status,
+        string Summary,
+        string SuggestedAction,
+        string DetailsJson,
+        DateTimeOffset FirstDetectedAtUtc,
+        DateTimeOffset LastDetectedAtUtc,
+        DateTimeOffset? ResolvedAtUtc,
+        string LibraryItemTitle,
+        string MediaType);
+
+    private sealed record LibraryItemCountResponse(int Total);
+    private sealed record PlexBackfillPreviewRequest(int Take = 100, bool IncludeItemsAlreadyRequested = false);
+    private sealed record PlexBackfillEnrichRequest(int Take = 200);
+    private sealed record PlexBackfillApplyRequest(int Take = 200, bool CreateOverseerrRequests = false, bool IncludeItemsAlreadyRequested = false, IReadOnlyList<long>? SelectedLibraryItemIds = null);
+    private sealed record PlexBackfillCandidateDto(long LibraryItemId, string Title, int? Year, int? TmdbId, string ImdbId, bool MissingRadarr, bool MissingOverseerrRequest, bool InOverseerrMedia, bool CanBackfill, string SourceServicesCsv);
+    private sealed record PlexBackfillPreviewResponse(int TotalPlexMovies, int MissingRadarrCount, int MissingOverseerrRequestCount, int MissingBothCount, int CandidateCount, IReadOnlyList<PlexBackfillCandidateDto> Items);
+    private sealed record PlexBackfillEnrichResponse(int CandidateCount, int Scanned, int Updated, int Failed, IReadOnlyList<string> Errors);
+    private sealed record PlexBackfillApplyResponse(int TotalPlexMovies, int MissingRadarrCount, int MissingOverseerrRequestCount, int MissingBothCount, int CandidateCount, int AddedToRadarr, int AddedToOverseerr, int Skipped, IReadOnlyList<string> Errors);
 }

@@ -48,22 +48,169 @@ else
         <p>File Path: @(string.IsNullOrWhiteSpace(_item.PrimaryFilePath) ? "Not available" : _item.PrimaryFilePath)</p>
     </div>
 
-    <div class="card">
-        <p class="card-label">SOURCE LINKS</p>
-        @if (_sources.Count == 0)
+    <div class="card" style="margin-bottom:1rem;">
+        <p class="card-label">MANUAL ISSUE FLAGS</p>
+        <p class="card-note" style="margin-top:0;">Tie common file issues directly to this movie.</p>
+        <p>Audio Languages: @(string.Join(", ", _item.AudioLanguages ?? []))</p>
+
+        <div style="display:grid; grid-template-columns: minmax(220px, 1fr) 1.5fr auto auto; gap:0.6rem; align-items:end; margin-top:0.6rem;">
+            <div>
+                <label for="manual-issue-type">Issue type</label>
+                <InputSelect id="manual-issue-type" class="input" @bind-Value="_selectedManualIssueType" @bind-Value:after="OnManualIssueTypeChangedAsync">
+                    @foreach (var option in ManualIssueOptions)
+                    {
+                        <option value="@option.Key">@option.Label</option>
+                    }
+                </InputSelect>
+            </div>
+
+            <div>
+                <label for="manual-issue-notes">Notes</label>
+                <input id="manual-issue-notes" class="input" @bind="_manualIssueNotes" placeholder="e.g. It's russian" />
+            </div>
+
+            <button class="button-primary" @onclick="SaveManualIssueAsync" disabled="@_savingManualIssue">@(_savingManualIssue ? "Saving..." : "Save issue")</button>
+
+            @if (_selectedManualIssue is not null && string.Equals(_selectedManualIssue.Status, "Open", StringComparison.OrdinalIgnoreCase))
+            {
+                <button class="button-secondary" @onclick="ResolveSelectedManualIssueAsync" disabled="@_resolvingManualIssue">@(_resolvingManualIssue ? "Resolving..." : "Resolve")</button>
+            }
+        </div>
+
+        @if (_selectedManualIssue is not null)
         {
-            <p class="card-note">No source links found.</p>
+            <p class="card-note" style="margin-top:0.65rem;">Current issue: @_selectedManualIssue.Summary</p>
+            <p class="card-note" style="margin-top:0.2rem;">Status: @_selectedManualIssue.Status · Severity: @_selectedManualIssue.Severity</p>
+        }
+
+        <div style="margin-top:0.85rem;">
+            <p class="card-label" style="margin-bottom:0.45rem;">ISSUE HISTORY (THIS FILE)</p>
+            @if (_manualIssueHistory.Count == 0)
+            {
+                <p class="card-note">No issues logged yet for this file.</p>
+            }
+            else
+            {
+                <table style="width:100%; border-collapse:collapse; font-size:0.85rem;">
+                    <thead>
+                        <tr style="border-bottom:1px solid rgba(148,163,184,0.2); text-align:left;">
+                            <th style="padding:0.35rem 0.4rem;">Type</th>
+                            <th style="padding:0.35rem 0.4rem;">Status</th>
+                            <th style="padding:0.35rem 0.4rem;">Severity</th>
+                            <th style="padding:0.35rem 0.4rem;">Summary</th>
+                            <th style="padding:0.35rem 0.4rem;">Notes</th>
+                            <th style="padding:0.35rem 0.4rem;">Last Seen</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var issue in _manualIssueHistory)
+                        {
+                            <tr style="border-bottom:1px solid rgba(148,163,184,0.12); vertical-align:top;">
+                                <td style="padding:0.35rem 0.4rem;">@GetIssueTypeLabel(issue.IssueType)</td>
+                                <td style="padding:0.35rem 0.4rem;">@issue.Status</td>
+                                <td style="padding:0.35rem 0.4rem;">@issue.Severity</td>
+                                <td style="padding:0.35rem 0.4rem;">@issue.Summary</td>
+                                <td style="padding:0.35rem 0.4rem;">@ExtractIssueNotes(issue.DetailsJson)</td>
+                                <td style="padding:0.35rem 0.4rem;">@issue.LastDetectedAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </div>
+    </div>
+
+    <div class="card" style="margin-bottom:1rem;">
+        <p class="card-label">MONITORED</p>
+        <div style="display:flex; align-items:center; gap:0.65rem; flex-wrap:wrap; margin-top:0.25rem;">
+            <label style="display:flex; align-items:center; gap:0.45rem; font-weight:600;">
+                <input type="checkbox" checked="@IsMovieMonitoredInMediaCloud()" @onchange="OnMonitoredToggleChanged" disabled="@(!IsMediaCloudMonitoringManaged() || _syncingMonitoringStatus)" />
+                Monitored
+            </label>
+            @if (_syncingMonitoringStatus)
+            {
+                <span class="card-note" style="margin:0;">Saving...</span>
+            }
+            else if (!IsMediaCloudMonitoringManaged())
+            {
+                <span class="card-note" style="margin:0;">Disabled. Turn on Monitor in MediaCloud in <a href="/settings/monitoring" style="color:#93c5fd; text-decoration:none;">Settings → Monitoring</a>.</span>
+            }
+            else
+            {
+                <span class="card-note" style="margin:0;">When enabled, MediaCloud syncs this state to integrations managed by MediaCloud.</span>
+            }
+        </div>
+    </div>
+
+    <div class="card" style="margin-bottom:1rem;">
+        <p class="card-label">SOURCE COVERAGE</p>
+        <p class="card-note" style="margin-top:0.2rem; margin-bottom:0.55rem;">Monitoring mode is managed in <a href="/settings/monitoring" style="color:#93c5fd; text-decoration:none;">Settings → Monitoring</a>.</p>
+        @if (_sourceStatuses.Count == 0)
+        {
+            <p class="card-note">Source coverage is unavailable.</p>
         }
         else
         {
-            <ul>
-                @foreach (var source in _sources)
-                {
-                    <li>@source.ServiceKey / @source.InstanceName / ExternalId: @source.ExternalId</li>
-                }
-            </ul>
+            <table style="width:100%; border-collapse:collapse; font-size:0.88rem; margin-top:0.35rem;">
+                <thead>
+                    <tr style="text-align:left; border-bottom:1px solid rgba(148,163,184,0.25);">
+                        <th style="padding:0.3rem 0.4rem;">Source</th>
+                        <th style="padding:0.3rem 0.4rem;">Linked</th>
+                        <th style="padding:0.3rem 0.4rem;">Desired Monitor (MediaCloud)</th>
+                        <th style="padding:0.3rem 0.4rem;">Radarr Monitored</th>
+                        <th style="padding:0.3rem 0.4rem;">Drift</th>
+                        <th style="padding:0.3rem 0.4rem;">In Overseerr Media</th>
+                        <th style="padding:0.3rem 0.4rem;">Integration</th>
+                        <th style="padding:0.3rem 0.4rem;">Note</th>
+                        <th style="padding:0.3rem 0.4rem;">Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var status in _sourceStatuses)
+                    {
+                        var syncing = _syncingSources.Contains(status.ServiceKey);
+                        <tr style="border-bottom:1px solid rgba(148,163,184,0.12); vertical-align:top;">
+                            <td style="padding:0.3rem 0.4rem;">@status.DisplayName</td>
+                            <td style="padding:0.3rem 0.4rem;">@(status.HasSourceLink ? "Yes" : "Missing")</td>
+                            <td style="padding:0.3rem 0.4rem;">@(status.DesiredMonitored.HasValue ? (status.DesiredMonitored.Value ? "On" : "Off") : "—")</td>
+                            <td style="padding:0.3rem 0.4rem;">@(status.RadarrMonitored.HasValue ? (status.RadarrMonitored.Value ? "Yes" : "No") : "—")</td>
+                            <td style="padding:0.3rem 0.4rem;">@(status.MonitoringDrift.HasValue ? (status.MonitoringDrift.Value ? "Drift" : "In sync") : "—")</td>
+                            <td style="padding:0.3rem 0.4rem;">@(status.OverseerrInMedia.HasValue ? (status.OverseerrInMedia.Value ? "Yes" : "No") : "—")</td>
+                            <td style="padding:0.3rem 0.4rem;">@(string.IsNullOrWhiteSpace(status.InstanceName) ? "—" : status.InstanceName)</td>
+                            <td style="padding:0.3rem 0.4rem;">@status.Note</td>
+                            <td style="padding:0.3rem 0.4rem; min-width:360px; white-space:nowrap;">
+                                <div style="display:grid; gap:0.35rem;">
+                                    <div style="display:flex; gap:0.35rem; align-items:center; flex-wrap:nowrap;">
+                                        <button class="button-secondary" style="border:1px solid rgba(148,163,184,0.35); background:rgba(30,41,59,0.55); padding:0.28rem 0.62rem; border-radius:6px; white-space:nowrap;" @onclick="(() => SyncSourceNowAsync(status.ServiceKey))" disabled="@(!status.CanSync || syncing || status.HasSourceLink)">
+                                            @(syncing ? "Syncing..." : "Sync link")
+                                        </button>
+                                        @if (status.HasSourceLink)
+                                        {
+                                            <span class="card-note" style="margin:0; white-space:nowrap;">Already linked</span>
+                                        }
+                                    </div>
+
+                                    @if (status.SupportsMonitoringSync)
+                                    {
+                                        <div style="display:flex; gap:0.35rem; flex-wrap:nowrap; margin-top:0.15rem;">
+                                            <button class="button-secondary" style="border:1px solid rgba(59,130,246,0.45); background:rgba(30,64,175,0.18); padding:0.28rem 0.62rem; border-radius:6px; white-space:nowrap;" @onclick="(() => SyncMonitoringToIntegrationAsync(status.ServiceKey))" disabled="@(_syncingMonitoringStatus || status.MonitoringSynced == true)">
+                                                @(_syncingMonitoringStatus ? "Syncing..." : $"Sync monitor → {status.DisplayName}")
+                                            </button>
+                                            @if (status.MonitoringSynced == true)
+                                            {
+                                                <span class="card-note" style="margin:0; white-space:nowrap;">Already synced</span>
+                                            }
+                                        </div>
+                                    }
+                                </div>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
         }
     </div>
+
 }
 
 @code {
@@ -71,10 +218,29 @@ else
 
     private bool _loading = true;
     private bool _probingRuntime;
+    private bool _savingManualIssue;
+    private bool _resolvingManualIssue;
+    private bool _syncingMonitoringStatus;
+    private string _selectedManualIssueType = "audio_language_mismatch";
+    private string _manualIssueNotes = string.Empty;
     private LibraryItemDto? _item;
     private LibraryIssueDto? _runtimeMismatchIssue;
+    private LibraryIssueDto? _selectedManualIssue;
     private RuntimeMismatchDetails? _runtimeMismatch;
-    private readonly List<LibraryItemSourceLinkDto> _sources = [];
+    private readonly List<LibraryItemSourceStatusDto> _sourceStatuses = [];
+    private readonly HashSet<string> _syncingSources = [];
+    private readonly List<LibraryIssueDto> _manualIssueHistory = [];
+    private static readonly ManualIssueOption[] ManualIssueOptions =
+    [
+        new("audio_language_mismatch", "Incorrect/missing audio language", "Warning", "Preferred audio language not available on file.", "Replace or remux file with preferred audio track."),
+        new("subtitle_missing", "Missing subtitles", "Warning", "Expected subtitles are missing.", "Fetch subtitles or replace file with subtitle tracks."),
+        new("subtitle_language_mismatch", "Incorrect subtitle language", "Warning", "Subtitle language is not what was expected.", "Download or mux correct subtitle language."),
+        new("audio_out_of_sync", "Audio out of sync", "High", "Audio is out of sync with video.", "Replace file or remux with corrected timing."),
+        new("wrong_version", "Wrong cut/version", "Warning", "File is not the expected cut/version.", "Replace with correct theatrical/director's cut version."),
+        new("quality_issue", "Poor quality/transcode issue", "Warning", "File quality is below expected level.", "Replace with a higher-quality source/profile."),
+        new("corrupt_file", "Corrupt or unplayable file", "High", "File appears corrupt or fails playback.", "Re-download or repair media file."),
+        new("metadata_issue", "Incorrect metadata/mapping", "Info", "Metadata or mapping appears incorrect.", "Review IDs/mapping and refresh metadata.")
+    ];
 
     protected override async Task OnParametersSetAsync()
     {
@@ -92,23 +258,16 @@ else
 
             _item = await itemResponse.Content.ReadFromJsonAsync<LibraryItemDto>();
 
-            using var sourceRequest = new HttpRequestMessage(HttpMethod.Get, $"/api/library/items/{Id}/sources");
-            await AttachBearerAsync(sourceRequest);
-            using var sourceResponse = await Http.SendAsync(sourceRequest);
-            _sources.Clear();
-            if (sourceResponse.IsSuccessStatusCode)
-            {
-                var payload = await sourceResponse.Content.ReadFromJsonAsync<List<LibraryItemSourceLinkDto>>() ?? [];
-                _sources.AddRange(payload);
-            }
-
+            await LoadSourceStatusesAsync();
             await LoadRuntimeMismatchAsync();
+            await LoadSelectedManualIssueAsync();
+            await LoadManualIssueHistoryAsync();
         }
         catch
         {
             Snackbar.Add("Failed to load movie details.", Severity.Error);
             _item = null;
-            _sources.Clear();
+            _sourceStatuses.Clear();
         }
         finally
         {
@@ -149,6 +308,8 @@ else
 
             Snackbar.Add(toast, payload.Success ? Severity.Success : Severity.Warning);
             await LoadRuntimeMismatchAsync();
+            await LoadSelectedManualIssueAsync();
+            await LoadManualIssueHistoryAsync();
         }
         catch
         {
@@ -157,6 +318,164 @@ else
         finally
         {
             _probingRuntime = false;
+        }
+    }
+
+    private async Task LoadSourceStatusesAsync()
+    {
+        _sourceStatuses.Clear();
+
+        if (_item is null)
+        {
+            return;
+        }
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"/api/library/items/{_item.Id}/source-status");
+        await AttachBearerAsync(request);
+        using var response = await Http.SendAsync(request);
+        if (!response.IsSuccessStatusCode)
+        {
+            return;
+        }
+
+        var payload = await response.Content.ReadFromJsonAsync<List<LibraryItemSourceStatusDto>>() ?? [];
+        _sourceStatuses.AddRange(payload);
+    }
+
+    private async Task SyncSourceNowAsync(string serviceKey)
+    {
+        if (_item is null || string.IsNullOrWhiteSpace(serviceKey)) return;
+
+        var key = serviceKey.Trim().ToLowerInvariant();
+        if (_syncingSources.Contains(key)) return;
+
+        _syncingSources.Add(key);
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, $"/api/library/items/{_item.Id}/sources/{key}/sync");
+            await AttachBearerAsync(request);
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add($"{key}: sync failed ({(int)response.StatusCode}).", Severity.Error);
+                return;
+            }
+
+            var payload = await response.Content.ReadFromJsonAsync<LibraryItemSourceSyncResponse>();
+            if (payload is null)
+            {
+                Snackbar.Add($"{key}: sync returned no payload.", Severity.Warning);
+                return;
+            }
+
+            await LoadSourceStatusesAsync();
+
+            Snackbar.Add(payload.Message, payload.Success ? Severity.Success : Severity.Warning);
+        }
+        catch
+        {
+            Snackbar.Add($"{key}: sync failed.", Severity.Error);
+        }
+        finally
+        {
+            _syncingSources.Remove(key);
+        }
+    }
+
+    private bool IsMediaCloudMonitoringManaged()
+        => _sourceStatuses.Any(x => x.SupportsMonitoringSync);
+
+    private bool IsMovieMonitoredInMediaCloud()
+    {
+        var desired = _sourceStatuses
+            .FirstOrDefault(x => x.ServiceKey.Equals("radarr", StringComparison.OrdinalIgnoreCase))?
+            .DesiredMonitored;
+        return desired == true;
+    }
+
+    private async Task OnMonitoredToggleChanged(ChangeEventArgs args)
+    {
+        if (_item is null || !IsMediaCloudMonitoringManaged()) return;
+
+        var monitored = args?.Value?.ToString()?.Equals("true", StringComparison.OrdinalIgnoreCase) == true;
+
+        _syncingMonitoringStatus = true;
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Put, $"/api/library/items/{_item.Id}/monitoring/desired")
+            {
+                Content = JsonContent.Create(new SetDesiredMonitoringRequest(monitored))
+            };
+            await AttachBearerAsync(request);
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add($"Failed to update monitored state ({(int)response.StatusCode}).", Severity.Error);
+                return;
+            }
+
+            await SyncMonitoringTargetsAfterDesiredChangeAsync();
+            await LoadSourceStatusesAsync();
+            Snackbar.Add($"Monitored set to {(monitored ? "On" : "Off")}.", Severity.Success);
+        }
+        catch
+        {
+            Snackbar.Add("Failed to update monitored state.", Severity.Error);
+        }
+        finally
+        {
+            _syncingMonitoringStatus = false;
+        }
+    }
+
+    private async Task SyncMonitoringTargetsAfterDesiredChangeAsync()
+    {
+        if (_item is null) return;
+
+        var targets = _sourceStatuses
+            .Where(x => x.SupportsMonitoringSync)
+            .Select(x => x.ServiceKey)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        foreach (var target in targets)
+        {
+            var key = target.Trim().ToLowerInvariant();
+            using var request = new HttpRequestMessage(HttpMethod.Post, $"/api/library/items/{_item.Id}/monitoring/sync/{key}");
+            await AttachBearerAsync(request);
+            using var response = await Http.SendAsync(request);
+            _ = await response.Content.ReadFromJsonAsync<LibraryItemMonitoringApplyResponse>();
+        }
+    }
+
+    private async Task SyncMonitoringToIntegrationAsync(string serviceKey)
+    {
+        if (_item is null || string.IsNullOrWhiteSpace(serviceKey)) return;
+
+        _syncingMonitoringStatus = true;
+        try
+        {
+            var key = serviceKey.Trim().ToLowerInvariant();
+            using var request = new HttpRequestMessage(HttpMethod.Post, $"/api/library/items/{_item.Id}/monitoring/sync/{key}");
+            await AttachBearerAsync(request);
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add($"Monitoring sync failed ({(int)response.StatusCode}).", Severity.Error);
+                return;
+            }
+
+            var payload = await response.Content.ReadFromJsonAsync<LibraryItemMonitoringApplyResponse>();
+            await LoadSourceStatusesAsync();
+            Snackbar.Add(payload?.Message ?? "Monitoring sync completed.", payload?.Success == true ? Severity.Success : Severity.Warning);
+        }
+        catch
+        {
+            Snackbar.Add("Monitoring sync failed.", Severity.Error);
+        }
+        finally
+        {
+            _syncingMonitoringStatus = false;
         }
     }
 
@@ -181,6 +500,182 @@ else
         var payload = await issueResponse.Content.ReadFromJsonAsync<List<LibraryIssueDto>>() ?? [];
         _runtimeMismatchIssue = payload.FirstOrDefault();
         _runtimeMismatch = ParseRuntimeMismatchDetails(_runtimeMismatchIssue?.DetailsJson);
+    }
+
+    private async Task OnManualIssueTypeChangedAsync()
+    {
+        await LoadSelectedManualIssueAsync();
+    }
+
+    private async Task LoadSelectedManualIssueAsync()
+    {
+        _selectedManualIssue = null;
+
+        if (_item is null)
+        {
+            return;
+        }
+
+        using var issueRequest = new HttpRequestMessage(HttpMethod.Get, $"/api/library/items/{_item.Id}/issues?issueType={_selectedManualIssueType}&take=1");
+        await AttachBearerAsync(issueRequest);
+        using var issueResponse = await Http.SendAsync(issueRequest);
+        if (!issueResponse.IsSuccessStatusCode)
+        {
+            return;
+        }
+
+        var payload = await issueResponse.Content.ReadFromJsonAsync<List<LibraryIssueDto>>() ?? [];
+        _selectedManualIssue = payload.FirstOrDefault();
+    }
+
+    private async Task LoadManualIssueHistoryAsync()
+    {
+        _manualIssueHistory.Clear();
+
+        if (_item is null)
+        {
+            return;
+        }
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"/api/library/items/{_item.Id}/issues?take=100");
+        await AttachBearerAsync(request);
+        using var response = await Http.SendAsync(request);
+        if (!response.IsSuccessStatusCode)
+        {
+            return;
+        }
+
+        var payload = await response.Content.ReadFromJsonAsync<List<LibraryIssueDto>>() ?? [];
+        _manualIssueHistory.AddRange(payload.OrderByDescending(x => x.LastDetectedAtUtc));
+    }
+
+    private async Task SaveManualIssueAsync()
+    {
+        if (_item is null) return;
+
+        if (string.IsNullOrWhiteSpace(_manualIssueNotes))
+        {
+            Snackbar.Add("Add notes describing the issue before saving.", Severity.Warning);
+            return;
+        }
+
+        var option = GetSelectedManualIssueOption();
+        if (option is null)
+        {
+            Snackbar.Add("Select a valid issue type.", Severity.Warning);
+            return;
+        }
+
+        _savingManualIssue = true;
+        try
+        {
+            var details = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                issueType = option.Key,
+                notes = _manualIssueNotes,
+                availableAudioLanguages = _item.AudioLanguages,
+                availableSubtitleLanguages = _item.SubtitleLanguages,
+                flaggedAtUtc = DateTimeOffset.UtcNow,
+                origin = "manual"
+            });
+
+            var payload = new CreateLibraryIssueRequest(
+                option.Key,
+                option.Severity,
+                BuildManualIssueSummary(option, _manualIssueNotes),
+                option.SuggestedAction,
+                details,
+                "Open");
+
+            using var request = new HttpRequestMessage(HttpMethod.Post, $"/api/library/items/{_item.Id}/issues")
+            {
+                Content = JsonContent.Create(payload)
+            };
+            await AttachBearerAsync(request);
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add($"Failed to save issue ({(int)response.StatusCode}).", Severity.Error);
+                return;
+            }
+
+            Snackbar.Add($"Issue saved: {option.Label}.", Severity.Warning);
+            await LoadSelectedManualIssueAsync();
+            await LoadManualIssueHistoryAsync();
+            _manualIssueNotes = string.Empty;
+        }
+        catch
+        {
+            Snackbar.Add("Failed to save manual issue.", Severity.Error);
+        }
+        finally
+        {
+            _savingManualIssue = false;
+        }
+    }
+
+    private async Task ResolveSelectedManualIssueAsync()
+    {
+        if (_selectedManualIssue is null) return;
+
+        _resolvingManualIssue = true;
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, $"/api/library/issues/{_selectedManualIssue.Id}/resolve");
+            await AttachBearerAsync(request);
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add($"Failed to resolve issue ({(int)response.StatusCode}).", Severity.Error);
+                return;
+            }
+
+            Snackbar.Add("Issue resolved.", Severity.Success);
+            await LoadSelectedManualIssueAsync();
+            await LoadManualIssueHistoryAsync();
+        }
+        catch
+        {
+            Snackbar.Add("Failed to resolve issue.", Severity.Error);
+        }
+        finally
+        {
+            _resolvingManualIssue = false;
+        }
+    }
+
+    private ManualIssueOption? GetSelectedManualIssueOption()
+        => ManualIssueOptions.FirstOrDefault(x => x.Key == _selectedManualIssueType);
+
+    private static string BuildManualIssueSummary(ManualIssueOption option, string notes)
+        => $"{option.DefaultSummary} Note: {notes.Trim()}";
+
+    private static string ExtractIssueNotes(string detailsJson)
+    {
+        if (string.IsNullOrWhiteSpace(detailsJson)) return "—";
+
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(detailsJson);
+            if (doc.RootElement.TryGetProperty("notes", out var notes) && notes.ValueKind == System.Text.Json.JsonValueKind.String)
+            {
+                var value = notes.GetString();
+                return string.IsNullOrWhiteSpace(value) ? "—" : value;
+            }
+        }
+        catch
+        {
+            // ignore malformed details
+        }
+
+        return "—";
+    }
+
+    private static string GetIssueTypeLabel(string issueType)
+    {
+        if (string.Equals(issueType, "runtime_mismatch", StringComparison.OrdinalIgnoreCase)) return "Runtime mismatch";
+        var manual = ManualIssueOptions.FirstOrDefault(x => string.Equals(x.Key, issueType, StringComparison.OrdinalIgnoreCase));
+        return manual?.Label ?? issueType;
     }
 
     private string GetRuntimeMatchLabel()
@@ -295,17 +790,42 @@ else
         DateTimeOffset UpdatedAtUtc,
         string PrimaryFilePath);
 
-    private record LibraryItemSourceLinkDto(
-        long Id,
-        long LibraryItemId,
-        long IntegrationId,
+    private record LibraryItemSourceStatusDto(
         string ServiceKey,
+        string DisplayName,
+        long? IntegrationId,
         string InstanceName,
-        string ExternalId,
-        string ExternalType,
-        DateTimeOffset? ExternalUpdatedAtUtc,
-        DateTimeOffset LastSeenAtUtc,
-        bool IsDeletedAtSource);
+        bool HasSourceLink,
+        bool CanSync,
+        string Note,
+        bool? RadarrMonitored,
+        bool? DesiredMonitored,
+        bool? MonitoringDrift,
+        bool? OverseerrInMedia,
+        bool SupportsMonitoringSync,
+        bool? MonitoringSynced,
+        bool AutoSyncEnabled);
+
+    private record LibraryItemSourceSyncResponse(
+        long LibraryItemId,
+        string ServiceKey,
+        bool Success,
+        bool HadSourceLinkBefore,
+        bool HasSourceLinkAfter,
+        bool AttemptedCreateAction,
+        string Message);
+
+    private record SetDesiredMonitoringRequest(bool DesiredMonitored);
+
+    private record LibraryItemMonitoringApplyResponse(
+        long LibraryItemId,
+        bool Success,
+        bool? DesiredMonitored,
+        bool? RadarrMonitoredBefore,
+        bool? RadarrMonitoredAfter,
+        bool? MonitoringDriftAfter,
+        bool ActionAttempted,
+        string Message);
 
     private record LibraryItemRuntimeProbeResponse(
         long Id,
@@ -318,6 +838,14 @@ else
         string Message,
         int? ProbeExitCode,
         string ProbeError);
+
+    private record CreateLibraryIssueRequest(
+        string IssueType,
+        string Severity,
+        string Summary,
+        string SuggestedAction,
+        string DetailsJson,
+        string Status = "Open");
 
     private record LibraryIssueDto(
         long Id,
@@ -336,4 +864,11 @@ else
         double DiffMinutes,
         double DiffPercent,
         double ThresholdMinutes);
+
+    private record ManualIssueOption(
+        string Key,
+        string Label,
+        string Severity,
+        string DefaultSummary,
+        string SuggestedAction);
 }

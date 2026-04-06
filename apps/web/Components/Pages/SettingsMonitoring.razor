@@ -1,0 +1,144 @@
+@page "/settings/monitoring"
+@attribute [Authorize(Roles = "Admin")]
+@inject HttpClient Http
+@inject AuthTokenStore TokenStore
+@inject ISnackbar Snackbar
+
+<PageTitle>Monitoring Settings</PageTitle>
+
+<p class="subtitle"><a href="/settings">Settings</a> / Monitoring</p>
+<h1>Monitoring</h1>
+<p class="subtitle">App-wide monitoring behavior for MediaCloud source-of-truth and integration sync automation.</p>
+
+<div class="card" style="max-width:860px;">
+    @if (_loading)
+    {
+        <p class="card-note">Loading monitoring settings…</p>
+    }
+    else
+    {
+        <div style="display:grid; gap:0.9rem;">
+            <label style="display:flex; gap:0.6rem; align-items:flex-start;">
+                <input type="checkbox" @bind="_model.ManagedByMediaCloud" />
+                <span>
+                    <strong>Monitor in MediaCloud</strong><br />
+                    <span class="card-note">Use MediaCloud as the monitoring source of truth. When off, per-item monitor sync actions are disabled.</span>
+                </span>
+            </label>
+
+            <label style="display:flex; gap:0.6rem; align-items:flex-start;">
+                <input type="checkbox" @bind="_model.AutoSyncEnabled" disabled="@(!_model.ManagedByMediaCloud)" />
+                <span>
+                    <strong>Auto sync</strong><br />
+                    <span class="card-note">When enabled, MediaCloud pushes monitor changes to Radarr and Overseerr automatically.</span>
+                </span>
+            </label>
+        </div>
+
+        <div style="display:flex; gap:0.55rem; margin-top:0.95rem; flex-wrap:wrap;">
+            <button class="button-primary" @onclick="SaveAsync" disabled="@_saving">@(_saving ? "Saving..." : "Save monitoring settings")</button>
+        </div>
+    }
+</div>
+
+@code {
+    private bool _loading = true;
+    private bool _saving;
+    private MonitoringSettingsModel _model = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, "/api/settings/monitoring");
+            await AttachBearerAsync(request);
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add($"Failed to load monitoring settings ({(int)response.StatusCode}).", Severity.Error);
+                return;
+            }
+
+            var payload = await response.Content.ReadFromJsonAsync<MonitoringSettingsResponse>();
+            if (payload is not null)
+            {
+                _model = MonitoringSettingsModel.FromResponse(payload);
+            }
+        }
+        catch
+        {
+            Snackbar.Add("Failed to load monitoring settings.", Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task SaveAsync()
+    {
+        _saving = true;
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Put, "/api/settings/monitoring")
+            {
+                Content = JsonContent.Create(new UpdateMonitoringSettingsRequest(_model.ManagedByMediaCloud, _model.AutoSyncEnabled))
+            };
+            await AttachBearerAsync(request);
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                var error = await response.Content.ReadFromJsonAsync<ErrorResponse>();
+                Snackbar.Add(error?.Error ?? $"Failed to save monitoring settings ({(int)response.StatusCode}).", Severity.Error);
+                return;
+            }
+
+            var payload = await response.Content.ReadFromJsonAsync<MonitoringSettingsResponse>();
+            if (payload is not null)
+            {
+                _model = MonitoringSettingsModel.FromResponse(payload);
+            }
+
+            Snackbar.Add("Monitoring settings saved.", Severity.Success);
+        }
+        catch
+        {
+            Snackbar.Add("Failed to save monitoring settings.", Severity.Error);
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private async Task AttachBearerAsync(HttpRequestMessage request)
+    {
+        var token = await TokenStore.GetTokenAsync();
+        if (!string.IsNullOrWhiteSpace(token))
+        {
+            request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+        }
+    }
+
+    private sealed class MonitoringSettingsModel
+    {
+        public bool ManagedByMediaCloud { get; set; } = true;
+        public bool AutoSyncEnabled { get; set; }
+
+        public static MonitoringSettingsModel FromResponse(MonitoringSettingsResponse value) => new()
+        {
+            ManagedByMediaCloud = value.ManagedByMediaCloud,
+            AutoSyncEnabled = value.AutoSyncEnabled
+        };
+    }
+
+    private record UpdateMonitoringSettingsRequest(bool ManagedByMediaCloud, bool AutoSyncEnabled);
+    private record MonitoringSettingsResponse(bool ManagedByMediaCloud, bool AutoSyncEnabled);
+    private record ErrorResponse(string Error);
+}

@@ -109,14 +109,27 @@
                     {
                         <tr id="@RowId(item.Id)" style="border-bottom:1px solid #0f172a; vertical-align: top;">
                             <td style="padding:0.45rem 0;">
-                                @if (string.Equals(item.MediaType, "Movie", StringComparison.OrdinalIgnoreCase))
-                                {
-                                    <a href="@($"/media/movies/{item.Id}")" style="color:#93c5fd; text-decoration:none;">@item.Title</a>
-                                }
-                                else
-                                {
-                                    @item.Title
-                                }
+                                <div style="display:grid; gap:0.3rem;">
+                                    <div>
+                                        @if (string.Equals(item.MediaType, "Movie", StringComparison.OrdinalIgnoreCase))
+                                        {
+                                            <a href="@($"/media/movies/{item.Id}")" style="color:#93c5fd; text-decoration:none;">@item.Title</a>
+                                        }
+                                        else
+                                        {
+                                            @item.Title
+                                        }
+                                    </div>
+                                    @if (item.SourceServices.Count > 0)
+                                    {
+                                        <div style="display:flex; flex-wrap:wrap; gap:0.3rem;">
+                                            @foreach (var source in item.SourceServices)
+                                            {
+                                                <span class="source-pill">@FormatSourceServiceLabel(source)</span>
+                                            }
+                                        </div>
+                                    }
+                                </div>
                             </td>
                             <td style="padding:0.45rem 0;">@item.Year</td>
                             @if (ShowTypeColumn)
@@ -175,6 +188,20 @@
     .media-chip.mud-button-root {
         min-width: 2.1rem;
         padding-inline: 0.5rem;
+    }
+
+    .source-pill {
+        display: inline-flex;
+        align-items: center;
+        padding: 0.08rem 0.42rem;
+        border-radius: 999px;
+        font-size: 0.72rem;
+        font-weight: 700;
+        letter-spacing: 0.01em;
+        border: 1px solid rgba(96, 165, 250, 0.45);
+        background: rgba(30, 64, 175, 0.23);
+        color: #bfdbfe;
+        text-transform: uppercase;
     }
 </style>
 
@@ -368,6 +395,16 @@
         };
     }
 
+    private static string FormatSourceServiceLabel(string serviceKey)
+    {
+        var key = (serviceKey ?? string.Empty).Trim();
+        if (key.Equals("radarr", StringComparison.OrdinalIgnoreCase)) return "Radarr";
+        if (key.Equals("plex", StringComparison.OrdinalIgnoreCase)) return "Plex";
+        if (key.Equals("overseerr", StringComparison.OrdinalIgnoreCase)) return "Overseerr";
+        if (key.Equals("sonarr", StringComparison.OrdinalIgnoreCase)) return "Sonarr";
+        return string.IsNullOrWhiteSpace(key) ? "Source" : char.ToUpperInvariant(key[0]) + key[1..];
+    }
+
     private string RowId(long itemId) => $"media-row-{itemId}";
 
     private async Task JumpToTokenAsync(string token)
@@ -491,7 +528,7 @@
 
     private record LibraryItemCountDto(int Total);
     private record LibraryJumpDto(bool Found, string Token, int PageIndex, long? TargetId);
-    private record LibraryItemDto(long Id, string CanonicalKey, string MediaType, string Title, string SortTitle, int? Year, int? TmdbId, int? TvdbId, string ImdbId, string PlexRatingKey, double? RuntimeMinutes, double? ActualRuntimeMinutes, IReadOnlyList<string> AudioLanguages, IReadOnlyList<string> SubtitleLanguages, bool IsAvailable, string QualityProfile, DateTimeOffset? SourceUpdatedAtUtc, DateTimeOffset UpdatedAtUtc, string PrimaryFilePath);
+    private record LibraryItemDto(long Id, string CanonicalKey, string MediaType, string Title, string SortTitle, int? Year, int? TmdbId, int? TvdbId, string ImdbId, string PlexRatingKey, double? RuntimeMinutes, double? ActualRuntimeMinutes, IReadOnlyList<string> AudioLanguages, IReadOnlyList<string> SubtitleLanguages, bool IsAvailable, string QualityProfile, DateTimeOffset? SourceUpdatedAtUtc, DateTimeOffset UpdatedAtUtc, string PrimaryFilePath, IReadOnlyList<string> SourceServices);
     private record RuntimePolicySettingsResponse(double ToleranceMinutesFloor, double TolerancePercent, double WarningPercent, double HighMinutes, double CriticalPercent, double CriticalMinutes);
     private record RuntimeMatchResult(string Label, string Kind);
 }

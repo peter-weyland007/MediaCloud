@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.AspNetCore.Components.Server.ProtectedBrowserStorage;
 using Microsoft.AspNetCore.DataProtection;
+using MudBlazor;
 using MudBlazor.Services;
 using web.Components;
 using web.Services.Auth;
@@ -12,7 +13,10 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
 
-builder.Services.AddMudServices();
+builder.Services.AddMudServices(options =>
+{
+    options.SnackbarConfiguration.PositionClass = Defaults.Classes.Position.BottomRight;
+});
 
 var configuredKeysPath = builder.Configuration["DataProtection:KeysPath"];
 var dataProtectionKeysPath = string.IsNullOrWhiteSpace(configuredKeysPath)
