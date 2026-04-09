@@ -22,6 +22,8 @@ app.db
 # Logs and temp
 *.log
 *.tmp
+apps/web/DataProtectionKeys/
+tmp/
 
 # Playwright temp artifacts
 test-results/
