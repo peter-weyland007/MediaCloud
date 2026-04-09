@@ -1,0 +1,134 @@
+@page "/settings/tv-display"
+@attribute [Authorize(Roles = "Admin")]
+@inject HttpClient Http
+@inject AuthTokenStore TokenStore
+@inject ISnackbar Snackbar
+
+<PageTitle>TV Display Settings</PageTitle>
+
+<p class="subtitle"><a href="/settings">Settings</a> / TV Display</p>
+<h1>TV Display</h1>
+<p class="subtitle">Global TV-series detail defaults.</p>
+
+<div class="card" style="max-width:860px;">
+    @if (_loading)
+    {
+        <p class="card-note">Loading TV display settings…</p>
+    }
+    else
+    {
+        <div style="display:grid; gap:0.9rem;">
+            <label style="display:flex; gap:0.6rem; align-items:flex-start;">
+                <input type="checkbox" @bind="_model.HideSpecialsByDefault" />
+                <span>
+                    <strong>Hide Specials by default</strong><br />
+                    <span class="card-note">When enabled, series detail pages hide season 0 / Specials unless the viewer turns them back on for that page.</span>
+                </span>
+            </label>
+        </div>
+
+        <div style="display:flex; gap:0.55rem; margin-top:0.95rem; flex-wrap:wrap;">
+            <button class="button-primary" @onclick="SaveAsync" disabled="@_saving">@(_saving ? "Saving..." : "Save TV display settings")</button>
+        </div>
+    }
+</div>
+
+@code {
+    private bool _loading = true;
+    private bool _saving;
+    private TvDisplaySettingsModel _model = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, "/api/settings/tv-display");
+            await AttachBearerAsync(request);
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add($"Failed to load TV display settings ({(int)response.StatusCode}).", Severity.Error);
+                return;
+            }
+
+            var payload = await response.Content.ReadFromJsonAsync<TvDisplaySettingsResponse>();
+            if (payload is not null)
+            {
+                _model = TvDisplaySettingsModel.FromResponse(payload);
+            }
+        }
+        catch
+        {
+            Snackbar.Add("Failed to load TV display settings.", Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task SaveAsync()
+    {
+        _saving = true;
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Put, "/api/settings/tv-display")
+            {
+                Content = JsonContent.Create(new UpdateTvDisplaySettingsRequest(_model.HideSpecialsByDefault))
+            };
+            await AttachBearerAsync(request);
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                var error = await response.Content.ReadFromJsonAsync<ErrorResponse>();
+                Snackbar.Add(error?.Error ?? $"Failed to save TV display settings ({(int)response.StatusCode}).", Severity.Error);
+                return;
+            }
+
+            var payload = await response.Content.ReadFromJsonAsync<TvDisplaySettingsResponse>();
+            if (payload is not null)
+            {
+                _model = TvDisplaySettingsModel.FromResponse(payload);
+            }
+
+            Snackbar.Add("TV display settings saved.", Severity.Success);
+        }
+        catch
+        {
+            Snackbar.Add("Failed to save TV display settings.", Severity.Error);
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private async Task AttachBearerAsync(HttpRequestMessage request)
+    {
+        var token = await TokenStore.GetTokenAsync();
+        if (!string.IsNullOrWhiteSpace(token))
+        {
+            request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+        }
+    }
+
+    private sealed class TvDisplaySettingsModel
+    {
+        public bool HideSpecialsByDefault { get; set; }
+
+        public static TvDisplaySettingsModel FromResponse(TvDisplaySettingsResponse value) => new()
+        {
+            HideSpecialsByDefault = value.HideSpecialsByDefault
+        };
+    }
+
+    private record UpdateTvDisplaySettingsRequest(bool HideSpecialsByDefault);
+    private record TvDisplaySettingsResponse(bool HideSpecialsByDefault);
+    private record ErrorResponse(string Error);
+}

@@ -1,0 +1,1075 @@
+@page "/media/tv-shows/{Id:long}"
+@attribute [Authorize]
+@inject HttpClient Http
+@inject AuthTokenStore TokenStore
+@inject ISnackbar Snackbar
+
+<PageTitle>TV Details</PageTitle>
+
+<style>
+    .tv-season-group {
+        border: 1px solid rgba(148,163,184,0.18);
+        border-radius: 10px;
+        padding: 0.75rem 0.9rem;
+        margin-top: 0.75rem;
+        background: rgba(15,23,42,0.18);
+    }
+
+    .tv-season-group__header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.75rem;
+    }
+
+    .tv-season-group__summary {
+        display: grid;
+        gap: 0.35rem;
+        margin-top: 0.55rem;
+    }
+
+    .tv-season-group__availability {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.75rem;
+        flex-wrap: wrap;
+    }
+
+    .tv-season-group__availability-text {
+        font-size: 0.88rem;
+        font-weight: 600;
+        color: #e2e8f0;
+    }
+
+    .tv-season-group__progress {
+        width: 100%;
+    }
+</style>
+
+@if (_loading)
+{
+    <p class="card-note">Loading TV details…</p>
+}
+else if (_item is null || !IsTvItem(_item.MediaType))
+{
+    <h1>TV item not found</h1>
+    <a href="/media/tv-shows" style="color:#93c5fd; text-decoration:none;">← Back to TV Shows</a>
+}
+else
+{
+    <a href="/media/tv-shows" style="color:#93c5fd; text-decoration:none;">← Back to TV Shows</a>
+    <h1 style="margin-top:0.5rem;">@_item.DisplayTitle</h1>
+    <p class="subtitle">@GetSubtitle(_item)</p>
+
+    @if (IsSeries(_item) && !string.IsNullOrWhiteSpace(_item.Description))
+    {
+        <div class="card" style="margin-bottom:1rem;">
+            <p class="card-label">SERIES DESCRIPTION</p>
+            <p style="margin:0.35rem 0 0; line-height:1.55; color:#e2e8f0; white-space:pre-wrap;">@GetSeriesDescriptionText()</p>
+            <div style="display:flex; align-items:center; gap:0.75rem; flex-wrap:wrap; margin-top:0.6rem;">
+                @if (ShouldShowDescriptionToggle())
+                {
+                    <button class="button-secondary" @onclick="ToggleSeriesDescriptionExpanded">@(_isSeriesDescriptionExpanded ? "Show less" : "Show more")</button>
+                }
+                <span class="card-note">Source: @GetDescriptionSourceLabel(_item.DescriptionSourceService)</span>
+            </div>
+        </div>
+    }
+
+    @if (IsSeries(_item))
+    {
+        <div class="card" style="display:grid; grid-template-columns: repeat(4, minmax(160px, 1fr)); gap:1rem; margin-bottom:1rem;">
+            <div>
+                <p class="card-label">SEASONS</p>
+                <p>@SeriesSeasonCount</p>
+                <p class="card-note" style="margin-top:0.35rem;">Visible season groups on this show.</p>
+            </div>
+            <div>
+                <p class="card-label">EPISODES</p>
+                <p>@SeriesAvailableEpisodeCount / @SeriesTotalEpisodeCount available</p>
+                <p class="card-note" style="margin-top:0.35rem;">Across all loaded episodes.</p>
+            </div>
+            <div>
+                <p class="card-label">SERIES AVAILABILITY</p>
+                <p>@Math.Round(SeriesAvailabilityPercent)%</p>
+                <MudProgressLinear Color="Color.Primary" Value="@SeriesAvailabilityPercent" Rounded="true" style="margin-top:0.45rem;" />
+            </div>
+            <div>
+                <p class="card-label">LIBRARY STATUS</p>
+                <p>@GetSeriesLibraryStatus()</p>
+                <p class="card-note" style="margin-top:0.35rem;">@_sourceLinks.Count source link(s) · Quality: @DisplayValue(_item.QualityProfile)</p>
+            </div>
+        </div>
+    }
+    else
+    {
+        <div class="card" style="display:grid; grid-template-columns: repeat(4, minmax(180px, 1fr)); gap:1rem; margin-bottom:1rem;">
+            <div>
+                <p class="card-label">REPORTED RUNTIME</p>
+                <p>@FormatRuntime(_item.RuntimeMinutes)</p>
+            </div>
+            <div>
+                <p class="card-label">ACTUAL RUNTIME</p>
+                <p>@FormatRuntime(_item.ActualRuntimeMinutes)</p>
+                <p class="card-note" style="margin-top:0.35rem;">From ffprobe.</p>
+                @if (CanProbeRuntime(_item))
+                {
+                    <div style="margin-top:0.75rem; display:flex; justify-content:flex-start; align-items:flex-end; min-height:2.2rem;">
+                        <button class="source-action-button" @onclick="ProbeRuntimeNowAsync" disabled="@_probingRuntime">@(_probingRuntime ? "Analyzing..." : "Analyze file")</button>
+                    </div>
+                }
+            </div>
+            <div>
+                <p class="card-label">PLAYABILITY</p>
+                <div style="margin-top:0.15rem;">
+                    <span style="@GetPlayabilityBadgeStyle()">@GetPlayabilityLabel()</span>
+                </div>
+                <p class="card-note" style="margin-top:0.45rem;">@GetPlayabilitySummary()</p>
+            </div>
+            <div>
+                <p class="card-label">LIBRARY STATUS</p>
+                <p>@(_item.IsAvailable ? "Available" : "Unavailable")</p>
+                <p class="card-note" style="margin-top:0.35rem;">@_sourceLinks.Count source link(s) · Quality: @DisplayValue(_item.QualityProfile)</p>
+            </div>
+        </div>
+    }
+
+    <div class="card" style="margin-bottom:1rem;">
+        <p class="card-label">IDENTIFIERS</p>
+        <p>TVDB: @FormatInt(_item.TvdbId)</p>
+        <p>TMDB: @FormatInt(_item.TmdbId)</p>
+        <p>IMDB: @DisplayValue(_item.ImdbId)</p>
+        <p>@GetPathLabel(_item): @DisplayValue(_item.PrimaryFilePath)</p>
+        @if (string.Equals(_item.MediaType, "Episode", StringComparison.OrdinalIgnoreCase))
+        {
+            <p>Local File Available: @(_item.LocalFileExists ? "Yes" : "No")</p>
+        }
+    </div>
+
+    <div class="card" style="margin-bottom:1rem;">
+        <p class="card-label">SOURCE LINKS</p>
+        @if (_sourceLinks.Count == 0)
+        {
+            <p class="card-note">No source links recorded for this item yet.</p>
+        }
+        else
+        {
+            <table style="width:100%; border-collapse:collapse; font-size:0.88rem;">
+                <thead>
+                    <tr style="text-align:left; border-bottom:1px solid rgba(148,163,184,0.25);">
+                        <th style="padding:0.35rem 0.4rem;">Source</th>
+                        <th style="padding:0.35rem 0.4rem;">Instance</th>
+                        <th style="padding:0.35rem 0.4rem;">Source Title</th>
+                        <th style="padding:0.35rem 0.4rem;">External</th>
+                        <th style="padding:0.35rem 0.4rem;">Last Seen</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var source in _sourceLinks)
+                    {
+                        <tr style="border-bottom:1px solid rgba(148,163,184,0.12); vertical-align:top;">
+                            <td style="padding:0.35rem 0.4rem;">@FormatSourceServiceLabel(source.ServiceKey)</td>
+                            <td style="padding:0.35rem 0.4rem;">@DisplayValue(source.InstanceName)</td>
+                            <td style="padding:0.35rem 0.4rem;">@DisplaySourceTitle(source)</td>
+                            <td style="padding:0.35rem 0.4rem;">@FormatExternalRef(source)</td>
+                            <td style="padding:0.35rem 0.4rem;">@source.LastSeenAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </div>
+
+    @if (IsSeries(_item))
+    {
+        <div class="card" style="margin-bottom:1rem;">
+            <p class="card-label">EPISODE PLAYBACK DIAGNOSTICS</p>
+            <p class="card-note" style="margin-top:0.2rem;">Playback evidence is episode-specific. Pull diagnostics for a specific episode here, then open that episode page for the full table and log snippets.</p>
+            <div style="display:flex; gap:0.75rem; align-items:end; flex-wrap:wrap; margin-top:0.6rem;">
+                <div>
+                    <label for="series-diagnostics-hours-back">Hours back</label>
+                    <InputNumber id="series-diagnostics-hours-back" class="input" @bind-Value="_diagnosticsHoursBack" />
+                </div>
+                <span class="card-note">@_playbackDiagnosticsStatus</span>
+            </div>
+        </div>
+
+        <div class="card" style="margin-bottom:1rem;">
+            <p class="card-label">EPISODES</p>
+            <p class="card-note" style="margin-top:0.2rem;">Browse episodes tied to this series without leaving the detail page.</p>
+            @if (_loadingEpisodes)
+            {
+                <p class="card-note">Loading episodes…</p>
+            }
+            else if (_episodes.Count == 0)
+            {
+                <p class="card-note">No episodes found for this series yet.</p>
+            }
+            else
+            {
+                <div style="display:flex; gap:0.75rem; flex-wrap:wrap; align-items:center; margin-top:0.5rem; margin-bottom:0.75rem;">
+                    <button class="button-secondary" @onclick="ExpandAllSeasons">Show all seasons</button>
+                    <button class="button-secondary" @onclick="CollapseAllSeasons">Collapse all seasons</button>
+                    <label style="display:flex; align-items:center; gap:0.45rem; font-weight:600;">
+                        <input type="checkbox" checked="@_hideSpecials" @onchange="OnHideSpecialsChanged" />
+                        Hide Specials
+                    </label>
+                </div>
+
+                @foreach (var season in GetSeasonGroups())
+                {
+                    var isExpanded = IsSeasonExpanded(season.SeasonNumber);
+                    <div class="tv-season-group">
+                        <div class="tv-season-group__header">
+                            <div>
+                                <div>@season.Label</div>
+                                <div class="card-note">@season.TotalEpisodeCount episode(s)</div>
+                            </div>
+                            <button class="button-secondary" @onclick="() => ToggleSeason(season.SeasonNumber)">@(isExpanded ? "Collapse" : "Show episodes")</button>
+                        </div>
+
+                        <div class="tv-season-group__summary">
+                            <div class="tv-season-group__availability">
+                                <span class="tv-season-group__availability-text">Available episodes: @season.AvailableEpisodeCount / @season.TotalEpisodeCount</span>
+                                <span class="card-note">@Math.Round(season.AvailabilityPercent)% season availability</span>
+                            </div>
+                            <MudProgressLinear Class="tv-season-group__progress"
+                                               Color="Color.Primary"
+                                               Value="@season.AvailabilityPercent"
+                                               Rounded="true" />
+                        </div>
+
+                        @if (isExpanded)
+                        {
+                            <table style="width:100%; border-collapse:collapse; font-size:0.88rem; margin-top:0.5rem;">
+                                <thead>
+                                    <tr style="text-align:left; border-bottom:1px solid rgba(148,163,184,0.25);">
+                                        <th style="padding:0.35rem 0.4rem;">Episode</th>
+                                        <th style="padding:0.35rem 0.4rem;">Air date</th>
+                                        <th style="padding:0.35rem 0.4rem;">Available</th>
+                                        <th style="padding:0.35rem 0.4rem;">Runtimes</th>
+                                        <th style="padding:0.35rem 0.4rem;">Quality</th>
+                                        <th style="padding:0.35rem 0.4rem;">Playback</th>
+                                        <th style="padding:0.35rem 0.4rem;">Updated</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var episode in season.Episodes)
+                                    {
+                                        var pullingEpisodeDiagnostics = _pullingEpisodeDiagnostics.Contains(episode.Id);
+                                        <tr style="border-bottom:1px solid rgba(148,163,184,0.12); vertical-align:top;">
+                                            <td style="padding:0.35rem 0.4rem;">
+                                                <a href="@MediaItemRoutes.GetDetailsHref(episode.MediaType, episode.Id)" style="color:#93c5fd; text-decoration:none;">@episode.DisplayTitle</a>
+                                            </td>
+                                            <td style="padding:0.35rem 0.4rem;">@FormatAirDate(episode.SourceUpdatedAtUtc)</td>
+                                            <td style="padding:0.35rem 0.4rem;">@(episode.IsAvailable ? "Yes" : "No")</td>
+                                            <td style="padding:0.35rem 0.4rem;">@FormatRuntime(episode.RuntimeMinutes) / @FormatRuntime(episode.ActualRuntimeMinutes)</td>
+                                            <td style="padding:0.35rem 0.4rem;">@DisplayValue(episode.QualityProfile)</td>
+                                            <td style="padding:0.35rem 0.4rem; min-width:240px;">
+                                                <div style="display:grid; gap:0.35rem;">
+                                                    <div style="display:flex; gap:0.35rem; flex-wrap:wrap; align-items:center;">
+                                                        <button class="source-action-button" @onclick="() => PullEpisodePlaybackDiagnosticsAsync(episode.Id, episode.DisplayTitle, episode.MediaType)" disabled="@pullingEpisodeDiagnostics">@(pullingEpisodeDiagnostics ? "Pulling..." : "Pull diagnostics")</button>
+                                                        <a href="@MediaItemRoutes.GetDetailsHref(episode.MediaType, episode.Id)" class="button-secondary" style="text-decoration:none; display:inline-flex; align-items:center;">Open episode</a>
+                                                    </div>
+                                                    @if (_episodeDiagnosticsStatus.TryGetValue(episode.Id, out var episodeStatus) && !string.IsNullOrWhiteSpace(episodeStatus))
+                                                    {
+                                                        <span class="card-note">@episodeStatus</span>
+                                                    }
+                                                </div>
+                                            </td>
+                                            <td style="padding:0.35rem 0.4rem;">@episode.UpdatedAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        }
+                    </div>
+                }
+            }
+        </div>
+    }
+    else
+    {
+        <div class="card" style="margin-bottom:1rem;">
+            <p class="card-label">PLAYBACK DIAGNOSTICS</p>
+            <p class="card-note" style="margin-top:0.2rem;">Pull recent Plex/Tautulli playback evidence for this episode and compare what actually happened against the file score.</p>
+            <div style="display:flex; gap:0.75rem; align-items:end; flex-wrap:wrap; margin-top:0.6rem;">
+                <div>
+                    <label for="episode-diagnostics-hours-back">Hours back</label>
+                    <InputNumber id="episode-diagnostics-hours-back" class="input" @bind-Value="_diagnosticsHoursBack" />
+                </div>
+                <button class="button-secondary" @onclick="PullPlaybackDiagnosticsAsync" disabled="@_pullingPlaybackDiagnostics">@(_pullingPlaybackDiagnostics ? "Pulling..." : "Pull playback diagnostics")</button>
+                <span class="card-note">@_playbackDiagnosticsStatus</span>
+            </div>
+
+            @if (_playbackDiagnostics.Count == 0)
+            {
+                <p class="card-note" style="margin-top:0.75rem;">No playback diagnostics captured yet for this episode.</p>
+            }
+            else
+            {
+                <table style="width:100%; border-collapse:collapse; font-size:0.85rem; margin-top:0.75rem;">
+                    <thead>
+                        <tr style="border-bottom:1px solid rgba(148,163,184,0.2); text-align:left;">
+                            <th style="padding:0.35rem 0.4rem;">When</th>
+                            <th style="padding:0.35rem 0.4rem;">Source</th>
+                            <th style="padding:0.35rem 0.4rem;">Client</th>
+                            <th style="padding:0.35rem 0.4rem;">Health</th>
+                            <th style="padding:0.35rem 0.4rem;">Decision</th>
+                            <th style="padding:0.35rem 0.4rem;">Suspected cause</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var entry in _playbackDiagnostics)
+                        {
+                            <tr style="border-bottom:1px solid rgba(148,163,184,0.12); vertical-align:top;">
+                                <td style="padding:0.35rem 0.4rem; white-space:nowrap;">@entry.OccurredAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
+                                <td style="padding:0.35rem 0.4rem;">@entry.SourceDisplayName</td>
+                                <td style="padding:0.35rem 0.4rem;">@PlaybackDiagnosticsPresentation.BuildClientLabel(entry)</td>
+                                <td style="padding:0.35rem 0.4rem;"><span style="@PlaybackDiagnosticsPresentation.GetHealthBadgeStyle(entry.HealthLabel)">@entry.HealthLabel</span></td>
+                                <td style="padding:0.35rem 0.4rem;">@PlaybackDiagnosticsPresentation.BuildDecisionLabel(entry)</td>
+                                <td style="padding:0.35rem 0.4rem;">
+                                    <div>@(string.IsNullOrWhiteSpace(entry.SuspectedCause) ? entry.Summary : entry.SuspectedCause)</div>
+                                    @if (!string.IsNullOrWhiteSpace(entry.ErrorMessage))
+                                    {
+                                        <div class="card-note" style="margin-top:0.25rem;">Error: @entry.ErrorMessage</div>
+                                    }
+                                    @if (!string.IsNullOrWhiteSpace(entry.LogSnippet))
+                                    {
+                                        <pre style="margin-top:0.45rem; white-space:pre-wrap; background:rgba(15,23,42,0.55); padding:0.55rem; border-radius:8px; color:#cbd5e1;">@entry.LogSnippet</pre>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </div>
+    }
+
+    <div class="card" style="margin-bottom:1rem;">
+        <p class="card-label">ISSUES</p>
+        @if (_issues.Count == 0)
+        {
+            <p class="card-note">No issues recorded for this item.</p>
+        }
+        else
+        {
+            <table style="width:100%; border-collapse:collapse; font-size:0.88rem;">
+                <thead>
+                    <tr style="text-align:left; border-bottom:1px solid rgba(148,163,184,0.25);">
+                        <th style="padding:0.35rem 0.4rem;">Type</th>
+                        <th style="padding:0.35rem 0.4rem;">Status</th>
+                        <th style="padding:0.35rem 0.4rem;">Severity</th>
+                        <th style="padding:0.35rem 0.4rem;">Details</th>
+                        <th style="padding:0.35rem 0.4rem;">Last Seen</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var issue in _issues)
+                    {
+                        <tr style="border-bottom:1px solid rgba(148,163,184,0.12); vertical-align:top;">
+                            <td style="padding:0.35rem 0.4rem;">@GetIssueTypeLabel(issue.IssueType)</td>
+                            <td style="padding:0.35rem 0.4rem;">@issue.Status</td>
+                            <td style="padding:0.35rem 0.4rem;">@issue.Severity</td>
+                            <td style="padding:0.35rem 0.4rem;">@GetIssueDetailText(issue)</td>
+                            <td style="padding:0.35rem 0.4rem;">@issue.LastDetectedAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </div>
+}
+
+@code {
+    [Parameter] public long Id { get; set; }
+
+    private bool _loading = true;
+    private bool _loadingEpisodes;
+    private bool _probingRuntime;
+    private bool _hideSpecials;
+    private bool _isSeriesDescriptionExpanded;
+    private bool _pullingPlaybackDiagnostics;
+    private int _diagnosticsHoursBack = 72;
+    private string _playbackDiagnosticsStatus = string.Empty;
+    private LibraryItemDto? _item;
+    private readonly HashSet<int> _expandedSeasonNumbers = [];
+    private readonly HashSet<long> _pullingEpisodeDiagnostics = [];
+    private readonly List<LibraryItemDto> _episodes = [];
+    private readonly List<LibraryItemSourceLinkDto> _sourceLinks = [];
+    private readonly List<LibraryIssueDto> _issues = [];
+    private readonly List<PlaybackDiagnosticDto> _playbackDiagnostics = [];
+    private readonly Dictionary<long, string> _episodeDiagnosticsStatus = [];
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _loading = true;
+        _isSeriesDescriptionExpanded = false;
+        _episodeDiagnosticsStatus.Clear();
+        _playbackDiagnosticsStatus = string.Empty;
+        try
+        {
+            using var itemRequest = new HttpRequestMessage(HttpMethod.Get, $"/api/library/items/{Id}");
+            await AttachBearerAsync(itemRequest);
+            using var itemResponse = await Http.SendAsync(itemRequest);
+            if (!itemResponse.IsSuccessStatusCode)
+            {
+                _item = null;
+                _sourceLinks.Clear();
+                _issues.Clear();
+                return;
+            }
+
+            _item = await itemResponse.Content.ReadFromJsonAsync<LibraryItemDto>();
+            if (_item is null || !IsTvItem(_item.MediaType))
+            {
+                _episodes.Clear();
+                _sourceLinks.Clear();
+                _issues.Clear();
+                return;
+            }
+
+            await LoadTvDisplaySettingsAsync();
+            await LoadSourceLinksAsync();
+            await LoadIssuesAsync();
+            await LoadEpisodesAsync();
+            if (IsSeries(_item))
+            {
+                _playbackDiagnostics.Clear();
+                _playbackDiagnosticsStatus = "Playback diagnostics are episode-specific. Use the episode actions below or open an episode for full history.";
+            }
+            else
+            {
+                await LoadPlaybackDiagnosticsAsync();
+            }
+        }
+        catch
+        {
+            Snackbar.Add("Failed to load TV details.", Severity.Error);
+            _item = null;
+            _episodes.Clear();
+            _sourceLinks.Clear();
+            _issues.Clear();
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task LoadTvDisplaySettingsAsync()
+    {
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, "/api/settings/tv-display");
+            await AttachBearerAsync(request);
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                return;
+            }
+
+            var payload = await response.Content.ReadFromJsonAsync<TvDisplaySettingsResponse>();
+            if (payload is not null)
+            {
+                _hideSpecials = payload.HideSpecialsByDefault;
+            }
+        }
+        catch
+        {
+            // fall back to current in-memory default
+        }
+    }
+
+    private async Task LoadEpisodesAsync()
+    {
+        _episodes.Clear();
+        if (_item is null || !IsSeries(_item)) return;
+
+        _loadingEpisodes = true;
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, $"/api/library/items/{_item.Id}/episodes");
+            await AttachBearerAsync(request);
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                return;
+            }
+
+            var payload = await response.Content.ReadFromJsonAsync<List<LibraryItemDto>>() ?? [];
+            _episodes.AddRange(payload);
+            CollapseAllSeasons();
+        }
+        finally
+        {
+            _loadingEpisodes = false;
+        }
+    }
+
+    private async Task LoadSourceLinksAsync()
+    {
+        _sourceLinks.Clear();
+        if (_item is null) return;
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"/api/library/items/{_item.Id}/sources");
+        await AttachBearerAsync(request);
+        using var response = await Http.SendAsync(request);
+        if (!response.IsSuccessStatusCode)
+        {
+            return;
+        }
+
+        var payload = await response.Content.ReadFromJsonAsync<List<LibraryItemSourceLinkDto>>() ?? [];
+        _sourceLinks.AddRange(payload);
+    }
+
+    private async Task LoadIssuesAsync()
+    {
+        _issues.Clear();
+        if (_item is null) return;
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, "/api/library/issues?take=2000");
+        await AttachBearerAsync(request);
+        using var response = await Http.SendAsync(request);
+        if (!response.IsSuccessStatusCode)
+        {
+            return;
+        }
+
+        var payload = await response.Content.ReadFromJsonAsync<List<LibraryIssueDto>>() ?? [];
+        _issues.AddRange(payload
+            .Where(x => x.LibraryItemId == _item.Id)
+            .OrderByDescending(x => x.LastDetectedAtUtc));
+    }
+
+    private async Task ProbeRuntimeNowAsync()
+    {
+        if (_item is null || !CanProbeRuntime(_item)) return;
+
+        _probingRuntime = true;
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, $"/api/library/items/{_item.Id}/reprobe-runtime");
+            await AttachBearerAsync(request);
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add($"Runtime probe failed ({(int)response.StatusCode}). Admin access may be required.", Severity.Error);
+                return;
+            }
+
+            var payload = await response.Content.ReadFromJsonAsync<LibraryItemRuntimeProbeResponse>();
+            if (payload is null)
+            {
+                Snackbar.Add("Runtime probe returned no payload.", Severity.Warning);
+                return;
+            }
+
+            _item = _item with
+            {
+                ActualRuntimeMinutes = payload.ActualRuntimeMinutes,
+                PrimaryFilePath = payload.PrimaryFilePath,
+                LocalFileExists = payload.FileExists,
+                PlayabilityScore = payload.PlayabilityScore,
+                PlayabilitySummary = payload.PlayabilitySummary,
+                PlayabilityCheckedAtUtc = payload.PlayabilityCheckedAtUtc
+            };
+
+            Snackbar.Add(payload.Message, payload.Success ? Severity.Success : Severity.Warning);
+            await LoadIssuesAsync();
+        }
+        catch
+        {
+            Snackbar.Add("Runtime probe failed.", Severity.Error);
+        }
+        finally
+        {
+            _probingRuntime = false;
+        }
+    }
+
+    private async Task LoadPlaybackDiagnosticsAsync()
+    {
+        _playbackDiagnostics.Clear();
+
+        if (_item is null || IsSeries(_item))
+        {
+            return;
+        }
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"/api/library/items/{_item.Id}/playback-diagnostics?take=15");
+        await AttachBearerAsync(request);
+        using var response = await Http.SendAsync(request);
+        if (!response.IsSuccessStatusCode)
+        {
+            _playbackDiagnosticsStatus = response.StatusCode == System.Net.HttpStatusCode.NotFound
+                ? "Playback diagnostics feature is not available yet on the API."
+                : string.Empty;
+            return;
+        }
+
+        var payload = await response.Content.ReadFromJsonAsync<List<PlaybackDiagnosticDto>>() ?? [];
+        _playbackDiagnostics.AddRange(payload.OrderByDescending(x => x.OccurredAtUtc));
+        _playbackDiagnosticsStatus = _playbackDiagnostics.Count == 0
+            ? "No diagnostics pulled yet."
+            : $"Loaded {_playbackDiagnostics.Count} diagnostic entr{(_playbackDiagnostics.Count == 1 ? "y" : "ies")}.";
+    }
+
+    private async Task PullPlaybackDiagnosticsAsync()
+    {
+        if (_item is null || IsSeries(_item)) return;
+
+        _pullingPlaybackDiagnostics = true;
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, $"/api/library/items/{_item.Id}/playback-diagnostics/pull")
+            {
+                Content = JsonContent.Create(new PullPlaybackDiagnosticsRequest(_diagnosticsHoursBack, 10, true))
+            };
+            await AttachBearerAsync(request);
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add($"Playback diagnostics pull failed ({(int)response.StatusCode}).", Severity.Error);
+                return;
+            }
+
+            var payload = await response.Content.ReadFromJsonAsync<PullPlaybackDiagnosticsResponse>();
+            _playbackDiagnosticsStatus = payload?.Message ?? "Playback diagnostics pull complete.";
+            await LoadPlaybackDiagnosticsAsync();
+            Snackbar.Add(_playbackDiagnosticsStatus, Severity.Success);
+        }
+        catch
+        {
+            Snackbar.Add("Playback diagnostics pull failed.", Severity.Error);
+        }
+        finally
+        {
+            _pullingPlaybackDiagnostics = false;
+        }
+    }
+
+    private async Task PullEpisodePlaybackDiagnosticsAsync(long episodeId, string episodeTitle, string mediaType)
+    {
+        if (episodeId <= 0 || !string.Equals(mediaType, "Episode", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        if (!_pullingEpisodeDiagnostics.Add(episodeId))
+        {
+            return;
+        }
+
+        var displayTitle = string.IsNullOrWhiteSpace(episodeTitle) ? MediaItemRoutes.GetFallbackDisplayName(mediaType, episodeId) : episodeTitle;
+
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, $"/api/library/items/{episodeId}/playback-diagnostics/pull")
+            {
+                Content = JsonContent.Create(new PullPlaybackDiagnosticsRequest(_diagnosticsHoursBack, 10, true))
+            };
+            await AttachBearerAsync(request);
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                var failure = $"Pull failed ({(int)response.StatusCode}).";
+                _episodeDiagnosticsStatus[episodeId] = failure;
+                Snackbar.Add($"{displayTitle}: {failure}", Severity.Error);
+                return;
+            }
+
+            var payload = await response.Content.ReadFromJsonAsync<PullPlaybackDiagnosticsResponse>();
+            var message = payload?.Message ?? "Playback diagnostics pull complete.";
+            _episodeDiagnosticsStatus[episodeId] = message;
+            _playbackDiagnosticsStatus = $"{displayTitle}: {message}";
+            Snackbar.Add(_playbackDiagnosticsStatus, Severity.Success);
+        }
+        catch
+        {
+            const string failure = "Playback diagnostics pull failed.";
+            _episodeDiagnosticsStatus[episodeId] = failure;
+            Snackbar.Add($"{displayTitle}: {failure}", Severity.Error);
+        }
+        finally
+        {
+            _pullingEpisodeDiagnostics.Remove(episodeId);
+        }
+    }
+
+    private IReadOnlyList<TvEpisodeGrouping.SeasonGroup> GetSeasonGroups()
+        => TvEpisodeGrouping.BuildSeasonGroups(_episodes.Select(MapEpisodeListItem), excludeSpecials: _hideSpecials);
+
+    private int SeriesSeasonCount => GetSeasonGroups().Count;
+    private int SeriesTotalEpisodeCount => _episodes.Count;
+    private int SeriesAvailableEpisodeCount => _episodes.Count(x => x.IsAvailable);
+    private double SeriesAvailabilityPercent => SeriesTotalEpisodeCount == 0 ? 0 : (SeriesAvailableEpisodeCount * 100d) / SeriesTotalEpisodeCount;
+    private const int SeriesDescriptionPreviewLength = 360;
+
+    private bool IsSeasonExpanded(int seasonNumber)
+        => _expandedSeasonNumbers.Contains(seasonNumber);
+
+    private bool ShouldShowDescriptionToggle()
+        => !string.IsNullOrWhiteSpace(_item?.Description) && _item.Description.Length > SeriesDescriptionPreviewLength;
+
+    private string GetSeriesDescriptionText()
+    {
+        var description = (_item?.Description ?? string.Empty).Trim();
+        if (_isSeriesDescriptionExpanded || description.Length <= SeriesDescriptionPreviewLength)
+        {
+            return description;
+        }
+
+        return description[..SeriesDescriptionPreviewLength].TrimEnd() + "…";
+    }
+
+    private void ToggleSeriesDescriptionExpanded()
+        => _isSeriesDescriptionExpanded = !_isSeriesDescriptionExpanded;
+
+    private void OnHideSpecialsChanged(ChangeEventArgs args)
+    {
+        _hideSpecials = args.Value is bool value
+            ? value
+            : string.Equals(args.Value?.ToString(), "true", StringComparison.OrdinalIgnoreCase);
+        CollapseAllSeasons();
+    }
+
+    private void ToggleSeason(int seasonNumber)
+    {
+        if (!_expandedSeasonNumbers.Add(seasonNumber))
+        {
+            _expandedSeasonNumbers.Remove(seasonNumber);
+        }
+    }
+
+    private void ExpandAllSeasons()
+    {
+        _expandedSeasonNumbers.Clear();
+        foreach (var seasonNumber in TvEpisodeGrouping.CreateExpandedSeasonNumbers(GetSeasonGroups(), expandAll: true))
+        {
+            _expandedSeasonNumbers.Add(seasonNumber);
+        }
+    }
+
+    private void CollapseAllSeasons()
+        => _expandedSeasonNumbers.Clear();
+
+    private static TvEpisodeGrouping.TvEpisodeListItem MapEpisodeListItem(LibraryItemDto episode)
+        => new(
+            episode.Id,
+            episode.MediaType,
+            episode.DisplayTitle,
+            episode.SortTitle,
+            episode.IsAvailable,
+            episode.SourceUpdatedAtUtc,
+            episode.RuntimeMinutes,
+            episode.ActualRuntimeMinutes,
+            episode.QualityProfile,
+            episode.UpdatedAtUtc);
+
+    private static bool IsTvItem(string? mediaType)
+        => string.Equals(mediaType, "Series", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(mediaType, "Episode", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsSeries(LibraryItemDto? item)
+        => item is not null && string.Equals(item.MediaType, "Series", StringComparison.OrdinalIgnoreCase);
+
+    private static bool CanProbeRuntime(LibraryItemDto item)
+        => string.Equals(item.MediaType, "Episode", StringComparison.OrdinalIgnoreCase);
+
+    private string GetSeriesLibraryStatus()
+    {
+        if (!IsSeries(_item))
+        {
+            return _item?.IsAvailable == true ? "Available" : "Unavailable";
+        }
+
+        if (SeriesTotalEpisodeCount == 0)
+        {
+            return "No episodes loaded";
+        }
+
+        if (SeriesAvailableEpisodeCount == 0)
+        {
+            return "Unavailable";
+        }
+
+        if (SeriesAvailableEpisodeCount == SeriesTotalEpisodeCount)
+        {
+            return "Available";
+        }
+
+        return "Partial";
+    }
+
+    private static string GetSubtitle(LibraryItemDto item)
+    {
+        var bits = new List<string>();
+        if (item.Year.HasValue)
+        {
+            bits.Add(item.Year.Value.ToString());
+        }
+
+        bits.Add(item.MediaType);
+        return string.Join(" · ", bits);
+    }
+
+    private static string GetPathLabel(LibraryItemDto item)
+        => string.Equals(item.MediaType, "Series", StringComparison.OrdinalIgnoreCase) ? "Series Path" : "File Path";
+
+    private static string FormatRuntime(double? runtimeMinutes)
+        => runtimeMinutes.HasValue && runtimeMinutes.Value > 0 ? $"{runtimeMinutes.Value:0.##} min" : "—";
+
+    private static string FormatAirDate(DateTimeOffset? airDate)
+        => airDate.HasValue ? airDate.Value.ToLocalTime().ToString("yyyy-MM-dd") : "—";
+
+    private static string FormatInt(int? value)
+        => value.HasValue && value.Value > 0 ? value.Value.ToString() : "—";
+
+    private static string DisplayValue(string? value)
+        => string.IsNullOrWhiteSpace(value) ? "—" : value;
+
+    private static string DisplaySourceTitle(LibraryItemSourceLinkDto source)
+    {
+        if (!string.IsNullOrWhiteSpace(source.SourceTitle))
+        {
+            return source.SourceTitle;
+        }
+
+        if (!string.IsNullOrWhiteSpace(source.SourceSortTitle))
+        {
+            return source.SourceSortTitle;
+        }
+
+        return "—";
+    }
+
+    private static string FormatExternalRef(LibraryItemSourceLinkDto source)
+    {
+        var type = string.IsNullOrWhiteSpace(source.ExternalType) ? "item" : source.ExternalType;
+        var externalId = DisplayValue(source.ExternalId);
+        return $"{type}:{externalId}";
+    }
+
+    private static string FormatSourceServiceLabel(string serviceKey)
+    {
+        var key = (serviceKey ?? string.Empty).Trim();
+        if (key.Equals("radarr", StringComparison.OrdinalIgnoreCase)) return "Radarr";
+        if (key.Equals("plex", StringComparison.OrdinalIgnoreCase)) return "Plex";
+        if (key.Equals("overseerr", StringComparison.OrdinalIgnoreCase)) return "Overseerr";
+        if (key.Equals("sonarr", StringComparison.OrdinalIgnoreCase)) return "Sonarr";
+        return string.IsNullOrWhiteSpace(key) ? "Source" : char.ToUpperInvariant(key[0]) + key[1..];
+    }
+
+    private static string GetDescriptionSourceLabel(string? serviceKey)
+    {
+        var key = (serviceKey ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(key)) return "Unknown";
+        return FormatSourceServiceLabel(key);
+    }
+
+    private string GetPlayabilityLabel()
+        => string.IsNullOrWhiteSpace(_item?.PlayabilityScore) ? "Unknown" : _item!.PlayabilityScore;
+
+    private string GetPlayabilitySummary()
+    {
+        if (_item is null || string.IsNullOrWhiteSpace(_item.PlayabilitySummary))
+        {
+            return "Run ffprobe against a locally visible episode file to score practical Plex compatibility.";
+        }
+
+        if (_item.PlayabilityCheckedAtUtc.HasValue)
+        {
+            return $"{_item.PlayabilitySummary} Checked {_item.PlayabilityCheckedAtUtc.Value.ToLocalTime():yyyy-MM-dd HH:mm}.";
+        }
+
+        return _item.PlayabilitySummary;
+    }
+
+    private string GetPlayabilityBadgeStyle()
+    {
+        const string baseStyle = "display:inline-block; padding:0.2rem 0.52rem; border-radius:999px; font-size:0.78rem; font-weight:700; letter-spacing:0.01em;";
+        return (_item?.PlayabilityScore ?? string.Empty).Trim().ToLowerInvariant() switch
+        {
+            "excellent" => baseStyle + "background:rgba(16,185,129,0.18); color:#6ee7b7; border:1px solid rgba(16,185,129,0.45);",
+            "good" => baseStyle + "background:rgba(59,130,246,0.18); color:#bfdbfe; border:1px solid rgba(59,130,246,0.45);",
+            "transcode likely" => baseStyle + "background:rgba(234,179,8,0.22); color:#fde68a; border:1px solid rgba(234,179,8,0.65);",
+            "problematic" => baseStyle + "background:rgba(239,68,68,0.22); color:#fecaca; border:1px solid rgba(239,68,68,0.65);",
+            _ => baseStyle + "background:rgba(148,163,184,0.18); color:#cbd5e1; border:1px solid rgba(148,163,184,0.35);"
+        };
+    }
+
+    private static string GetIssueTypeLabel(string issueType)
+    {
+        var value = (issueType ?? string.Empty).Trim().ToLowerInvariant();
+        return value switch
+        {
+            "runtime_probe_failed" => "Runtime probe failed",
+            "runtime_mismatch" => "Runtime mismatch",
+            _ => string.IsNullOrWhiteSpace(issueType) ? "Unknown" : issueType
+        };
+    }
+
+    private static string GetIssueDetailText(LibraryIssueDto issue)
+    {
+        if (string.Equals(issue.IssueType, "runtime_probe_failed", StringComparison.OrdinalIgnoreCase))
+        {
+            var details = ParseRuntimeProbeFailureDetails(issue.DetailsJson);
+            if (!string.IsNullOrWhiteSpace(details?.ProbeError))
+            {
+                return TrimForCell(details.ProbeError);
+            }
+        }
+
+        if (string.Equals(issue.IssueType, "runtime_mismatch", StringComparison.OrdinalIgnoreCase))
+        {
+            var details = ParseRuntimeMismatchDetails(issue.DetailsJson);
+            if (details is not null)
+            {
+                return $"Δ {details.DiffMinutes:0.##}m ({details.DiffPercent:0.##}%)";
+            }
+        }
+
+        return issue.Summary;
+    }
+
+    private static string TrimForCell(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return string.Empty;
+        var singleLine = value.Replace("\r", " ").Replace("\n", " ").Trim();
+        return singleLine.Length <= 160 ? singleLine : $"{singleLine[..157]}...";
+    }
+
+    private static RuntimeMismatchDetails? ParseRuntimeMismatchDetails(string? detailsJson)
+    {
+        if (string.IsNullOrWhiteSpace(detailsJson)) return null;
+
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(detailsJson);
+            var root = doc.RootElement;
+            var diffMinutes = root.TryGetProperty("diffMinutes", out var diffMinutesElement) ? diffMinutesElement.GetDouble() : 0;
+            var diffPercent = root.TryGetProperty("diffPercent", out var diffPercentElement) ? diffPercentElement.GetDouble() : 0;
+            var thresholdMinutes = root.TryGetProperty("thresholdMinutes", out var thresholdElement) ? thresholdElement.GetDouble() : 0;
+            return new RuntimeMismatchDetails(diffMinutes, diffPercent, thresholdMinutes);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static RuntimeProbeFailureDetails? ParseRuntimeProbeFailureDetails(string? detailsJson)
+    {
+        if (string.IsNullOrWhiteSpace(detailsJson)) return null;
+
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(detailsJson);
+            var root = doc.RootElement;
+            var filePath = root.TryGetProperty("filePath", out var filePathElement) ? filePathElement.GetString() ?? string.Empty : string.Empty;
+            var probeError = root.TryGetProperty("probeError", out var probeErrorElement) ? probeErrorElement.GetString() ?? string.Empty : string.Empty;
+            var exitCode = root.TryGetProperty("exitCode", out var exitCodeElement) && exitCodeElement.ValueKind != System.Text.Json.JsonValueKind.Null
+                ? exitCodeElement.GetInt32()
+                : (int?)null;
+            return new RuntimeProbeFailureDetails(filePath, probeError, exitCode);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private async Task AttachBearerAsync(HttpRequestMessage request)
+    {
+        var token = await TokenStore.GetTokenAsync();
+        if (!string.IsNullOrWhiteSpace(token))
+        {
+            request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+        }
+    }
+
+    private record LibraryItemDto(
+        long Id,
+        string CanonicalKey,
+        string MediaType,
+        string DisplayTitle,
+        string Title,
+        string SortTitle,
+        int? Year,
+        int? TmdbId,
+        int? TvdbId,
+        string ImdbId,
+        string PlexRatingKey,
+        string Description,
+        string DescriptionSourceService,
+        double? RuntimeMinutes,
+        double? ActualRuntimeMinutes,
+        IReadOnlyList<string> AudioLanguages,
+        IReadOnlyList<string> SubtitleLanguages,
+        string PlayabilityScore,
+        string PlayabilitySummary,
+        DateTimeOffset? PlayabilityCheckedAtUtc,
+        IReadOnlyList<string> PlayabilityReasons,
+        string PlayabilityVideoCodec,
+        IReadOnlyList<string> PlayabilityAudioCodecs,
+        IReadOnlyList<string> PlayabilitySubtitleCodecs,
+        bool IsAvailable,
+        string QualityProfile,
+        DateTimeOffset? SourceUpdatedAtUtc,
+        DateTimeOffset UpdatedAtUtc,
+        string PrimaryFilePath,
+        bool LocalFileExists,
+        IReadOnlyList<string> SourceServices);
+
+    private record LibraryItemSourceLinkDto(
+        long Id,
+        long LibraryItemId,
+        long IntegrationId,
+        string ServiceKey,
+        string InstanceName,
+        string SourceTitle,
+        string SourceSortTitle,
+        string ExternalId,
+        string ExternalType,
+        DateTimeOffset? ExternalUpdatedAtUtc,
+        DateTimeOffset LastSeenAtUtc,
+        bool IsDeletedAtSource);
+
+    private record LibraryIssueDto(
+        long Id,
+        long LibraryItemId,
+        string IssueType,
+        string Severity,
+        string Status,
+        string Summary,
+        string SuggestedAction,
+        string DetailsJson,
+        DateTimeOffset FirstDetectedAtUtc,
+        DateTimeOffset LastDetectedAtUtc,
+        DateTimeOffset? ResolvedAtUtc,
+        string LibraryItemTitle,
+        string MediaType);
+
+    private record LibraryItemRuntimeProbeResponse(
+        long Id,
+        string MediaType,
+        string Title,
+        string PrimaryFilePath,
+        bool FileExists,
+        bool Success,
+        double? ActualRuntimeMinutes,
+        string Message,
+        int? ProbeExitCode,
+        string ProbeError,
+        string PlayabilityScore,
+        string PlayabilitySummary,
+        DateTimeOffset? PlayabilityCheckedAtUtc);
+
+    private record RuntimeMismatchDetails(double DiffMinutes, double DiffPercent, double ThresholdMinutes);
+    private record RuntimeProbeFailureDetails(string FilePath, string ProbeError, int? ExitCode);
+    private record TvDisplaySettingsResponse(bool HideSpecialsByDefault);
+}

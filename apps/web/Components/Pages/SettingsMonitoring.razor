@@ -4,11 +4,11 @@
 @inject AuthTokenStore TokenStore
 @inject ISnackbar Snackbar
 
-<PageTitle>Monitoring Settings</PageTitle>
+<PageTitle>Monitoring & Request Sync</PageTitle>
 
-<p class="subtitle"><a href="/settings">Settings</a> / Monitoring</p>
-<h1>Monitoring</h1>
-<p class="subtitle">App-wide monitoring behavior for MediaCloud source-of-truth and integration sync automation.</p>
+<p class="subtitle"><a href="/settings">Settings</a> / Monitoring & Request Sync</p>
+<h1>Monitoring & Request Sync</h1>
+<p class="subtitle">App-wide monitoring behavior for MediaCloud source-of-truth: Radarr and Sonarr receive monitor-state sync, while Overseerr contributes request and availability intent context.</p>
 
 <div class="card" style="max-width:860px;">
     @if (_loading)
@@ -22,7 +22,7 @@
                 <input type="checkbox" @bind="_model.ManagedByMediaCloud" />
                 <span>
                     <strong>Monitor in MediaCloud</strong><br />
-                    <span class="card-note">Use MediaCloud as the monitoring source of truth. When off, per-item monitor sync actions are disabled.</span>
+                    <span class="card-note">Use MediaCloud as the monitor-state source of truth for movie and series library items. When off, MediaCloud stops driving monitor-state changes into Radarr and Sonarr.</span>
                 </span>
             </label>
 
@@ -30,7 +30,7 @@
                 <input type="checkbox" @bind="_model.AutoSyncEnabled" disabled="@(!_model.ManagedByMediaCloud)" />
                 <span>
                     <strong>Auto sync</strong><br />
-                    <span class="card-note">When enabled, MediaCloud pushes monitor changes to Radarr and Overseerr automatically.</span>
+                    <span class="card-note">When enabled, MediaCloud automatically pushes monitor-state changes to Radarr and Sonarr. Overseerr is still consulted for request and media-intent context, but it is not the primary monitor-state owner.</span>
                 </span>
             </label>
         </div>

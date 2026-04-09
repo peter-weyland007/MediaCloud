@@ -12,11 +12,8 @@
         <p class="subtitle" style="margin:0.25rem 0 0;">Movie library view.</p>
     </div>
 
-    <div style="display:flex; flex-direction:column; align-items:flex-end; gap:0.35rem; min-width:360px;">
+    <div class="movies-actions-panel">
         <MudButtonGroup Class="movies-action-group" Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small">
-            <MudButton Class="movies-action-btn movies-action-btn--primary" OnClick="RefreshMoviesFromIntegrationsAsync" Disabled="@_isActionRunning">
-                @(_syncingMovies ? "Refreshing movies..." : "Refresh from integrations")
-            </MudButton>
             <MudButton Class="movies-action-btn movies-action-btn--secondary" OnClick="ReprobeAllMoviesAsync" Disabled="@_isActionRunning">
                 @(_reprobingAllMovies ? "Reprobing runtimes..." : "Probe all runtimes")
             </MudButton>
@@ -25,36 +22,51 @@
             </MudButton>
         </MudButtonGroup>
 
-        <div class="movies-action-progress" role="status" aria-live="polite">
-            @if (_isActionRunning && _actionProgressIndeterminate)
-            {
-                <MudProgressLinear Color="Color.Primary" Indeterminate="true" Rounded="true" Class="movies-action-progress-bar" />
-            }
-            else
-            {
-                <MudProgressLinear Color="Color.Primary" Value="@_actionProgressPercent" Rounded="true" Class="movies-action-progress-bar" />
-            }
-            <div class="movies-action-progress-meta">
-                <span class="movies-action-progress-text">@_actionStatusText (@ActionPercentLabel)</span>
+        <MudButtonGroup Class="movies-source-group" Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small">
+            <MudButton Class="movies-source-btn movies-source-btn--filled" OnClick="RefreshMoviesFromIntegrationsAsync" Disabled="@_isActionRunning">Refresh all</MudButton>
+            <MudButton Class="movies-source-btn movies-source-btn--filled" OnClick='() => RefreshMoviesFromSingleIntegrationAsync("Plex")' Disabled="@_isActionRunning">Plex</MudButton>
+            <MudButton Class="movies-source-btn movies-source-btn--filled" OnClick='() => RefreshMoviesFromSingleIntegrationAsync("Radarr")' Disabled="@_isActionRunning">Radarr</MudButton>
+            <MudButton Class="movies-source-btn movies-source-btn--filled" OnClick='() => RefreshMoviesFromSingleIntegrationAsync("Overseerr")' Disabled="@_isActionRunning">Overseerr</MudButton>
+        </MudButtonGroup>
+
+        @if (_isActionRunning)
+        {
+            <div class="movies-action-progress" role="status" aria-live="polite">
+                @if (_actionProgressIndeterminate)
+                {
+                    <MudProgressLinear Color="Color.Primary" Indeterminate="true" Rounded="true" Class="movies-action-progress-bar" />
+                }
+                else
+                {
+                    <MudProgressLinear Color="Color.Primary" Value="@_actionProgressPercent" Rounded="true" Class="movies-action-progress-bar" />
+                }
+                <div class="movies-action-progress-meta">
+                    <span class="movies-action-progress-text">@_actionStatusText (@ActionPercentLabel)</span>
+                </div>
             </div>
-        </div>
+        }
     </div>
 </div>
 
 <MediaLibraryTable FixedMediaType="Movie" RefreshVersion="@_refreshVersion" />
 
 <style>
-    .movies-action-btn.mud-button-root {
+    .movies-actions-panel {
+        display: flex;
+        flex-direction: column;
+        align-items: stretch;
+        gap: 0.35rem;
+        min-width: 320px;
+        width: min(100%, 560px);
+    }
+
+    .movies-action-btn.mud-button-root,
+    .movies-source-btn.mud-button-root {
         text-transform: none !important;
         font-weight: 600;
         min-height: 34px;
         padding-inline: 0.8rem;
-    }
-
-    .movies-action-btn--primary {
-        background: var(--mud-palette-primary);
-        color: var(--mud-palette-primary-text);
-        border-color: var(--mud-palette-primary);
+        flex: 1 1 0;
     }
 
     .movies-action-btn--secondary {
@@ -69,8 +81,15 @@
         border-color: var(--mud-palette-error);
     }
 
-    .movies-action-group {
+    .movies-action-group,
+    .movies-source-group {
         width: 100%;
+    }
+
+    .movies-source-btn--filled {
+        background: var(--mud-palette-primary);
+        color: var(--mud-palette-primary-text);
+        border-color: var(--mud-palette-primary);
     }
 
     .movies-action-progress {
@@ -110,6 +129,12 @@
     private string ActionPercentLabel => _actionProgressIndeterminate && _isActionRunning ? "--" : $"{Math.Round(_actionProgressPercent),3}%";
 
     private async Task RefreshMoviesFromIntegrationsAsync()
+        => await RefreshMoviesByServicesAsync(new[] { "Plex", "Radarr", "Overseerr" }, "movies", "Plex/Radarr/Overseerr");
+
+    private async Task RefreshMoviesFromSingleIntegrationAsync(string serviceKey)
+        => await RefreshMoviesByServicesAsync(new[] { serviceKey }, $"movies from {serviceKey}", serviceKey);
+
+    private async Task RefreshMoviesByServicesAsync(IReadOnlyCollection<string> serviceKeys, string operationLabel, string emptyStateLabel)
     {
         _syncingMovies = true;
         await SetActionProgressAsync("Loading integrations...", 0, indeterminate: true);
@@ -126,15 +151,12 @@
 
             var integrations = await listResponse.Content.ReadFromJsonAsync<List<IntegrationInstanceResponse>>() ?? [];
             var movieIntegrations = integrations
-                .Where(x => x.Enabled &&
-                            (string.Equals(x.ServiceKey, "Plex", StringComparison.OrdinalIgnoreCase)
-                             || string.Equals(x.ServiceKey, "Radarr", StringComparison.OrdinalIgnoreCase)
-                             || string.Equals(x.ServiceKey, "Overseerr", StringComparison.OrdinalIgnoreCase)))
+                .Where(x => x.Enabled && serviceKeys.Any(serviceKey => string.Equals(x.ServiceKey, serviceKey, StringComparison.OrdinalIgnoreCase)))
                 .ToList();
 
             if (movieIntegrations.Count == 0)
             {
-                Snackbar.Add("No enabled Plex/Radarr/Overseerr integrations found.", Severity.Warning);
+                Snackbar.Add($"No enabled {emptyStateLabel} integrations found.", Severity.Warning);
                 return;
             }
 
@@ -149,7 +171,7 @@
             {
                 using var syncRequest = new HttpRequestMessage(HttpMethod.Post, $"/api/integrations/{integration.Id}/sync")
                 {
-                    Content = JsonContent.Create(new TriggerIntegrationSyncRequest(false))
+                    Content = JsonContent.Create(new TriggerIntegrationSyncRequest(false, "movies"))
                 };
                 await AttachBearerAsync(syncRequest);
                 using var syncResponse = await Http.SendAsync(syncRequest);
@@ -178,9 +200,9 @@
                 await SetActionProgressAsync($"Syncing {completed}/{total} integrations ({Math.Round(percent)}%)...", percent, indeterminate: false);
             }
 
-            await SetActionProgressAsync("Finalizing refresh...", 100, indeterminate: false);
+            await SetActionProgressAsync($"Finalizing {operationLabel} refresh...", 100, indeterminate: false);
             _refreshVersion++;
-            Snackbar.Add($"Movie refresh complete. Synced {synced}, failed {failed}.", failed == 0 ? Severity.Success : Severity.Warning);
+            Snackbar.Add($"{Capitalize(operationLabel)} refresh complete. Synced {synced}, failed {failed}.", failed == 0 ? Severity.Success : Severity.Warning);
             if (failedMessages.Count > 0)
             {
                 Snackbar.Add(string.Join(" | ", failedMessages.Take(2)), Severity.Warning);
@@ -188,7 +210,7 @@
         }
         catch
         {
-            Snackbar.Add("Movie refresh failed.", Severity.Error);
+            Snackbar.Add($"{Capitalize(operationLabel)} refresh failed.", Severity.Error);
         }
         finally
         {
@@ -326,6 +348,9 @@
         _actionProgressIndeterminate = false;
     }
 
+    private static string Capitalize(string value)
+        => string.IsNullOrWhiteSpace(value) ? value : char.ToUpperInvariant(value[0]) + value[1..];
+
     private async Task AttachBearerAsync(HttpRequestMessage request)
     {
         var token = await TokenStore.GetTokenAsync();
@@ -338,7 +363,7 @@
     private sealed record BatchRuntimeReprobeRequest(string? MediaType, int Take = 200, bool ForceAll = false);
     private sealed record StartRuntimeReprobeJobResponse(Guid JobId);
     private sealed record RuntimeReprobeJobStatusResponse(Guid JobId, string Status, string Message, int TotalCandidates, int Inspected, int Attempted, int Updated, int MissingFiles, int Failed, DateTimeOffset StartedAtUtc, DateTimeOffset? FinishedAtUtc);
-    private sealed record TriggerIntegrationSyncRequest(bool ForceFullResync = false);
+    private sealed record TriggerIntegrationSyncRequest(bool ForceFullResync = false, string? MediaScope = null);
     private sealed record TriggerIntegrationSyncResponse(long IntegrationId, bool Accepted, string Message);
     private sealed record PurgeLibraryRequest(string? MediaType = null, bool ResetSyncState = true, bool ClearMonitoringState = true);
     private sealed record PurgeLibraryResponse(string MediaType, int ItemsDeleted, int SourceLinksDeleted, int IssuesDeleted, int MonitoringStateDeleted);

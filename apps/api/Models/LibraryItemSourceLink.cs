@@ -6,6 +6,8 @@ public class LibraryItemSourceLink
     public long LibraryItemId { get; set; }
     public long IntegrationId { get; set; }
 
+    public string SourceTitle { get; set; } = string.Empty;
+    public string SourceSortTitle { get; set; } = string.Empty;
     public string ExternalId { get; set; } = string.Empty;
     public string ExternalType { get; set; } = string.Empty;
     public DateTimeOffset? ExternalUpdatedAtUtc { get; set; }

@@ -1,13 +1,396 @@
 @page "/media/tv-shows"
 @attribute [Authorize]
+@inject HttpClient Http
+@inject AuthTokenStore TokenStore
+@inject ISnackbar Snackbar
 
 <PageTitle>TV Shows</PageTitle>
 
-<h1>TV Shows</h1>
-<p class="subtitle">Series and episode library view.</p>
+<div style="display:flex; justify-content:space-between; align-items:flex-start; gap:0.85rem; flex-wrap:wrap;">
+    <div>
+        <h1 style="margin:0;">TV Shows</h1>
+        <p class="subtitle" style="margin:0.25rem 0 0;">Series and episode library view.</p>
+    </div>
 
-<MediaLibraryTable MediaTypeOptions="@_tvTypeOptions" InitialMediaType="Series" />
+    <div class="tv-actions-panel">
+        <MudButtonGroup Class="tv-action-group" Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small">
+            <MudButton Class="tv-action-btn tv-action-btn--secondary" OnClick="ReprobeAllTvEpisodesAsync" Disabled="@_isActionRunning">
+                @(_reprobingAllTvEpisodes ? "Reprobing runtimes..." : "Probe all runtimes")
+            </MudButton>
+            <MudButton Class="tv-action-btn tv-action-btn--danger" OnClick="PurgeTvAsync" Disabled="@_isActionRunning">
+                @(_purgingTv ? "Purging TV..." : "Purge TV data")
+            </MudButton>
+        </MudButtonGroup>
+
+        <MudButtonGroup Class="tv-source-group" Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small">
+            <MudButton Class="tv-source-btn tv-source-btn--filled" OnClick="RefreshTvFromIntegrationsAsync" Disabled="@_isActionRunning">Refresh all</MudButton>
+            <MudButton Class="tv-source-btn tv-source-btn--filled" OnClick='() => RefreshTvFromSingleIntegrationAsync("Plex")' Disabled="@_isActionRunning">Plex</MudButton>
+            <MudButton Class="tv-source-btn tv-source-btn--filled" OnClick='() => RefreshTvFromSingleIntegrationAsync("Sonarr")' Disabled="@_isActionRunning">Sonarr</MudButton>
+            <MudButton Class="tv-source-btn tv-source-btn--filled" OnClick='() => RefreshTvFromSingleIntegrationAsync("Overseerr")' Disabled="@_isActionRunning">Overseerr</MudButton>
+        </MudButtonGroup>
+
+        @if (_isActionRunning)
+        {
+            <div class="tv-action-progress" role="status" aria-live="polite">
+                @if (_actionProgressIndeterminate)
+                {
+                    <MudProgressLinear Color="Color.Primary" Indeterminate="true" Rounded="true" Class="tv-action-progress-bar" />
+                }
+                else
+                {
+                    <MudProgressLinear Color="Color.Primary" Value="@_actionProgressPercent" Rounded="true" Class="tv-action-progress-bar" />
+                }
+                <div class="tv-action-progress-meta">
+                    <span class="tv-action-progress-text">@_actionStatusText (@ActionPercentLabel)</span>
+                </div>
+            </div>
+        }
+    </div>
+</div>
+
+<div class="card" style="margin:1rem 0; display:flex; align-items:center; justify-content:space-between; gap:0.75rem; flex-wrap:wrap;">
+    <div>
+        <p class="card-label">TV BROWSE MODE</p>
+        <p class="card-note" style="margin:0.25rem 0 0;">Switch between series-level browsing and episode-level browsing.</p>
+    </div>
+    <MudButtonGroup Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Small">
+        <MudButton Class="@GetModeButtonClass("Series")" OnClick='() => SetTvModeAsync("Series")' Disabled="@_isActionRunning">Series</MudButton>
+        <MudButton Class="@GetModeButtonClass("Episode")" OnClick='() => SetTvModeAsync("Episode")' Disabled="@_isActionRunning">Episodes</MudButton>
+    </MudButtonGroup>
+</div>
+
+<MediaLibraryTable FixedMediaType="@_selectedTvMode" RefreshVersion="@_refreshVersion" />
+
+<style>
+    .tv-actions-panel {
+        display: flex;
+        flex-direction: column;
+        align-items: stretch;
+        gap: 0.35rem;
+        min-width: 320px;
+        width: min(100%, 560px);
+    }
+
+    .tv-action-btn.mud-button-root,
+    .tv-source-btn.mud-button-root {
+        text-transform: none !important;
+        font-weight: 600;
+        min-height: 34px;
+        padding-inline: 0.8rem;
+        flex: 1 1 0;
+    }
+
+    .tv-action-btn--secondary {
+        background: var(--mud-palette-primary);
+        color: var(--mud-palette-primary-text);
+        border-color: var(--mud-palette-primary);
+    }
+
+    .tv-action-btn--danger {
+        background: var(--mud-palette-error);
+        color: var(--mud-palette-error-text);
+        border-color: var(--mud-palette-error);
+    }
+
+    .tv-action-group,
+    .tv-source-group {
+        width: 100%;
+    }
+
+    .tv-source-btn--filled {
+        background: var(--mud-palette-primary);
+        color: var(--mud-palette-primary-text);
+        border-color: var(--mud-palette-primary);
+    }
+
+    .tv-action-progress {
+        width: 100%;
+        display: grid;
+        gap: 0.35rem;
+    }
+
+    .tv-action-progress-bar {
+        width: 100%;
+    }
+
+    .tv-action-progress-meta {
+        display: flex;
+        align-items: center;
+        min-height: 1rem;
+    }
+
+    .tv-action-progress-text {
+        color: var(--mud-palette-primary-text);
+        font-size: 0.84rem;
+        font-weight: 600;
+        white-space: nowrap;
+    }
+</style>
 
 @code {
-    private readonly string[] _tvTypeOptions = ["All", "Series", "Episode"];
+    private bool _syncingTv;
+    private bool _reprobingAllTvEpisodes;
+    private bool _purgingTv;
+    private int _refreshVersion;
+    private string _selectedTvMode = "Series";
+    private bool _actionProgressIndeterminate;
+    private double _actionProgressPercent;
+    private string _actionStatusText = "Ready";
+
+    private bool _isActionRunning => _syncingTv || _reprobingAllTvEpisodes || _purgingTv;
+    private string ActionPercentLabel => _actionProgressIndeterminate && _isActionRunning ? "--" : $"{Math.Round(_actionProgressPercent),3}%";
+
+    private async Task RefreshTvFromIntegrationsAsync()
+        => await RefreshTvByServicesAsync(new[] { "Sonarr", "Plex", "Overseerr" }, "TV", "Sonarr/Plex/Overseerr");
+
+    private async Task RefreshTvFromSingleIntegrationAsync(string serviceKey)
+        => await RefreshTvByServicesAsync(new[] { serviceKey }, $"TV from {serviceKey}", serviceKey);
+
+    private async Task RefreshTvByServicesAsync(IReadOnlyCollection<string> serviceKeys, string operationLabel, string emptyStateLabel)
+    {
+        _syncingTv = true;
+        await SetActionProgressAsync("Loading integrations...", 0, indeterminate: true);
+        try
+        {
+            using var listRequest = new HttpRequestMessage(HttpMethod.Get, "/api/integrations");
+            await AttachBearerAsync(listRequest);
+            using var listResponse = await Http.SendAsync(listRequest);
+            if (!listResponse.IsSuccessStatusCode)
+            {
+                Snackbar.Add($"Failed to load integrations ({(int)listResponse.StatusCode}).", Severity.Error);
+                return;
+            }
+
+            var integrations = await listResponse.Content.ReadFromJsonAsync<List<IntegrationInstanceResponse>>() ?? [];
+            var tvIntegrations = integrations
+                .Where(x => x.Enabled && serviceKeys.Any(serviceKey => string.Equals(x.ServiceKey, serviceKey, StringComparison.OrdinalIgnoreCase)))
+                .ToList();
+
+            if (tvIntegrations.Count == 0)
+            {
+                Snackbar.Add($"No enabled {emptyStateLabel} integrations found.", Severity.Warning);
+                return;
+            }
+
+            var synced = 0;
+            var failed = 0;
+            var completed = 0;
+            var total = tvIntegrations.Count;
+            var failedMessages = new List<string>();
+            await SetActionProgressAsync($"Syncing 0/{total} integrations...", 0, indeterminate: false);
+
+            foreach (var integration in tvIntegrations)
+            {
+                using var syncRequest = new HttpRequestMessage(HttpMethod.Post, $"/api/integrations/{integration.Id}/sync")
+                {
+                    Content = JsonContent.Create(new TriggerIntegrationSyncRequest(false, "tv"))
+                };
+                await AttachBearerAsync(syncRequest);
+                using var syncResponse = await Http.SendAsync(syncRequest);
+
+                if (!syncResponse.IsSuccessStatusCode)
+                {
+                    failed++;
+                    failedMessages.Add($"{integration.InstanceName}: HTTP {(int)syncResponse.StatusCode}");
+                }
+                else
+                {
+                    var payload = await syncResponse.Content.ReadFromJsonAsync<TriggerIntegrationSyncResponse>();
+                    if (payload?.Accepted == true)
+                    {
+                        synced++;
+                    }
+                    else
+                    {
+                        failed++;
+                        failedMessages.Add($"{integration.InstanceName}: {payload?.Message ?? "sync not accepted"}");
+                    }
+                }
+
+                completed++;
+                var percent = total == 0 ? 0 : (completed * 100d) / total;
+                await SetActionProgressAsync($"Syncing {completed}/{total} integrations ({Math.Round(percent)}%)...", percent, indeterminate: false);
+            }
+
+            await SetActionProgressAsync($"Finalizing {operationLabel} refresh...", 100, indeterminate: false);
+            _refreshVersion++;
+            Snackbar.Add($"{Capitalize(operationLabel)} refresh complete. Synced {synced}, failed {failed}.", failed == 0 ? Severity.Success : Severity.Warning);
+            if (failedMessages.Count > 0)
+            {
+                Snackbar.Add(string.Join(" | ", failedMessages.Take(2)), Severity.Warning);
+            }
+        }
+        catch
+        {
+            Snackbar.Add($"{Capitalize(operationLabel)} refresh failed.", Severity.Error);
+        }
+        finally
+        {
+            _syncingTv = false;
+            ClearActionProgress();
+        }
+    }
+
+    private async Task ReprobeAllTvEpisodesAsync()
+    {
+        _reprobingAllTvEpisodes = true;
+        await SetActionProgressAsync("Starting TV runtime probe job...", 0, indeterminate: true);
+        try
+        {
+            using var startRequest = new HttpRequestMessage(HttpMethod.Post, "/api/library/items/reprobe-runtimes/jobs")
+            {
+                Content = JsonContent.Create(new BatchRuntimeReprobeRequest("Episode", 5000, true))
+            };
+            await AttachBearerAsync(startRequest);
+            using var startResponse = await Http.SendAsync(startRequest);
+            if (!startResponse.IsSuccessStatusCode)
+            {
+                Snackbar.Add($"TV bulk probe failed to start ({(int)startResponse.StatusCode}). Admin access may be required.", Severity.Error);
+                return;
+            }
+
+            var startPayload = await startResponse.Content.ReadFromJsonAsync<StartRuntimeReprobeJobResponse>();
+            if (startPayload is null || startPayload.JobId == Guid.Empty)
+            {
+                Snackbar.Add("TV bulk probe failed to start (no job id returned).", Severity.Error);
+                return;
+            }
+
+            while (true)
+            {
+                using var statusRequest = new HttpRequestMessage(HttpMethod.Get, $"/api/library/items/reprobe-runtimes/jobs/{startPayload.JobId}");
+                await AttachBearerAsync(statusRequest);
+                using var statusResponse = await Http.SendAsync(statusRequest);
+                if (!statusResponse.IsSuccessStatusCode)
+                {
+                    Snackbar.Add($"TV bulk probe status check failed ({(int)statusResponse.StatusCode}).", Severity.Error);
+                    return;
+                }
+
+                var status = await statusResponse.Content.ReadFromJsonAsync<RuntimeReprobeJobStatusResponse>();
+                if (status is null)
+                {
+                    Snackbar.Add("TV bulk probe status payload was empty.", Severity.Error);
+                    return;
+                }
+
+                var message = string.IsNullOrWhiteSpace(status.Message)
+                    ? "TV runtime probe in progress..."
+                    : status.Message;
+
+                var percent = status.TotalCandidates <= 0
+                    ? (status.Status.Equals("completed", StringComparison.OrdinalIgnoreCase) ? 100 : 0)
+                    : Math.Min(100, (status.Inspected * 100d) / status.TotalCandidates);
+
+                await SetActionProgressAsync(message, percent, indeterminate: false);
+
+                if (status.Status.Equals("completed", StringComparison.OrdinalIgnoreCase))
+                {
+                    Snackbar.Add($"TV bulk probe done: updated {status.Updated}/{status.Inspected}, missing files {status.MissingFiles}, probe failures {status.Failed}.", Severity.Success);
+                    _refreshVersion++;
+                    return;
+                }
+
+                if (status.Status.Equals("failed", StringComparison.OrdinalIgnoreCase))
+                {
+                    Snackbar.Add(status.Message, Severity.Error);
+                    return;
+                }
+
+                await Task.Delay(700);
+            }
+        }
+        catch
+        {
+            Snackbar.Add("TV bulk probe failed.", Severity.Error);
+        }
+        finally
+        {
+            _reprobingAllTvEpisodes = false;
+            ClearActionProgress();
+        }
+    }
+
+    private async Task PurgeTvAsync()
+    {
+        _purgingTv = true;
+        await SetActionProgressAsync("Purging TV data...", 15, indeterminate: false);
+        try
+        {
+            foreach (var mediaType in new[] { "Episode", "Series" })
+            {
+                using var purgeRequest = new HttpRequestMessage(HttpMethod.Post, "/api/library/purge")
+                {
+                    Content = JsonContent.Create(new PurgeLibraryRequest(mediaType, true, true))
+                };
+                await AttachBearerAsync(purgeRequest);
+                using var purgeResponse = await Http.SendAsync(purgeRequest);
+                if (!purgeResponse.IsSuccessStatusCode)
+                {
+                    Snackbar.Add($"TV purge failed for {mediaType} ({(int)purgeResponse.StatusCode}).", Severity.Error);
+                    return;
+                }
+            }
+
+            await SetActionProgressAsync("Finalizing purge...", 100, indeterminate: false);
+            _refreshVersion++;
+            Snackbar.Add("TV data purged.", Severity.Success);
+        }
+        catch
+        {
+            Snackbar.Add("TV purge failed.", Severity.Error);
+        }
+        finally
+        {
+            _purgingTv = false;
+            ClearActionProgress();
+        }
+    }
+
+    private Task SetTvModeAsync(string mode)
+    {
+        _selectedTvMode = string.Equals(mode, "Episode", StringComparison.OrdinalIgnoreCase) ? "Episode" : "Series";
+        _refreshVersion++;
+        return Task.CompletedTask;
+    }
+
+    private string GetModeButtonClass(string mode)
+        => string.Equals(_selectedTvMode, mode, StringComparison.OrdinalIgnoreCase)
+            ? "tv-action-btn tv-action-btn--primary"
+            : "tv-action-btn";
+
+    private static string Capitalize(string value)
+        => string.IsNullOrWhiteSpace(value) ? value : char.ToUpperInvariant(value[0]) + value[1..];
+
+    private async Task AttachBearerAsync(HttpRequestMessage request)
+    {
+        var token = await TokenStore.GetTokenAsync();
+        if (!string.IsNullOrWhiteSpace(token))
+        {
+            request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+        }
+    }
+
+    private async Task SetActionProgressAsync(string text, double percent, bool indeterminate)
+    {
+        _actionStatusText = text;
+        _actionProgressPercent = Math.Clamp(percent, 0, 100);
+        _actionProgressIndeterminate = indeterminate;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void ClearActionProgress()
+    {
+        _actionStatusText = "Ready";
+        _actionProgressPercent = 0;
+        _actionProgressIndeterminate = false;
+    }
+
+    private sealed record BatchRuntimeReprobeRequest(string? MediaType, int Take = 200, bool ForceAll = false);
+    private sealed record StartRuntimeReprobeJobResponse(Guid JobId);
+    private sealed record RuntimeReprobeJobStatusResponse(Guid JobId, string Status, string Message, int TotalCandidates, int Inspected, int Attempted, int Updated, int MissingFiles, int Failed, DateTimeOffset StartedAtUtc, DateTimeOffset? FinishedAtUtc);
+    private sealed record IntegrationInstanceResponse(long Id, string ServiceKey, string DisplayName, string InstanceName, string BaseUrl, string AuthType, string ApiKey, string Username, string Password, bool Enabled, DateTimeOffset? UpdatedAtUtc);
+    private sealed record TriggerIntegrationSyncRequest(bool ForceFullResync = false, string? MediaScope = null);
+    private sealed record TriggerIntegrationSyncResponse(long IntegrationId, bool Accepted, string Message);
+    private sealed record PurgeLibraryRequest(string? MediaType = null, bool ResetSyncState = true, bool ClearMonitoringState = true);
 }

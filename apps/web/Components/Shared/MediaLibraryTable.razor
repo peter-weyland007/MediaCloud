@@ -99,8 +99,15 @@
                         }
                         <th style="position:sticky; top:0; z-index:20; background:#0b1220; padding:0.4rem 0; border-bottom:1px solid #1e293b; box-shadow:0 2px 0 #0b1220;">Available</th>
                         <th style="position:sticky; top:0; z-index:20; background:#0b1220; padding:0.4rem 0; border-bottom:1px solid #1e293b; box-shadow:0 2px 0 #0b1220;">Quality</th>
-                        <th style="position:sticky; top:0; z-index:20; background:#0b1220; padding:0.4rem 0; border-bottom:1px solid #1e293b; box-shadow:0 2px 0 #0b1220;"><button style="all:unset; cursor:pointer;" @onclick='() => ToggleSortAsync("runtime")'>Runtimes (Reported/Actual) @SortGlyph("runtime")</button></th>
-                        <th style="position:sticky; top:0; z-index:20; background:#0b1220; padding:0.4rem 0; border-bottom:1px solid #1e293b; box-shadow:0 2px 0 #0b1220;">Runtime Match</th>
+                        @if (ShowPlayabilityColumn)
+                        {
+                            <th style="position:sticky; top:0; z-index:20; background:#0b1220; padding:0.4rem 0; border-bottom:1px solid #1e293b; box-shadow:0 2px 0 #0b1220;">Playability</th>
+                        }
+                        @if (ShowRuntimeColumns)
+                        {
+                            <th style="position:sticky; top:0; z-index:20; background:#0b1220; padding:0.4rem 0; border-bottom:1px solid #1e293b; box-shadow:0 2px 0 #0b1220;"><button style="all:unset; cursor:pointer;" @onclick='() => ToggleSortAsync("runtime")'>Runtimes (Reported/Actual) @SortGlyph("runtime")</button></th>
+                            <th style="position:sticky; top:0; z-index:20; background:#0b1220; padding:0.4rem 0; border-bottom:1px solid #1e293b; box-shadow:0 2px 0 #0b1220;">Runtime Match</th>
+                        }
                         <th style="position:sticky; top:0; z-index:20; background:#0b1220; padding:0.4rem 0; border-bottom:1px solid #1e293b; box-shadow:0 2px 0 #0b1220;"><button style="all:unset; cursor:pointer;" @onclick='() => ToggleSortAsync("updated")'>Updated @SortGlyph("updated")</button></th>
                     </tr>
                 </thead>
@@ -111,14 +118,7 @@
                             <td style="padding:0.45rem 0;">
                                 <div style="display:grid; gap:0.3rem;">
                                     <div>
-                                        @if (string.Equals(item.MediaType, "Movie", StringComparison.OrdinalIgnoreCase))
-                                        {
-                                            <a href="@($"/media/movies/{item.Id}")" style="color:#93c5fd; text-decoration:none;">@item.Title</a>
-                                        }
-                                        else
-                                        {
-                                            @item.Title
-                                        }
+                                        <a href="@MediaItemRoutes.GetDetailsHref(item.MediaType, item.Id)" style="color:#93c5fd; text-decoration:none;">@item.DisplayTitle</a>
                                     </div>
                                     @if (item.SourceServices.Count > 0)
                                     {
@@ -138,10 +138,19 @@
                             }
                             <td style="padding:0.45rem 0;">@(item.IsAvailable ? "Yes" : "No")</td>
                             <td style="padding:0.45rem 0;">@item.QualityProfile</td>
-                            <td style="padding:0.45rem 0;">@FormatRuntimePair(item.RuntimeMinutes, item.ActualRuntimeMinutes)</td>
-                            <td style="padding:0.45rem 0;">
-                                <span style="@GetRuntimeMatchBadgeStyle(item)">@GetRuntimeMatchLabel(item)</span>
-                            </td>
+                            @if (ShowPlayabilityColumn)
+                            {
+                                <td style="padding:0.45rem 0;">
+                                    <span style="@GetPlayabilityBadgeStyle(item)">@GetPlayabilityLabel(item)</span>
+                                </td>
+                            }
+                            @if (ShowRuntimeColumns)
+                            {
+                                <td style="padding:0.45rem 0;">@FormatRuntimePair(item.RuntimeMinutes, item.ActualRuntimeMinutes)</td>
+                                <td style="padding:0.45rem 0;">
+                                    <span style="@GetRuntimeMatchBadgeStyle(item)">@GetRuntimeMatchLabel(item)</span>
+                                </td>
+                            }
                             <td style="padding:0.45rem 0;">@item.UpdatedAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
                         </tr>
                     }
@@ -246,6 +255,8 @@
     private static readonly string[] DefaultTypeOptions = ["All", "Movie", "Series", "Episode", "Track", "Album"];
     private bool HasFixedMediaType => !string.IsNullOrWhiteSpace(FixedMediaType);
     private bool ShowTypeColumn => !string.Equals(FixedMediaType, "Movie", StringComparison.OrdinalIgnoreCase);
+    private bool ShowRuntimeColumns => !string.Equals(FixedMediaType, "Series", StringComparison.OrdinalIgnoreCase);
+    private bool ShowPlayabilityColumn => !string.Equals(FixedMediaType, "Series", StringComparison.OrdinalIgnoreCase);
     private string[] EffectiveMediaTypeOptions => MediaTypeOptions is { Length: > 0 } ? MediaTypeOptions : DefaultTypeOptions;
     private int TotalPages => Math.Max(1, (int)Math.Ceiling((double)Math.Max(_totalCount, 1) / _pageSize));
 
@@ -395,6 +406,22 @@
         };
     }
 
+    private static string GetPlayabilityLabel(LibraryItemDto item)
+        => string.IsNullOrWhiteSpace(item.PlayabilityScore) ? "—" : item.PlayabilityScore;
+
+    private static string GetPlayabilityBadgeStyle(LibraryItemDto item)
+    {
+        const string baseStyle = "display:inline-block; padding:0.2rem 0.52rem; border-radius:999px; font-size:0.78rem; font-weight:700; letter-spacing:0.01em;";
+        return (item.PlayabilityScore ?? string.Empty).Trim().ToLowerInvariant() switch
+        {
+            "excellent" => baseStyle + "background:rgba(16,185,129,0.18); color:#6ee7b7; border:1px solid rgba(16,185,129,0.45);",
+            "good" => baseStyle + "background:rgba(59,130,246,0.18); color:#bfdbfe; border:1px solid rgba(59,130,246,0.45);",
+            "transcode likely" => baseStyle + "background:rgba(234,179,8,0.22); color:#fde68a; border:1px solid rgba(234,179,8,0.65);",
+            "problematic" => baseStyle + "background:rgba(239,68,68,0.22); color:#fecaca; border:1px solid rgba(239,68,68,0.65);",
+            _ => baseStyle + "background:rgba(148,163,184,0.18); color:#cbd5e1; border:1px solid rgba(148,163,184,0.35);"
+        };
+    }
+
     private static string FormatSourceServiceLabel(string serviceKey)
     {
         var key = (serviceKey ?? string.Empty).Trim();
@@ -528,7 +555,7 @@
 
     private record LibraryItemCountDto(int Total);
     private record LibraryJumpDto(bool Found, string Token, int PageIndex, long? TargetId);
-    private record LibraryItemDto(long Id, string CanonicalKey, string MediaType, string Title, string SortTitle, int? Year, int? TmdbId, int? TvdbId, string ImdbId, string PlexRatingKey, double? RuntimeMinutes, double? ActualRuntimeMinutes, IReadOnlyList<string> AudioLanguages, IReadOnlyList<string> SubtitleLanguages, bool IsAvailable, string QualityProfile, DateTimeOffset? SourceUpdatedAtUtc, DateTimeOffset UpdatedAtUtc, string PrimaryFilePath, IReadOnlyList<string> SourceServices);
+    private record LibraryItemDto(long Id, string CanonicalKey, string MediaType, string DisplayTitle, string Title, string SortTitle, int? Year, int? TmdbId, int? TvdbId, string ImdbId, string PlexRatingKey, string Description, string DescriptionSourceService, double? RuntimeMinutes, double? ActualRuntimeMinutes, IReadOnlyList<string> AudioLanguages, IReadOnlyList<string> SubtitleLanguages, string PlayabilityScore, string PlayabilitySummary, DateTimeOffset? PlayabilityCheckedAtUtc, IReadOnlyList<string> PlayabilityReasons, string PlayabilityVideoCodec, IReadOnlyList<string> PlayabilityAudioCodecs, IReadOnlyList<string> PlayabilitySubtitleCodecs, bool IsAvailable, string QualityProfile, DateTimeOffset? SourceUpdatedAtUtc, DateTimeOffset UpdatedAtUtc, string PrimaryFilePath, bool LocalFileExists, IReadOnlyList<string> SourceServices);
     private record RuntimePolicySettingsResponse(double ToleranceMinutesFloor, double TolerancePercent, double WarningPercent, double HighMinutes, double CriticalPercent, double CriticalMinutes);
     private record RuntimeMatchResult(string Label, string Kind);
 }

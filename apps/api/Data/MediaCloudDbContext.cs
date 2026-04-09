@@ -14,6 +14,7 @@ public class MediaCloudDbContext(DbContextOptions<MediaCloudDbContext> options) 
     public DbSet<LibraryItem> LibraryItems => Set<LibraryItem>();
     public DbSet<LibraryItemSourceLink> LibraryItemSourceLinks => Set<LibraryItemSourceLink>();
     public DbSet<LibraryIssue> LibraryIssues => Set<LibraryIssue>();
+    public DbSet<PlaybackDiagnosticEntry> PlaybackDiagnosticEntries => Set<PlaybackDiagnosticEntry>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -83,8 +84,13 @@ public class MediaCloudDbContext(DbContextOptions<MediaCloudDbContext> options) 
             entity.Property(x => x.SortTitle).HasMaxLength(256).IsRequired();
             entity.Property(x => x.ImdbId).HasMaxLength(32).IsRequired();
             entity.Property(x => x.PlexRatingKey).HasMaxLength(64).IsRequired();
+            entity.Property(x => x.Description).HasMaxLength(4000).IsRequired();
+            entity.Property(x => x.DescriptionSourceService).HasMaxLength(64).IsRequired();
             entity.Property(x => x.AudioLanguagesJson).HasMaxLength(2048).IsRequired();
             entity.Property(x => x.SubtitleLanguagesJson).HasMaxLength(2048).IsRequired();
+            entity.Property(x => x.PlayabilityScore).HasMaxLength(32).IsRequired();
+            entity.Property(x => x.PlayabilitySummary).HasMaxLength(512).IsRequired();
+            entity.Property(x => x.PlayabilityDetailsJson).HasMaxLength(4096).IsRequired();
             entity.Property(x => x.QualityProfile).HasMaxLength(128).IsRequired();
             entity.HasIndex(x => x.CanonicalKey).IsUnique();
             entity.HasIndex(x => x.MediaType);
@@ -93,6 +99,8 @@ public class MediaCloudDbContext(DbContextOptions<MediaCloudDbContext> options) 
         modelBuilder.Entity<LibraryItemSourceLink>(entity =>
         {
             entity.HasKey(x => x.Id);
+            entity.Property(x => x.SourceTitle).HasMaxLength(256).IsRequired();
+            entity.Property(x => x.SourceSortTitle).HasMaxLength(256).IsRequired();
             entity.Property(x => x.ExternalId).HasMaxLength(128).IsRequired();
             entity.Property(x => x.ExternalType).HasMaxLength(32).IsRequired();
             entity.Property(x => x.SourcePayloadHash).HasMaxLength(128).IsRequired();
@@ -112,6 +120,36 @@ public class MediaCloudDbContext(DbContextOptions<MediaCloudDbContext> options) 
             entity.Property(x => x.SuggestedAction).HasMaxLength(256).IsRequired();
             entity.HasIndex(x => new { x.LibraryItemId, x.Status });
             entity.HasIndex(x => new { x.IssueType, x.Status });
+        });
+
+        modelBuilder.Entity<PlaybackDiagnosticEntry>(entity =>
+        {
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.SourceService).HasMaxLength(64).IsRequired();
+            entity.Property(x => x.ExternalId).HasMaxLength(128).IsRequired();
+            entity.Property(x => x.UserName).HasMaxLength(128).IsRequired();
+            entity.Property(x => x.ClientName).HasMaxLength(128).IsRequired();
+            entity.Property(x => x.Player).HasMaxLength(128).IsRequired();
+            entity.Property(x => x.Product).HasMaxLength(128).IsRequired();
+            entity.Property(x => x.Platform).HasMaxLength(128).IsRequired();
+            entity.Property(x => x.Decision).HasMaxLength(64).IsRequired();
+            entity.Property(x => x.TranscodeDecision).HasMaxLength(64).IsRequired();
+            entity.Property(x => x.VideoDecision).HasMaxLength(64).IsRequired();
+            entity.Property(x => x.AudioDecision).HasMaxLength(64).IsRequired();
+            entity.Property(x => x.SubtitleDecision).HasMaxLength(64).IsRequired();
+            entity.Property(x => x.Container).HasMaxLength(64).IsRequired();
+            entity.Property(x => x.VideoCodec).HasMaxLength(64).IsRequired();
+            entity.Property(x => x.AudioCodec).HasMaxLength(64).IsRequired();
+            entity.Property(x => x.SubtitleCodec).HasMaxLength(64).IsRequired();
+            entity.Property(x => x.QualityProfile).HasMaxLength(128).IsRequired();
+            entity.Property(x => x.HealthLabel).HasMaxLength(32).IsRequired();
+            entity.Property(x => x.Summary).HasMaxLength(512).IsRequired();
+            entity.Property(x => x.SuspectedCause).HasMaxLength(512).IsRequired();
+            entity.Property(x => x.ErrorMessage).HasMaxLength(2048).IsRequired();
+            entity.Property(x => x.LogSnippet).HasMaxLength(4096).IsRequired();
+            entity.Property(x => x.RawPayloadJson).HasMaxLength(16384).IsRequired();
+            entity.HasIndex(x => new { x.LibraryItemId, x.OccurredAtUtc });
+            entity.HasIndex(x => new { x.LibraryItemId, x.SourceService, x.ExternalId }).IsUnique();
         });
     }
 }

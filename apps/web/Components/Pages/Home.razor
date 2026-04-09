@@ -34,10 +34,12 @@
 <section class="card" style="margin-top:1rem;">
     <p class="card-label">SOURCE OF TRUTH FLOW</p>
     <div style="display:grid; gap:0.5rem; margin-top:0.5rem;">
-        <div><strong>Radarr</strong> → base catalog ingestion (movie identity, runtime baseline, file path mapping).</div>
+        <div><strong>Radarr</strong> → movie catalog ingestion (movie identity, runtime baseline, file path mapping).</div>
+        <div><strong>Sonarr</strong> → series catalog ingestion (show, season, and episode structure for TV library truth).</div>
+        <div><strong>Lidarr</strong> → music catalog ingestion (artist, album, and release structure for music library truth).</div>
         <div><strong>Plex</strong> → file playback truth (actual stream metadata: audio/subtitle languages, runtime reality).</div>
         <div><strong>Overseerr</strong> → request intent truth (what users requested, request lifecycle, demand context).</div>
-        <div><strong>MediaCloud</strong> fuses all three into one per-title record and opens issues when truths conflict.</div>
+        <div><strong>MediaCloud</strong> fuses all five into one cross-library record set and opens issues when truths conflict.</div>
     </div>
 </section>
 

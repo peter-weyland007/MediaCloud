@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Data;
 using System.Diagnostics;
+using System.Globalization;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
@@ -42,7 +43,9 @@ const string runtimeCriticalPercentKey = "runtime_policy.critical_percent";
 const string runtimeCriticalMinutesKey = "runtime_policy.critical_minutes";
 const string monitoringManagedByMediaCloudKey = "monitoring.managed_by_mediacloud";
 const string monitoringAutoSyncEnabledKey = "monitoring.auto_sync_enabled";
+const string tvHideSpecialsByDefaultKey = "tv.hide_specials_by_default";
 const string runtimeMismatchIssueType = "runtime_mismatch";
+const string runtimeProbeFailureIssueType = "runtime_probe_failed";
 const string runtimePolicyVersion = "runtime-v1";
 const double runtimeToleranceMinutesFloorDefault = 3d;
 const double runtimeTolerancePercentDefault = 5d;
@@ -157,6 +160,10 @@ CREATE TABLE IF NOT EXISTS LibraryItems (
     PrimaryFilePath TEXT NOT NULL DEFAULT '',
     AudioLanguagesJson TEXT NOT NULL DEFAULT '[]',
     SubtitleLanguagesJson TEXT NOT NULL DEFAULT '[]',
+    PlayabilityScore TEXT NOT NULL DEFAULT '',
+    PlayabilitySummary TEXT NOT NULL DEFAULT '',
+    PlayabilityDetailsJson TEXT NOT NULL DEFAULT '',
+    PlayabilityCheckedAtUtc TEXT NULL,
     IsAvailable INTEGER NOT NULL DEFAULT 0,
     QualityProfile TEXT NOT NULL DEFAULT '',
     SourceUpdatedAtUtc TEXT NULL,
@@ -198,6 +205,42 @@ CREATE TABLE IF NOT EXISTS LibraryIssues (
 );
 CREATE INDEX IF NOT EXISTS IX_LibraryIssues_LibraryItemId_Status ON LibraryIssues(LibraryItemId, Status);
 CREATE INDEX IF NOT EXISTS IX_LibraryIssues_IssueType_Status ON LibraryIssues(IssueType, Status);
+CREATE TABLE IF NOT EXISTS PlaybackDiagnosticEntries (
+    Id INTEGER NOT NULL CONSTRAINT PK_PlaybackDiagnosticEntries PRIMARY KEY AUTOINCREMENT,
+    LibraryItemId INTEGER NOT NULL,
+    IntegrationId INTEGER NULL,
+    SourceService TEXT NOT NULL,
+    ExternalId TEXT NOT NULL DEFAULT '',
+    OccurredAtUtc TEXT NOT NULL,
+    ImportedAtUtc TEXT NOT NULL,
+    StartedAtUtc TEXT NULL,
+    StoppedAtUtc TEXT NULL,
+    UserName TEXT NOT NULL DEFAULT '',
+    ClientName TEXT NOT NULL DEFAULT '',
+    Player TEXT NOT NULL DEFAULT '',
+    Product TEXT NOT NULL DEFAULT '',
+    Platform TEXT NOT NULL DEFAULT '',
+    Decision TEXT NOT NULL DEFAULT '',
+    TranscodeDecision TEXT NOT NULL DEFAULT '',
+    VideoDecision TEXT NOT NULL DEFAULT '',
+    AudioDecision TEXT NOT NULL DEFAULT '',
+    SubtitleDecision TEXT NOT NULL DEFAULT '',
+    Container TEXT NOT NULL DEFAULT '',
+    VideoCodec TEXT NOT NULL DEFAULT '',
+    AudioCodec TEXT NOT NULL DEFAULT '',
+    SubtitleCodec TEXT NOT NULL DEFAULT '',
+    QualityProfile TEXT NOT NULL DEFAULT '',
+    HealthLabel TEXT NOT NULL DEFAULT '',
+    Summary TEXT NOT NULL DEFAULT '',
+    SuspectedCause TEXT NOT NULL DEFAULT '',
+    ErrorMessage TEXT NOT NULL DEFAULT '',
+    LogSnippet TEXT NOT NULL DEFAULT '',
+    RawPayloadJson TEXT NOT NULL DEFAULT '',
+    FOREIGN KEY (LibraryItemId) REFERENCES LibraryItems(Id) ON DELETE CASCADE,
+    FOREIGN KEY (IntegrationId) REFERENCES IntegrationConfigs(Id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS IX_PlaybackDiagnosticEntries_Item_OccurredAtUtc ON PlaybackDiagnosticEntries(LibraryItemId, OccurredAtUtc);
+CREATE UNIQUE INDEX IF NOT EXISTS IX_PlaybackDiagnosticEntries_Item_Source_External ON PlaybackDiagnosticEntries(LibraryItemId, SourceService, ExternalId);
 ");
 
     EnsureSqliteColumn(db, "IntegrationConfigs", "InstanceName", "TEXT NOT NULL DEFAULT 'Default'");
@@ -206,8 +249,16 @@ CREATE INDEX IF NOT EXISTS IX_LibraryIssues_IssueType_Status ON LibraryIssues(Is
     EnsureSqliteColumn(db, "IntegrationConfigs", "Password", "TEXT NOT NULL DEFAULT ''");
     EnsureSqliteColumn(db, "IntegrationConfigs", "RemoteRootPath", "TEXT NOT NULL DEFAULT ''");
     EnsureSqliteColumn(db, "IntegrationConfigs", "LocalRootPath", "TEXT NOT NULL DEFAULT ''");
+    EnsureSqliteColumn(db, "LibraryItems", "Description", "TEXT NOT NULL DEFAULT ''");
+    EnsureSqliteColumn(db, "LibraryItems", "DescriptionSourceService", "TEXT NOT NULL DEFAULT ''");
     EnsureSqliteColumn(db, "LibraryItems", "ActualRuntimeMinutes", "REAL NULL");
     EnsureSqliteColumn(db, "LibraryItems", "PrimaryFilePath", "TEXT NOT NULL DEFAULT ''");
+    EnsureSqliteColumn(db, "LibraryItems", "PlayabilityScore", "TEXT NOT NULL DEFAULT ''");
+    EnsureSqliteColumn(db, "LibraryItems", "PlayabilitySummary", "TEXT NOT NULL DEFAULT ''");
+    EnsureSqliteColumn(db, "LibraryItems", "PlayabilityDetailsJson", "TEXT NOT NULL DEFAULT ''");
+    EnsureSqliteColumn(db, "LibraryItems", "PlayabilityCheckedAtUtc", "TEXT NULL");
+    EnsureSqliteColumn(db, "LibraryItemSourceLinks", "SourceTitle", "TEXT NOT NULL DEFAULT ''");
+    EnsureSqliteColumn(db, "LibraryItemSourceLinks", "SourceSortTitle", "TEXT NOT NULL DEFAULT ''");
 
     db.Database.ExecuteSqlRaw(@"INSERT INTO LibraryPathMappings (IntegrationId, RemoteRootPath, LocalRootPath, UpdatedAtUtc)
 SELECT c.Id, c.RemoteRootPath, c.LocalRootPath, c.UpdatedAtUtc
@@ -564,6 +615,22 @@ app.MapPut("/api/settings/monitoring", async (UpdateMonitoringSettingsRequest re
     return Results.Ok(new MonitoringSettingsResponse(request.ManagedByMediaCloud, request.AutoSyncEnabled));
 }).RequireAuthorization("AdminOnly");
 
+app.MapGet("/api/settings/tv-display", async (MediaCloudDbContext db) =>
+{
+    var settings = await TvDisplaySettings.LoadAsync(db, tvHideSpecialsByDefaultKey, fallbackHideSpecials: false);
+    return Results.Ok(settings);
+}).RequireAuthorization();
+
+app.MapPut("/api/settings/tv-display", async (UpdateTvDisplaySettingsRequest request, MediaCloudDbContext db, ClaimsPrincipal principal) =>
+{
+    var now = DateTimeOffset.UtcNow;
+    await TvDisplaySettings.UpsertAsync(db, tvHideSpecialsByDefaultKey, request.HideSpecialsByDefault, now);
+    await WriteAuditAsync(db, principal, "tv_display_settings", principal.Identity?.Name ?? "admin", $"Set hide_specials_by_default={request.HideSpecialsByDefault}");
+    await db.SaveChangesAsync();
+
+    return Results.Ok(new TvDisplaySettingsResponse(request.HideSpecialsByDefault));
+}).RequireAuthorization("AdminOnly");
+
 app.MapPost("/api/auth/register", async (RegisterRequest request, MediaCloudDbContext db, IPasswordHasher<AppUser> hasher) =>
 {
     var allow = await AppAuthSettings.IsSelfRegistrationAllowedAsync(db, allowSelfRegistrationDefault, allowSelfRegistrationKey);
@@ -809,6 +876,68 @@ app.MapGet("/api/system/local-directories", (string? path) =>
     }
 }).RequireAuthorization("AdminOnly");
 
+app.MapGet("/api/library-paths/local-browse", (string? path) =>
+{
+    var requestedPath = string.IsNullOrWhiteSpace(path)
+        ? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)
+        : path.Trim();
+
+    if (!Path.IsPathRooted(requestedPath))
+        return Results.BadRequest(new ErrorResponse("Path must be absolute."));
+
+    if (!Directory.Exists(requestedPath))
+        return Results.NotFound(new ErrorResponse("Directory not found."));
+
+    try
+    {
+        var normalized = Path.GetFullPath(requestedPath);
+        var parent = Directory.GetParent(normalized)?.FullName ?? string.Empty;
+        var directories = Directory
+            .EnumerateDirectories(normalized)
+            .Select(x => Path.GetFileName(x) ?? string.Empty)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        return Results.Ok(new LocalDirectoryBrowseResponse(normalized, parent, directories));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new ErrorResponse($"Failed to browse directory: {ex.Message}"));
+    }
+}).RequireAuthorization("AdminOnly");
+
+app.MapGet("/api/library-paths/browse-local", (string? path) =>
+{
+    var requestedPath = string.IsNullOrWhiteSpace(path)
+        ? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)
+        : path.Trim();
+
+    if (!Path.IsPathRooted(requestedPath))
+        return Results.BadRequest(new ErrorResponse("Path must be absolute."));
+
+    if (!Directory.Exists(requestedPath))
+        return Results.NotFound(new ErrorResponse("Directory not found."));
+
+    try
+    {
+        var normalized = Path.GetFullPath(requestedPath);
+        var parent = Directory.GetParent(normalized)?.FullName ?? string.Empty;
+        var directories = Directory
+            .EnumerateDirectories(normalized)
+            .Select(x => Path.GetFileName(x) ?? string.Empty)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        return Results.Ok(new LocalDirectoryBrowseResponse(normalized, parent, directories));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new ErrorResponse($"Failed to browse directory: {ex.Message}"));
+    }
+}).RequireAuthorization("AdminOnly");
+
 app.MapGet("/api/library-path-mappings", async (MediaCloudDbContext db) =>
 {
     var integrations = await db.IntegrationConfigs.ToListAsync();
@@ -985,44 +1114,58 @@ app.MapPost("/api/library-path-mappings/{id:long}/test", async (long id, MediaCl
             }
             else if (service == "sonarr")
             {
-                using var episodeFileRequest = new HttpRequestMessage(HttpMethod.Get, $"{integration.BaseUrl.TrimEnd('/')}/api/v3/episodefile");
-                ApplyIntegrationAuthHeaders(integration, episodeFileRequest);
-                using var episodeFileResponse = await client.SendAsync(episodeFileRequest);
-                if (episodeFileResponse.IsSuccessStatusCode)
+                using var seriesRequest = new HttpRequestMessage(HttpMethod.Get, $"{integration.BaseUrl.TrimEnd('/')}/api/v3/series");
+                ApplyIntegrationAuthHeaders(integration, seriesRequest);
+                using var seriesResponse = await client.SendAsync(seriesRequest);
+                if (!seriesResponse.IsSuccessStatusCode)
                 {
-                    var episodePayload = await episodeFileResponse.Content.ReadAsStringAsync();
-                    using var episodeDoc = JsonDocument.Parse(episodePayload);
-                    if (episodeDoc.RootElement.ValueKind == JsonValueKind.Array)
-                    {
-                        var sampleFilePath = episodeDoc.RootElement
-                            .EnumerateArray()
-                            .Select(x => GetJsonString(x, "path"))
-                            .FirstOrDefault(x => !string.IsNullOrWhiteSpace(x) && x.Trim().StartsWith(mapping.RemoteRootPath, StringComparison.OrdinalIgnoreCase))
-                            ?? episodeDoc.RootElement
-                                .EnumerateArray()
-                                .Select(x => GetJsonString(x, "path"))
-                                .FirstOrDefault(x => !string.IsNullOrWhiteSpace(x));
-
-                        if (!string.IsNullOrWhiteSpace(sampleFilePath))
-                        {
-                            deepTestAttempted = true;
-                            sourceFilePath = sampleFilePath.Trim();
-                            resolvedLocalFilePath = ResolveLocalPath(mapping, sourceFilePath);
-                            resolvedLocalFileExists = File.Exists(resolvedLocalFilePath);
-                        }
-                        else
-                        {
-                            messages.Add("Deep test skipped: no Sonarr episode file path available.");
-                        }
-                    }
-                    else
-                    {
-                        messages.Add("Deep test skipped: unexpected Sonarr episode file payload.");
-                    }
+                    messages.Add($"Deep test skipped: could not read Sonarr series (HTTP {(int)seriesResponse.StatusCode}).");
                 }
                 else
                 {
-                    messages.Add($"Deep test skipped: could not read Sonarr episode files (HTTP {(int)episodeFileResponse.StatusCode}).");
+                    var seriesPayload = await seriesResponse.Content.ReadAsStringAsync();
+                    using var seriesDoc = JsonDocument.Parse(seriesPayload);
+                    if (seriesDoc.RootElement.ValueKind != JsonValueKind.Array)
+                    {
+                        messages.Add("Deep test skipped: unexpected Sonarr series payload.");
+                    }
+                    else
+                    {
+                        var seriesIds = seriesDoc.RootElement
+                            .EnumerateArray()
+                            .Select(x => GetJsonInt(x, "id"))
+                            .Where(x => x.HasValue)
+                            .Select(x => x!.Value)
+                            .Distinct()
+                            .ToList();
+
+                        var episodeFilesResult = await FetchSonarrCollectionBySeriesAsync(client, integration, "episodefile", seriesIds, "episode files");
+                        if (!episodeFilesResult.Success)
+                        {
+                            messages.Add($"Deep test skipped: {episodeFilesResult.ErrorMessage}");
+                        }
+                        else
+                        {
+                            var sampleFilePath = episodeFilesResult.Items
+                                .Select(x => GetJsonString(x, "path"))
+                                .FirstOrDefault(x => !string.IsNullOrWhiteSpace(x) && x.Trim().StartsWith(mapping.RemoteRootPath, StringComparison.OrdinalIgnoreCase))
+                                ?? episodeFilesResult.Items
+                                    .Select(x => GetJsonString(x, "path"))
+                                    .FirstOrDefault(x => !string.IsNullOrWhiteSpace(x));
+
+                            if (!string.IsNullOrWhiteSpace(sampleFilePath))
+                            {
+                                deepTestAttempted = true;
+                                sourceFilePath = sampleFilePath.Trim();
+                                resolvedLocalFilePath = ResolveLocalPath(mapping, sourceFilePath);
+                                resolvedLocalFileExists = File.Exists(resolvedLocalFilePath);
+                            }
+                            else
+                            {
+                                messages.Add("Deep test skipped: no Sonarr episode file path available.");
+                            }
+                        }
+                    }
                 }
             }
             else if (service == "lidarr")
@@ -1169,7 +1312,7 @@ app.MapPost("/api/integrations/{id:long}/test", async (long id, MediaCloudDbCont
     return Results.Ok(new IntegrationTestResponse(config.Id, config.ServiceKey, config.InstanceName, result.Success, result.StatusCode, result.Message));
 }).RequireAuthorization("AdminOnly");
 
-app.MapPost("/api/integrations/{id:long}/sync", async (long id, TriggerIntegrationSyncRequest request, MediaCloudDbContext db, IHttpClientFactory httpClientFactory) =>
+app.MapPost("/api/integrations/{id:long}/sync", async (long id, TriggerIntegrationSyncRequest request, MediaCloudDbContext db, IHttpClientFactory httpClientFactory, IServiceScopeFactory scopeFactory) =>
 {
     var integration = await db.IntegrationConfigs.FirstOrDefaultAsync(x => x.Id == id);
     if (integration is null)
@@ -1232,7 +1375,8 @@ app.MapPost("/api/integrations/{id:long}/sync", async (long id, TriggerIntegrati
             httpClientFactory,
             runtimePolicy,
             runtimeMismatchIssueType,
-            runtimePolicyVersion);
+            runtimePolicyVersion,
+            request.MediaScope);
 
         if (!outcome.Success)
         {
@@ -1244,6 +1388,7 @@ app.MapPost("/api/integrations/{id:long}/sync", async (long id, TriggerIntegrati
         }
 
         await ConsolidateMovieDuplicatesAsync(db, outcome.SyncSeenAtUtc);
+        await ConsolidateTelevisionDuplicatesAsync(db, outcome.SyncSeenAtUtc);
 
         state.LastSuccessfulAtUtc = outcome.SyncSeenAtUtc;
         state.LastError = string.Empty;
@@ -1251,7 +1396,18 @@ app.MapPost("/api/integrations/{id:long}/sync", async (long id, TriggerIntegrati
         state.UpdatedAtUtc = outcome.SyncSeenAtUtc;
         await db.SaveChangesAsync();
 
-        return Results.Ok(new TriggerIntegrationSyncResponse(id, true, outcome.Message));
+        var responseMessage = outcome.Message;
+        if (string.Equals(integration.ServiceKey, "sonarr", StringComparison.OrdinalIgnoreCase))
+        {
+            var jobId = StartRuntimeReprobeJob(
+                runtimeReprobeJobs,
+                scopeFactory,
+                new BatchRuntimeReprobeRequest("Episode", 5000, false),
+                "Queued TV runtime probe after Sonarr sync...");
+            responseMessage = $"{responseMessage} Background runtime probe queued ({jobId}).";
+        }
+
+        return Results.Ok(new TriggerIntegrationSyncResponse(id, true, responseMessage));
     }
     catch (Exception ex)
     {
@@ -1301,7 +1457,7 @@ app.MapGet("/api/library/items", async (MediaCloudDbContext db, string? mediaTyp
     var limit = Math.Clamp(take ?? 100, 1, 500);
     var skip = Math.Max(offset ?? 0, 0);
 
-    var query = ApplyLibraryItemFilters(db.LibraryItems.AsQueryable(), mediaType, q, available);
+    var query = ApplyLibraryItemFilters(db, db.LibraryItems.AsQueryable(), mediaType, q, available);
     query = ApplyLibraryItemSort(query, sortBy, sortDir);
 
     var rows = await query
@@ -1311,6 +1467,7 @@ app.MapGet("/api/library/items", async (MediaCloudDbContext db, string? mediaTyp
 
     var rowIds = rows.Select(x => x.Id).ToList();
     var sourceServiceMap = new Dictionary<long, IReadOnlyList<string>>();
+    var sourceTitleMap = new Dictionary<long, IReadOnlyList<LibraryItemSourceTitleInfo>>();
 
     if (rowIds.Count > 0)
     {
@@ -1318,7 +1475,12 @@ app.MapGet("/api/library/items", async (MediaCloudDbContext db, string? mediaTyp
             from link in db.LibraryItemSourceLinks
             join integration in db.IntegrationConfigs on link.IntegrationId equals integration.Id
             where rowIds.Contains(link.LibraryItemId)
-            select new { link.LibraryItemId, integration.ServiceKey })
+            select new LibraryItemSourceTitleInfo(
+                link.LibraryItemId,
+                integration.ServiceKey,
+                integration.InstanceName,
+                link.SourceTitle,
+                link.SourceSortTitle))
             .ToListAsync();
 
         sourceServiceMap = sourceRows
@@ -1331,10 +1493,17 @@ app.MapGet("/api/library/items", async (MediaCloudDbContext db, string? mediaTyp
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .OrderBy(x => x)
                     .ToList());
+
+        sourceTitleMap = sourceRows
+            .GroupBy(x => x.LibraryItemId)
+            .ToDictionary(g => g.Key, g => (IReadOnlyList<LibraryItemSourceTitleInfo>)g.ToList());
     }
 
     var items = rows
-        .Select(x => MapLibraryItemDto(x, sourceServiceMap.TryGetValue(x.Id, out var sources) ? sources : []))
+        .Select(x => MapLibraryItemDto(
+            x,
+            sourceServiceMap.TryGetValue(x.Id, out var sources) ? sources : [],
+            sourceTitleMap.TryGetValue(x.Id, out var sourceTitles) ? sourceTitles : []))
         .ToList();
 
     return Results.Ok(items);
@@ -1342,7 +1511,7 @@ app.MapGet("/api/library/items", async (MediaCloudDbContext db, string? mediaTyp
 
 app.MapGet("/api/library/items/count", async (MediaCloudDbContext db, string? mediaType, string? q, bool? available) =>
 {
-    var query = ApplyLibraryItemFilters(db.LibraryItems.AsQueryable(), mediaType, q, available);
+    var query = ApplyLibraryItemFilters(db, db.LibraryItems.AsQueryable(), mediaType, q, available);
     var total = await query.CountAsync();
     return Results.Ok(new LibraryItemCountResponse(total));
 }).RequireAuthorization();
@@ -1382,7 +1551,7 @@ app.MapPost("/api/library/purge", async (PurgeLibraryRequest request, MediaCloud
             from state in db.IntegrationSyncStates
             join integration in db.IntegrationConfigs on state.IntegrationId equals integration.Id
             where integration.Enabled
-                && (integration.ServiceKey.ToLower() == "plex" || integration.ServiceKey.ToLower() == "radarr" || integration.ServiceKey.ToLower() == "overseerr")
+                && (integration.ServiceKey.ToLower() == "plex" || integration.ServiceKey.ToLower() == "radarr" || integration.ServiceKey.ToLower() == "overseerr" || integration.ServiceKey.ToLower() == "sonarr")
             select state)
             .ToListAsync();
 
@@ -1410,7 +1579,7 @@ app.MapGet("/api/library/items/jump", async (MediaCloudDbContext db, string toke
     var normalizedToken = token.Trim().ToUpperInvariant();
     var size = Math.Clamp(pageSize ?? 100, 1, 500);
 
-    var query = ApplyLibraryItemFilters(db.LibraryItems.AsQueryable(), mediaType, q, available);
+    var query = ApplyLibraryItemFilters(db, db.LibraryItems.AsQueryable(), mediaType, q, available);
     query = ApplyLibraryItemSort(query, sortBy, sortDir);
 
     var rows = await query.Select(x => new { x.Id, x.Title }).ToListAsync();
@@ -1442,7 +1611,73 @@ app.MapGet("/api/library/items/{id:long}", async (long id, MediaCloudDbContext d
         .OrderBy(x => x)
         .ToListAsync();
 
-    return Results.Ok(MapLibraryItemDto(row, sourceServices));
+    var sourceTitles = await (
+        from link in db.LibraryItemSourceLinks
+        join integration in db.IntegrationConfigs on link.IntegrationId equals integration.Id
+        where link.LibraryItemId == row.Id
+        select new LibraryItemSourceTitleInfo(
+            link.LibraryItemId,
+            integration.ServiceKey,
+            integration.InstanceName,
+            link.SourceTitle,
+            link.SourceSortTitle))
+        .ToListAsync();
+
+    return Results.Ok(MapLibraryItemDto(row, sourceServices, sourceTitles));
+}).RequireAuthorization();
+
+app.MapGet("/api/library/items/{id:long}/episodes", async (long id, MediaCloudDbContext db) =>
+{
+    var series = await db.LibraryItems.FirstOrDefaultAsync(x => x.Id == id);
+    if (series is null)
+    {
+        return Results.NotFound(new ErrorResponse("Library item not found."));
+    }
+
+    if (!string.Equals(series.MediaType, "Series", StringComparison.OrdinalIgnoreCase))
+    {
+        return Results.BadRequest(new ErrorResponse("Episode listing is only available for Series items."));
+    }
+
+    var scopePrefix = TelevisionGrouping.BuildEpisodeScopePrefixForSeries(series);
+    var titlePrefix = $"{series.Title} — S";
+    var sortPrefix = $"{series.SortTitle} s";
+    var episodes = await db.LibraryItems
+        .Where(x => x.MediaType == "Episode" && (
+            x.CanonicalKey.StartsWith(scopePrefix) ||
+            x.Title.StartsWith(titlePrefix) ||
+            x.SortTitle.StartsWith(sortPrefix)))
+        .OrderBy(x => x.SortTitle)
+        .ToListAsync();
+
+    var episodeIds = episodes.Select(x => x.Id).ToList();
+    var sourceServicesByItem = await (
+        from link in db.LibraryItemSourceLinks
+        join integration in db.IntegrationConfigs on link.IntegrationId equals integration.Id
+        where episodeIds.Contains(link.LibraryItemId)
+        select new { link.LibraryItemId, integration.ServiceKey })
+        .ToListAsync();
+
+    var sourceTitlesByItem = await (
+        from link in db.LibraryItemSourceLinks
+        join integration in db.IntegrationConfigs on link.IntegrationId equals integration.Id
+        where episodeIds.Contains(link.LibraryItemId)
+        select new LibraryItemSourceTitleInfo(
+            link.LibraryItemId,
+            integration.ServiceKey,
+            integration.InstanceName,
+            link.SourceTitle,
+            link.SourceSortTitle))
+        .ToListAsync();
+
+    var payload = episodes
+        .Select(item => MapLibraryItemDto(
+            item,
+            sourceServicesByItem.Where(x => x.LibraryItemId == item.Id).Select(x => x.ServiceKey).Distinct().OrderBy(x => x).ToList(),
+            sourceTitlesByItem.Where(x => x.LibraryItemId == item.Id).ToList()))
+        .ToList();
+
+    return Results.Ok(payload);
 }).RequireAuthorization();
 
 app.MapPost("/api/library/items/{id:long}/reprobe-runtime", async (long id, MediaCloudDbContext db, IHttpClientFactory httpClientFactory) =>
@@ -1470,7 +1705,7 @@ app.MapPost("/api/library/items/{id:long}/reprobe-runtime", async (long id, Medi
     var filePath = (row.PrimaryFilePath ?? string.Empty).Trim();
     if (string.IsNullOrWhiteSpace(filePath))
     {
-        return Results.Ok(new LibraryItemRuntimeProbeResponse(row.Id, row.MediaType, row.Title, filePath, false, false, null, "No primary file path available to probe.", null, string.Empty));
+        return Results.Ok(new LibraryItemRuntimeProbeResponse(row.Id, row.MediaType, row.Title, filePath, false, false, null, "No primary file path available to probe.", null, string.Empty, row.PlayabilityScore, row.PlayabilitySummary, row.PlayabilityCheckedAtUtc));
     }
 
     var fileExists = File.Exists(filePath);
@@ -1487,17 +1722,21 @@ app.MapPost("/api/library/items/{id:long}/reprobe-runtime", async (long id, Medi
     if (!fileExists)
     {
         row.ActualRuntimeMinutes = null;
+        ClearPlayability(row);
         row.UpdatedAtUtc = DateTimeOffset.UtcNow;
+        await UpsertRuntimeProbeFailureIssueAsync(db, row, filePath, string.Empty, null, row.UpdatedAtUtc, runtimeProbeFailureIssueType);
         await UpsertRuntimeMismatchIssueAsync(db, row, runtimePolicy, row.UpdatedAtUtc, runtimeMismatchIssueType, runtimePolicyVersion);
         await db.SaveChangesAsync();
-        return Results.Ok(new LibraryItemRuntimeProbeResponse(row.Id, row.MediaType, row.Title, filePath, false, false, null, "Resolved file path does not exist on this host. Try integration sync if mappings changed.", null, string.Empty));
+        return Results.Ok(new LibraryItemRuntimeProbeResponse(row.Id, row.MediaType, row.Title, filePath, false, false, null, "Resolved file path does not exist on this host. Try integration sync if mappings changed.", null, string.Empty, row.PlayabilityScore, row.PlayabilitySummary, row.PlayabilityCheckedAtUtc));
     }
 
-    var probe = ProbeRuntime(filePath);
+    var probe = ProbeMediaFile(filePath);
     var runtimeMinutes = probe.RuntimeMinutes;
     row.PrimaryFilePath = filePath;
     row.ActualRuntimeMinutes = runtimeMinutes;
+    ApplyPlayabilityProbe(row, probe, DateTimeOffset.UtcNow);
     row.UpdatedAtUtc = DateTimeOffset.UtcNow;
+    await UpsertRuntimeProbeFailureIssueAsync(db, row, filePath, probe.Error, probe.ExitCode, row.UpdatedAtUtc, runtimeProbeFailureIssueType);
     await UpsertRuntimeMismatchIssueAsync(db, row, runtimePolicy, row.UpdatedAtUtc, runtimeMismatchIssueType, runtimePolicyVersion);
     await db.SaveChangesAsync();
 
@@ -1508,7 +1747,40 @@ app.MapPost("/api/library/items/{id:long}/reprobe-runtime", async (long id, Medi
             ? "Runtime reprobe completed but ffprobe did not return a usable duration."
             : $"Runtime reprobe failed: {probe.Error}";
 
-    return Results.Ok(new LibraryItemRuntimeProbeResponse(row.Id, row.MediaType, row.Title, filePath, true, success, runtimeMinutes, message, probe.ExitCode, probe.Error));
+    return Results.Ok(new LibraryItemRuntimeProbeResponse(row.Id, row.MediaType, row.Title, filePath, true, success, runtimeMinutes, message, probe.ExitCode, probe.Error, row.PlayabilityScore, row.PlayabilitySummary, row.PlayabilityCheckedAtUtc));
+}).RequireAuthorization("AdminOnly");
+
+app.MapGet("/api/library/items/{id:long}/playback-diagnostics", async (long id, MediaCloudDbContext db, int? take) =>
+{
+    var itemExists = await db.LibraryItems.AnyAsync(x => x.Id == id);
+    if (!itemExists)
+    {
+        return Results.NotFound(new ErrorResponse("Library item not found."));
+    }
+
+    var limit = Math.Clamp(take ?? 20, 1, 100);
+    var rows = await db.PlaybackDiagnosticEntries
+        .Where(x => x.LibraryItemId == id)
+        .ToListAsync();
+
+    var payload = rows
+        .OrderByDescending(x => x.OccurredAtUtc)
+        .Take(limit)
+        .Select(MapPlaybackDiagnosticDto)
+        .ToList();
+    return Results.Ok(payload);
+}).RequireAuthorization();
+
+app.MapPost("/api/library/items/{id:long}/playback-diagnostics/pull", async (long id, PullPlaybackDiagnosticsRequest? request, MediaCloudDbContext db, IHttpClientFactory httpClientFactory) =>
+{
+    var item = await db.LibraryItems.FirstOrDefaultAsync(x => x.Id == id);
+    if (item is null)
+    {
+        return Results.NotFound(new ErrorResponse("Library item not found."));
+    }
+
+    var response = await PullPlaybackDiagnosticsAsync(item, db, httpClientFactory, request);
+    return Results.Ok(response);
 }).RequireAuthorization("AdminOnly");
 
 app.MapGet("/api/library/items/{id:long}/sources", async (long id, MediaCloudDbContext db) =>
@@ -1530,6 +1802,8 @@ app.MapGet("/api/library/items/{id:long}/sources", async (long id, MediaCloudDbC
             link.IntegrationId,
             integration.ServiceKey,
             integration.InstanceName,
+            link.SourceTitle,
+            link.SourceSortTitle,
             link.ExternalId,
             link.ExternalType,
             link.ExternalUpdatedAtUtc,
@@ -1863,101 +2137,13 @@ app.MapPost("/api/library/items/reprobe-missing-runtimes", async (BatchRuntimeRe
 
 app.MapPost("/api/library/items/reprobe-runtimes/jobs", (BatchRuntimeReprobeRequest request, IServiceScopeFactory scopeFactory) =>
 {
-    var now = DateTimeOffset.UtcNow;
-    var jobId = Guid.NewGuid();
-    runtimeReprobeJobs[jobId] = new RuntimeReprobeJobStatusResponse(
-        jobId,
-        "running",
-        "Queued runtime probe job...",
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        now,
-        null);
+    var jobId = StartRuntimeReprobeJob(
+        runtimeReprobeJobs,
+        scopeFactory,
+        request,
+        "Queued runtime probe job...");
 
-    _ = Task.Run(async () =>
-    {
-        try
-        {
-            await using var scope = scopeFactory.CreateAsyncScope();
-            var db = scope.ServiceProvider.GetRequiredService<MediaCloudDbContext>();
-
-            var runtimePolicy = await LoadRuntimePolicyValuesAsync(db,
-                runtimeToleranceMinutesFloorKey,
-                runtimeTolerancePercentKey,
-                runtimeWarningPercentKey,
-                runtimeHighMinutesKey,
-                runtimeCriticalPercentKey,
-                runtimeCriticalMinutesKey,
-                runtimeToleranceMinutesFloorDefault,
-                runtimeTolerancePercentDefault,
-                runtimeWarningPercentDefault,
-                runtimeHighMinutesDefault,
-                runtimeCriticalPercentDefault,
-                runtimeCriticalMinutesDefault);
-
-            var result = await ExecuteBatchRuntimeReprobeAsync(
-                db,
-                request,
-                runtimePolicy,
-                runtimeMismatchIssueType,
-                runtimePolicyVersion,
-                progress =>
-                {
-                    runtimeReprobeJobs[jobId] = new RuntimeReprobeJobStatusResponse(
-                        jobId,
-                        "running",
-                        progress.TotalCandidates > 0
-                            ? $"Probing runtimes... {progress.Inspected}/{progress.TotalCandidates}"
-                            : "Scanning candidates...",
-                        progress.TotalCandidates,
-                        progress.Inspected,
-                        progress.Attempted,
-                        progress.Updated,
-                        progress.MissingFiles,
-                        progress.Failed,
-                        now,
-                        null);
-                });
-
-            var finishedAt = DateTimeOffset.UtcNow;
-            runtimeReprobeJobs[jobId] = new RuntimeReprobeJobStatusResponse(
-                jobId,
-                "completed",
-                $"Probe complete: updated {result.Updated}/{result.Inspected}, missing {result.MissingFiles}, failures {result.Failed}.",
-                result.Inspected,
-                result.Inspected,
-                result.Attempted,
-                result.Updated,
-                result.MissingFiles,
-                result.Failed,
-                now,
-                finishedAt);
-        }
-        catch (Exception ex)
-        {
-            var finishedAt = DateTimeOffset.UtcNow;
-            var message = ex.Message;
-            if (message.Length > 250) message = message[..250];
-            runtimeReprobeJobs[jobId] = new RuntimeReprobeJobStatusResponse(
-                jobId,
-                "failed",
-                $"Probe job failed: {message}",
-                0,
-                0,
-                0,
-                0,
-                0,
-                0,
-                now,
-                finishedAt);
-        }
-    });
-
-    return Results.Ok(new StartRuntimeReprobeJobResponse(jobId));
+    return Results.Accepted($"/api/library/items/reprobe-runtimes/jobs/{jobId}", new StartRuntimeReprobeJobResponse(jobId));
 }).RequireAuthorization("AdminOnly");
 
 app.MapGet("/api/library/items/reprobe-runtimes/jobs/{jobId:guid}", (Guid jobId) =>
@@ -2055,15 +2241,22 @@ static async Task WriteAuditAsync(MediaCloudDbContext db, ClaimsPrincipal princi
     await Task.CompletedTask;
 }
 
-static LibraryItemDto MapLibraryItemDto(LibraryItem item, IReadOnlyList<string>? sourceServices = null)
+static LibraryItemDto MapLibraryItemDto(
+    LibraryItem item,
+    IReadOnlyList<string>? sourceServices = null,
+    IReadOnlyList<LibraryItemSourceTitleInfo>? sourceTitles = null)
 {
     var audio = DeserializeLanguages(item.AudioLanguagesJson);
     var subtitles = DeserializeLanguages(item.SubtitleLanguagesJson);
+    var playabilityDetails = DeserializePlayabilityDetails(item.PlayabilityDetailsJson);
+    var displayTitle = BuildLibraryDisplayTitle(item, sourceTitles);
+    var localFileExists = !string.IsNullOrWhiteSpace(item.PrimaryFilePath) && File.Exists(item.PrimaryFilePath);
 
     return new LibraryItemDto(
         item.Id,
         item.CanonicalKey,
         item.MediaType,
+        displayTitle,
         item.Title,
         item.SortTitle,
         item.Year,
@@ -2071,15 +2264,25 @@ static LibraryItemDto MapLibraryItemDto(LibraryItem item, IReadOnlyList<string>?
         item.TvdbId,
         item.ImdbId,
         item.PlexRatingKey,
+        item.Description,
+        item.DescriptionSourceService,
         item.RuntimeMinutes,
         item.ActualRuntimeMinutes,
         audio,
         subtitles,
+        item.PlayabilityScore,
+        item.PlayabilitySummary,
+        item.PlayabilityCheckedAtUtc,
+        playabilityDetails.Reasons,
+        playabilityDetails.VideoCodec,
+        playabilityDetails.AudioCodecs,
+        playabilityDetails.SubtitleCodecs,
         item.IsAvailable,
         item.QualityProfile,
         item.SourceUpdatedAtUtc,
         item.UpdatedAtUtc,
         item.PrimaryFilePath,
+        localFileExists,
         sourceServices ?? []);
 }
 
@@ -2099,6 +2302,71 @@ static LibraryIssueDto MapLibraryIssueDto(LibraryIssue issue)
         issue.ResolvedAtUtc,
         string.Empty,
         string.Empty);
+}
+
+static PlaybackDiagnosticDto MapPlaybackDiagnosticDto(PlaybackDiagnosticEntry row)
+{
+    return new PlaybackDiagnosticDto(
+        row.Id,
+        row.LibraryItemId,
+        row.SourceService,
+        IntegrationCatalog.GetName(row.SourceService),
+        row.ExternalId,
+        row.OccurredAtUtc,
+        row.ImportedAtUtc,
+        row.StartedAtUtc,
+        row.StoppedAtUtc,
+        row.UserName,
+        row.ClientName,
+        row.Player,
+        row.Product,
+        row.Platform,
+        row.Decision,
+        row.TranscodeDecision,
+        row.VideoDecision,
+        row.AudioDecision,
+        row.SubtitleDecision,
+        row.Container,
+        row.VideoCodec,
+        row.AudioCodec,
+        row.SubtitleCodec,
+        row.QualityProfile,
+        row.HealthLabel,
+        row.Summary,
+        row.SuspectedCause,
+        row.ErrorMessage,
+        row.LogSnippet);
+}
+
+static void ApplyPreferredDescription(LibraryItem item, string sourceService, string? candidateDescription)
+{
+    var cleaned = (candidateDescription ?? string.Empty).Trim();
+    if (string.IsNullOrWhiteSpace(cleaned))
+    {
+        return;
+    }
+
+    var existingPriority = GetDescriptionSourcePriority(item.DescriptionSourceService);
+    var candidatePriority = GetDescriptionSourcePriority(sourceService);
+    if (string.IsNullOrWhiteSpace(item.Description)
+        || candidatePriority < existingPriority
+        || (candidatePriority == existingPriority && cleaned.Length > item.Description.Length))
+    {
+        item.Description = cleaned;
+        item.DescriptionSourceService = sourceService;
+    }
+}
+
+static int GetDescriptionSourcePriority(string? sourceService)
+{
+    return (sourceService ?? string.Empty).Trim().ToLowerInvariant() switch
+    {
+        "sonarr" => 1,
+        "radarr" => 1,
+        "plex" => 2,
+        "overseerr" => 3,
+        _ => 99
+    };
 }
 
 static string NormalizeIssueSeverity(string? severity)
@@ -2127,7 +2395,25 @@ static IReadOnlyList<string> DeserializeLanguages(string json)
     }
 }
 
-static IQueryable<LibraryItem> ApplyLibraryItemFilters(IQueryable<LibraryItem> query, string? mediaType, string? q, bool? available)
+static MediaPlayabilityStoredDetails DeserializePlayabilityDetails(string json)
+{
+    if (string.IsNullOrWhiteSpace(json))
+    {
+        return new MediaPlayabilityStoredDetails([], string.Empty, string.Empty, string.Empty, null, null, null, [], [], []);
+    }
+
+    try
+    {
+        return JsonSerializer.Deserialize<MediaPlayabilityStoredDetails>(json)
+            ?? new MediaPlayabilityStoredDetails([], string.Empty, string.Empty, string.Empty, null, null, null, [], [], []);
+    }
+    catch
+    {
+        return new MediaPlayabilityStoredDetails([], string.Empty, string.Empty, string.Empty, null, null, null, [], [], []);
+    }
+}
+
+static IQueryable<LibraryItem> ApplyLibraryItemFilters(MediaCloudDbContext db, IQueryable<LibraryItem> query, string? mediaType, string? q, bool? available)
 {
     if (!string.IsNullOrWhiteSpace(mediaType))
     {
@@ -2136,8 +2422,15 @@ static IQueryable<LibraryItem> ApplyLibraryItemFilters(IQueryable<LibraryItem> q
 
     if (!string.IsNullOrWhiteSpace(q))
     {
-        var needle = q.Trim();
-        query = query.Where(x => x.Title.Contains(needle) || x.CanonicalKey.Contains(needle));
+        var needle = q.Trim().ToLowerInvariant();
+        query = query.Where(x =>
+            x.Title.ToLower().Contains(needle) ||
+            x.SortTitle.ToLower().Contains(needle) ||
+            x.CanonicalKey.ToLower().Contains(needle) ||
+            db.LibraryItemSourceLinks.Any(link =>
+                link.LibraryItemId == x.Id &&
+                (link.SourceTitle.ToLower().Contains(needle) ||
+                 link.SourceSortTitle.ToLower().Contains(needle))));
     }
 
     if (available.HasValue)
@@ -2185,16 +2478,103 @@ static async Task<IntegrationSyncOutcome> ExecuteIntegrationSyncAsync(
     IHttpClientFactory httpClientFactory,
     RuntimePolicyValues runtimePolicy,
     string runtimeMismatchIssueType,
-    string runtimePolicyVersion)
+    string runtimePolicyVersion,
+    string? mediaScope = null)
 {
     var service = (integration.ServiceKey ?? string.Empty).Trim().ToLowerInvariant();
+    var normalizedScope = NormalizeIntegrationSyncScope(mediaScope);
     return service switch
     {
         "radarr" => await SyncRadarrMoviesAsync(integration, db, httpClientFactory, runtimePolicy, runtimeMismatchIssueType, runtimePolicyVersion),
-        "plex" => await SyncPlexMoviesAsync(integration, db, httpClientFactory, runtimePolicy, runtimeMismatchIssueType, runtimePolicyVersion),
-        "overseerr" => await SyncOverseerrMovieRequestsAsync(integration, db, httpClientFactory),
+        "sonarr" => await SyncSonarrTelevisionAsync(integration, db, httpClientFactory, runtimePolicy, runtimeMismatchIssueType, runtimePolicyVersion),
+        "plex" => normalizedScope == "tv"
+            ? await SyncPlexTelevisionAsync(integration, db, httpClientFactory, runtimePolicy, runtimeMismatchIssueType, runtimePolicyVersion)
+            : await SyncPlexMoviesAsync(integration, db, httpClientFactory, runtimePolicy, runtimeMismatchIssueType, runtimePolicyVersion),
+        "overseerr" => normalizedScope == "tv"
+            ? await SyncOverseerrTelevisionRequestsAsync(integration, db, httpClientFactory)
+            : await SyncOverseerrMovieRequestsAsync(integration, db, httpClientFactory),
         _ => new IntegrationSyncOutcome(false, DateTimeOffset.UtcNow, $"Sync adapter not implemented yet for service '{integration.ServiceKey}'.")
     };
+}
+
+static string NormalizeIntegrationSyncScope(string? mediaScope)
+    => string.Equals(mediaScope, "tv", StringComparison.OrdinalIgnoreCase) ? "tv" : "movies";
+
+static async Task<Dictionary<int, string>> FetchRadarrQualityProfileNamesAsync(IntegrationConfig integration, IHttpClientFactory httpClientFactory)
+{
+    var client = httpClientFactory.CreateClient();
+    client.Timeout = TimeSpan.FromSeconds(30);
+
+    using var request = new HttpRequestMessage(HttpMethod.Get, $"{integration.BaseUrl.TrimEnd('/')}/api/v3/qualityprofile");
+    ApplyIntegrationAuthHeaders(integration, request);
+
+    using var response = await client.SendAsync(request);
+    if (!response.IsSuccessStatusCode)
+    {
+        return new Dictionary<int, string>();
+    }
+
+    var payload = await response.Content.ReadAsStringAsync();
+    using var document = JsonDocument.Parse(payload);
+    if (document.RootElement.ValueKind != JsonValueKind.Array)
+    {
+        return new Dictionary<int, string>();
+    }
+
+    var profiles = new Dictionary<int, string>();
+    foreach (var profile in document.RootElement.EnumerateArray())
+    {
+        var id = GetJsonInt(profile, "id");
+        var name = GetJsonString(profile, "name");
+        if (!id.HasValue || string.IsNullOrWhiteSpace(name))
+        {
+            continue;
+        }
+
+        profiles[id.Value] = name;
+    }
+
+    return profiles;
+}
+
+static async Task<SonarrCollectionFetchResult> FetchSonarrCollectionBySeriesAsync(
+    HttpClient client,
+    IntegrationConfig integration,
+    string collectionName,
+    IReadOnlyCollection<int> seriesIds,
+    string itemLabel)
+{
+    var items = new List<JsonElement>();
+    if (seriesIds.Count == 0)
+    {
+        return new SonarrCollectionFetchResult(true, string.Empty, items);
+    }
+
+    foreach (var seriesId in seriesIds.Distinct())
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"{integration.BaseUrl.TrimEnd('/')}/api/v3/{collectionName}?seriesId={seriesId}");
+        ApplyIntegrationAuthHeaders(integration, request);
+
+        using var response = await client.SendAsync(request);
+        if (!response.IsSuccessStatusCode)
+        {
+            var body = await response.Content.ReadAsStringAsync();
+            var error = string.IsNullOrWhiteSpace(body)
+                ? $"Sonarr {itemLabel} sync failed for series {seriesId} with HTTP {(int)response.StatusCode}."
+                : body[..Math.Min(250, body.Length)];
+            return new SonarrCollectionFetchResult(false, error, []);
+        }
+
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        if (document.RootElement.ValueKind != JsonValueKind.Array)
+        {
+            return new SonarrCollectionFetchResult(false, $"Unexpected Sonarr {itemLabel} payload for series {seriesId}.", []);
+        }
+
+        items.AddRange(document.RootElement.EnumerateArray().Select(x => x.Clone()));
+    }
+
+    return new SonarrCollectionFetchResult(true, string.Empty, items);
 }
 
 static async Task<IntegrationSyncOutcome> SyncRadarrMoviesAsync(
@@ -2229,6 +2609,7 @@ static async Task<IntegrationSyncOutcome> SyncRadarrMoviesAsync(
         return new IntegrationSyncOutcome(false, DateTimeOffset.UtcNow, "Unexpected Radarr response payload.");
     }
 
+    var qualityProfileNames = await FetchRadarrQualityProfileNamesAsync(integration, httpClientFactory);
     var processed = 0;
     var syncSeenAt = DateTimeOffset.UtcNow;
     var pathMapping = await db.LibraryPathMappings.FirstOrDefaultAsync(x => x.IntegrationId == integration.Id);
@@ -2252,10 +2633,14 @@ static async Task<IntegrationSyncOutcome> SyncRadarrMoviesAsync(
         var tmdbId = GetJsonInt(movie, "tmdbId");
         var imdbId = GetJsonString(movie, "imdbId") ?? string.Empty;
         var runtime = GetJsonDouble(movie, "runtime");
+        var overview = GetJsonString(movie, "overview") ?? string.Empty;
         var hasFile = GetJsonBool(movie, "hasFile") ?? false;
         var rawFilePath = GetNestedJsonString(movie, "movieFile", "path") ?? string.Empty;
         var resolvedFilePath = ResolveLocalPath(pathMapping, rawFilePath);
-        var qualityProfile = GetJsonInt(movie, "qualityProfileId")?.ToString() ?? string.Empty;
+        var qualityProfileId = GetJsonInt(movie, "qualityProfileId");
+        var qualityProfile = qualityProfileId.HasValue && qualityProfileNames.TryGetValue(qualityProfileId.Value, out var qualityProfileName)
+            ? qualityProfileName
+            : (qualityProfileId?.ToString() ?? string.Empty);
         var sourceUpdatedAt = ParseJsonDateTimeOffset(movie, "added");
 
         var libraryItem = await GetOrCreateLibraryItemAsync(db, BuildCanonicalMovieKey(tmdbId, imdbId, title, year), syncSeenAt, tmdbId, imdbId, title, year);
@@ -2265,14 +2650,22 @@ static async Task<IntegrationSyncOutcome> SyncRadarrMoviesAsync(
         libraryItem.Year = year;
         libraryItem.TmdbId = tmdbId;
         libraryItem.ImdbId = imdbId;
+        ApplyPreferredDescription(libraryItem, "radarr", overview);
         libraryItem.RuntimeMinutes = runtime;
 
         var previousFilePath = libraryItem.PrimaryFilePath;
         libraryItem.PrimaryFilePath = resolvedFilePath;
         if (hasFile && !string.IsNullOrWhiteSpace(resolvedFilePath) &&
-            (libraryItem.ActualRuntimeMinutes is null || !string.Equals(previousFilePath, resolvedFilePath, StringComparison.Ordinal)))
+            (libraryItem.ActualRuntimeMinutes is null || !string.Equals(previousFilePath, resolvedFilePath, StringComparison.Ordinal) || string.IsNullOrWhiteSpace(libraryItem.PlayabilityScore)))
         {
-            libraryItem.ActualRuntimeMinutes = ProbeRuntimeMinutes(resolvedFilePath);
+            var probe = ProbeMediaFile(resolvedFilePath);
+            libraryItem.ActualRuntimeMinutes = probe.RuntimeMinutes;
+            ApplyPlayabilityProbe(libraryItem, probe, syncSeenAt);
+        }
+        else if (!hasFile || string.IsNullOrWhiteSpace(resolvedFilePath))
+        {
+            libraryItem.ActualRuntimeMinutes = null;
+            ClearPlayability(libraryItem);
         }
 
         libraryItem.IsAvailable = hasFile;
@@ -2280,7 +2673,7 @@ static async Task<IntegrationSyncOutcome> SyncRadarrMoviesAsync(
         libraryItem.SourceUpdatedAtUtc = sourceUpdatedAt;
         libraryItem.UpdatedAtUtc = syncSeenAt;
 
-        await UpsertLibrarySourceLinkAsync(db, libraryItem.Id, integration.Id, externalId, "movie", sourceUpdatedAt, syncSeenAt, externalId);
+        await UpsertLibrarySourceLinkAsync(db, libraryItem.Id, integration.Id, title, sortTitle, externalId, "movie", sourceUpdatedAt, syncSeenAt, externalId);
         await UpsertRuntimeMismatchIssueAsync(db, libraryItem, runtimePolicy, syncSeenAt, runtimeMismatchIssueType, runtimePolicyVersion);
 
         processed += 1;
@@ -2288,6 +2681,196 @@ static async Task<IntegrationSyncOutcome> SyncRadarrMoviesAsync(
 
     await db.SaveChangesAsync();
     return new IntegrationSyncOutcome(true, syncSeenAt, $"Synced {processed} Radarr item(s).", processed);
+}
+
+static async Task<IntegrationSyncOutcome> SyncSonarrTelevisionAsync(
+    IntegrationConfig integration,
+    MediaCloudDbContext db,
+    IHttpClientFactory httpClientFactory,
+    RuntimePolicyValues runtimePolicy,
+    string runtimeMismatchIssueType,
+    string runtimePolicyVersion)
+{
+    var client = httpClientFactory.CreateClient();
+    client.Timeout = TimeSpan.FromSeconds(60);
+
+    var syncSeenAt = DateTimeOffset.UtcNow;
+    var pathMapping = await db.LibraryPathMappings.FirstOrDefaultAsync(x => x.IntegrationId == integration.Id);
+    var qualityProfileNames = await FetchRadarrQualityProfileNamesAsync(integration, httpClientFactory);
+
+    using var seriesRequest = new HttpRequestMessage(HttpMethod.Get, $"{integration.BaseUrl.TrimEnd('/')}/api/v3/series");
+    ApplyIntegrationAuthHeaders(integration, seriesRequest);
+    using var seriesResponse = await client.SendAsync(seriesRequest);
+    if (!seriesResponse.IsSuccessStatusCode)
+    {
+        var body = await seriesResponse.Content.ReadAsStringAsync();
+        var error = string.IsNullOrWhiteSpace(body)
+            ? $"Sonarr series sync failed with HTTP {(int)seriesResponse.StatusCode}."
+            : body[..Math.Min(250, body.Length)];
+        return new IntegrationSyncOutcome(false, DateTimeOffset.UtcNow, error);
+    }
+
+    using var seriesDocument = JsonDocument.Parse(await seriesResponse.Content.ReadAsStringAsync());
+    if (seriesDocument.RootElement.ValueKind != JsonValueKind.Array)
+    {
+        return new IntegrationSyncOutcome(false, DateTimeOffset.UtcNow, "Unexpected Sonarr series payload.");
+    }
+
+    var seriesContext = new Dictionary<int, SonarrSeriesContext>();
+    var seriesIds = new List<int>();
+    var seriesCount = 0;
+
+    foreach (var series in seriesDocument.RootElement.EnumerateArray())
+    {
+        var externalId = GetJsonInt(series, "id");
+        if (!externalId.HasValue)
+        {
+            continue;
+        }
+
+        var title = GetJsonString(series, "title") ?? "Unknown";
+        var sortTitle = GetJsonString(series, "sortTitle") ?? title;
+        var year = GetJsonInt(series, "year");
+        var tvdbId = GetJsonInt(series, "tvdbId");
+        var tmdbId = GetJsonInt(series, "tmdbId");
+        var imdbId = GetJsonString(series, "imdbId") ?? string.Empty;
+        var runtime = GetJsonDouble(series, "runtime") ?? (double?)GetJsonInt(series, "runtime");
+        var overview = GetJsonString(series, "overview") ?? string.Empty;
+        var qualityProfileId = GetJsonInt(series, "qualityProfileId");
+        var qualityProfile = qualityProfileId.HasValue && qualityProfileNames.TryGetValue(qualityProfileId.Value, out var qualityProfileName)
+            ? qualityProfileName
+            : (qualityProfileId?.ToString() ?? string.Empty);
+        var sourceUpdatedAt = ParseJsonDateTimeOffset(series, "added");
+        var rawSeriesPath = GetJsonString(series, "path") ?? string.Empty;
+        var resolvedSeriesPath = ResolveLocalPath(pathMapping, rawSeriesPath);
+        var episodeFileCount = GetNestedJsonInt(series, "statistics", "episodeFileCount") ?? 0;
+
+        var item = await GetOrCreateTelevisionItemAsync(
+            db,
+            "Series",
+            BuildSeriesCanonicalKey(tvdbId, tmdbId, imdbId, title, year),
+            syncSeenAt,
+            tvdbId,
+            tmdbId,
+            imdbId,
+            title,
+            year);
+
+        item.MediaType = "Series";
+        item.Title = title;
+        item.SortTitle = sortTitle;
+        item.Year = year;
+        item.TvdbId = tvdbId;
+        item.TmdbId = tmdbId;
+        item.ImdbId = imdbId;
+        ApplyPreferredDescription(item, "sonarr", overview);
+        item.RuntimeMinutes = runtime;
+        item.ActualRuntimeMinutes = null;
+        item.PrimaryFilePath = resolvedSeriesPath;
+        item.IsAvailable = episodeFileCount > 0;
+        item.QualityProfile = qualityProfile;
+        item.SourceUpdatedAtUtc = sourceUpdatedAt;
+        item.UpdatedAtUtc = syncSeenAt;
+
+        await UpsertLibrarySourceLinkAsync(db, item.Id, integration.Id, title, sortTitle, externalId.Value.ToString(), "series", sourceUpdatedAt, syncSeenAt, externalId.Value.ToString());
+
+        seriesIds.Add(externalId.Value);
+        seriesContext[externalId.Value] = new SonarrSeriesContext(title, sortTitle, year, tvdbId, tmdbId, imdbId, qualityProfile);
+        seriesCount += 1;
+    }
+
+    var episodeResult = await FetchSonarrCollectionBySeriesAsync(client, integration, "episode", seriesIds, "episodes");
+    if (!episodeResult.Success)
+    {
+        return new IntegrationSyncOutcome(false, DateTimeOffset.UtcNow, episodeResult.ErrorMessage);
+    }
+
+    var episodeFilesResult = await FetchSonarrCollectionBySeriesAsync(client, integration, "episodefile", seriesIds, "episode files");
+    if (!episodeFilesResult.Success)
+    {
+        return new IntegrationSyncOutcome(false, DateTimeOffset.UtcNow, episodeFilesResult.ErrorMessage);
+    }
+
+    var episodeFiles = new Dictionary<int, JsonElement>();
+    foreach (var episodeFile in episodeFilesResult.Items)
+    {
+        var id = GetJsonInt(episodeFile, "id");
+        if (!id.HasValue)
+        {
+            continue;
+        }
+
+        episodeFiles[id.Value] = episodeFile;
+    }
+
+    var episodeCount = 0;
+    foreach (var episode in episodeResult.Items)
+    {
+        var externalId = GetJsonInt(episode, "id");
+        var parentSeriesId = GetJsonInt(episode, "seriesId");
+        if (!externalId.HasValue || !parentSeriesId.HasValue || !seriesContext.TryGetValue(parentSeriesId.Value, out var parentSeries))
+        {
+            continue;
+        }
+
+        var episodeTitle = GetJsonString(episode, "title") ?? "Unknown Episode";
+        var seasonNumber = GetJsonInt(episode, "seasonNumber") ?? 0;
+        var episodeNumber = GetJsonInt(episode, "episodeNumber") ?? 0;
+        var tvdbId = GetJsonInt(episode, "tvdbId");
+        var airDateUtc = ParseJsonDateTimeOffset(episode, "airDateUtc") ?? ParseJsonDateTimeOffset(episode, "airDate");
+        var runtime = GetJsonDouble(episode, "runtime") ?? (double?)GetJsonInt(episode, "runtime");
+        var episodeFileId = GetJsonInt(episode, "episodeFileId");
+        JsonElement episodeFile = default;
+        var hasFile = episodeFileId.HasValue && episodeFiles.TryGetValue(episodeFileId.Value, out episodeFile);
+        var rawFilePath = hasFile ? (GetJsonString(episodeFile, "path") ?? string.Empty) : string.Empty;
+        var resolvedFilePath = ResolveLocalPath(pathMapping, rawFilePath);
+        var displayTitle = BuildEpisodeDisplayTitle(parentSeries.Title, seasonNumber, episodeNumber, episodeTitle);
+        var sortTitle = BuildEpisodeSortTitle(parentSeries.SortTitle, seasonNumber, episodeNumber, episodeTitle);
+
+        var item = await GetOrCreateTelevisionItemAsync(
+            db,
+            "Episode",
+            BuildEpisodeCanonicalKey(parentSeries.TvdbId, parentSeries.Title, seasonNumber, episodeNumber, tvdbId),
+            syncSeenAt,
+            tvdbId,
+            null,
+            string.Empty,
+            displayTitle,
+            airDateUtc?.Year);
+
+        item.MediaType = "Episode";
+        item.Title = displayTitle;
+        item.SortTitle = sortTitle;
+        item.Year = airDateUtc?.Year;
+        item.TvdbId = tvdbId;
+        item.TmdbId = null;
+        item.ImdbId = string.Empty;
+        item.RuntimeMinutes = runtime;
+
+        var previousFilePath = item.PrimaryFilePath;
+        item.PrimaryFilePath = resolvedFilePath;
+        item.ActualRuntimeMinutes = SonarrEpisodeRuntimeSync.ResolveActualRuntimeMinutes(
+            hasFile,
+            resolvedFilePath,
+            previousFilePath,
+            item.ActualRuntimeMinutes);
+        if (!hasFile || string.IsNullOrWhiteSpace(resolvedFilePath) || !string.Equals(previousFilePath, resolvedFilePath, StringComparison.Ordinal))
+        {
+            ClearPlayability(item);
+        }
+
+        item.IsAvailable = hasFile;
+        item.QualityProfile = parentSeries.QualityProfile;
+        item.SourceUpdatedAtUtc = airDateUtc;
+        item.UpdatedAtUtc = syncSeenAt;
+
+        await UpsertLibrarySourceLinkAsync(db, item.Id, integration.Id, displayTitle, sortTitle, externalId.Value.ToString(), "episode", airDateUtc, syncSeenAt, externalId.Value.ToString());
+        await UpsertRuntimeMismatchIssueAsync(db, item, runtimePolicy, syncSeenAt, runtimeMismatchIssueType, runtimePolicyVersion);
+        episodeCount += 1;
+    }
+
+    await db.SaveChangesAsync();
+    return new IntegrationSyncOutcome(true, syncSeenAt, $"Synced {seriesCount} Sonarr series and {episodeCount} episode(s).", seriesCount + episodeCount);
 }
 
 static async Task<IntegrationSyncOutcome> SyncPlexMoviesAsync(
@@ -2347,6 +2930,7 @@ static async Task<IntegrationSyncOutcome> SyncPlexMoviesAsync(
                 var sortTitle = GetXmlAttr(video, "titleSort") ?? title;
                 var year = int.TryParse(GetXmlAttr(video, "year"), out var parsedYear) ? parsedYear : (int?)null;
                 var runtimeMinutes = ParsePlexDurationMinutes(GetXmlAttr(video, "duration"));
+                var summary = GetXmlAttr(video, "summary") ?? string.Empty;
                 var updatedAt = ParseUnixSeconds(GetXmlAttr(video, "updatedAt")) ?? syncSeenAt;
 
                 var guidIds = video.Descendants("Guid")
@@ -2370,18 +2954,19 @@ static async Task<IntegrationSyncOutcome> SyncPlexMoviesAsync(
                 if (tmdbId.HasValue) item.TmdbId = tmdbId;
                 if (!string.IsNullOrWhiteSpace(imdbId)) item.ImdbId = imdbId;
                 item.PlexRatingKey = ratingKey;
+                ApplyPreferredDescription(item, "plex", summary);
                 item.IsAvailable = true;
                 item.SourceUpdatedAtUtc = updatedAt;
                 item.UpdatedAtUtc = syncSeenAt;
-                if (runtimeMinutes.HasValue && runtimeMinutes.Value > 0)
+                if (runtimeMinutes.HasValue && runtimeMinutes.Value > 0 && (!item.RuntimeMinutes.HasValue || item.RuntimeMinutes.Value <= 0))
                 {
-                    item.ActualRuntimeMinutes = runtimeMinutes;
+                    item.RuntimeMinutes = runtimeMinutes;
                 }
 
                 item.AudioLanguagesJson = JsonSerializer.Serialize(audioLanguages);
                 item.SubtitleLanguagesJson = JsonSerializer.Serialize(subtitleLanguages);
 
-                await UpsertLibrarySourceLinkAsync(db, item.Id, integration.Id, ratingKey, "movie", updatedAt, syncSeenAt, ratingKey);
+                await UpsertLibrarySourceLinkAsync(db, item.Id, integration.Id, title, sortTitle, ratingKey, "movie", updatedAt, syncSeenAt, ratingKey);
                 await UpsertRuntimeMismatchIssueAsync(db, item, runtimePolicy, syncSeenAt, runtimeMismatchIssueType, runtimePolicyVersion);
                 processed++;
             }
@@ -2389,7 +2974,211 @@ static async Task<IntegrationSyncOutcome> SyncPlexMoviesAsync(
     }
 
     await db.SaveChangesAsync();
-    return new IntegrationSyncOutcome(true, syncSeenAt, $"Synced {processed} Plex movie item(s).", processed);
+
+    var enriched = await EnrichPlexMovieIdsByRatingKeysAsync(db, integration, httpClientFactory, syncSeenAt);
+    var message = enriched > 0
+        ? $"Synced {processed} Plex movie item(s); enriched IDs for {enriched}."
+        : $"Synced {processed} Plex movie item(s).";
+
+    return new IntegrationSyncOutcome(true, syncSeenAt, message, processed);
+}
+
+static async Task<IntegrationSyncOutcome> SyncPlexTelevisionAsync(
+    IntegrationConfig integration,
+    MediaCloudDbContext db,
+    IHttpClientFactory httpClientFactory,
+    RuntimePolicyValues runtimePolicy,
+    string runtimeMismatchIssueType,
+    string runtimePolicyVersion)
+{
+    var client = httpClientFactory.CreateClient();
+    client.Timeout = TimeSpan.FromSeconds(60);
+
+    var syncSeenAt = DateTimeOffset.UtcNow;
+    var processed = 0;
+
+    using (var sectionsRequest = new HttpRequestMessage(HttpMethod.Get, $"{integration.BaseUrl.TrimEnd('/')}/library/sections"))
+    {
+        ApplyIntegrationAuthHeaders(integration, sectionsRequest);
+        using var sectionsResponse = await client.SendAsync(sectionsRequest);
+        if (!sectionsResponse.IsSuccessStatusCode)
+        {
+            var body = await sectionsResponse.Content.ReadAsStringAsync();
+            var error = string.IsNullOrWhiteSpace(body)
+                ? $"Plex TV sync failed with HTTP {(int)sectionsResponse.StatusCode}."
+                : body[..Math.Min(250, body.Length)];
+            return new IntegrationSyncOutcome(false, syncSeenAt, error);
+        }
+
+        var sectionsXml = await sectionsResponse.Content.ReadAsStringAsync();
+        var sectionsDoc = XDocument.Parse(sectionsXml);
+        var showSections = sectionsDoc.Descendants("Directory")
+            .Where(x => string.Equals((string?)x.Attribute("type"), "show", StringComparison.OrdinalIgnoreCase))
+            .Select(x => (string?)x.Attribute("key"))
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        foreach (var sectionKey in showSections)
+        {
+            using var itemsRequest = new HttpRequestMessage(HttpMethod.Get, $"{integration.BaseUrl.TrimEnd('/')}/library/sections/{sectionKey}/all?type=2");
+            ApplyIntegrationAuthHeaders(integration, itemsRequest);
+            using var itemsResponse = await client.SendAsync(itemsRequest);
+            if (!itemsResponse.IsSuccessStatusCode)
+            {
+                continue;
+            }
+
+            var itemsXml = await itemsResponse.Content.ReadAsStringAsync();
+            var itemsDoc = XDocument.Parse(itemsXml);
+            foreach (var show in itemsDoc.Descendants("Directory"))
+            {
+                var ratingKey = GetXmlAttr(show, "ratingKey");
+                if (string.IsNullOrWhiteSpace(ratingKey)) continue;
+
+                var title = GetXmlAttr(show, "title") ?? "Unknown";
+                var sortTitle = GetXmlAttr(show, "titleSort") ?? title;
+                var year = int.TryParse(GetXmlAttr(show, "year"), out var parsedYear) ? parsedYear : (int?)null;
+                var runtimeMinutes = ParsePlexDurationMinutes(GetXmlAttr(show, "duration"));
+                var summary = GetXmlAttr(show, "summary") ?? string.Empty;
+                var updatedAt = ParseUnixSeconds(GetXmlAttr(show, "updatedAt")) ?? syncSeenAt;
+
+                var guidIds = show.Descendants("Guid")
+                    .Select(x => GetXmlAttr(x, "id") ?? string.Empty)
+                    .Where(x => !string.IsNullOrWhiteSpace(x))
+                    .ToList();
+                var imdbId = ExtractProviderId(guidIds, "imdb://") ?? string.Empty;
+                var tmdbRaw = ExtractProviderId(guidIds, "tmdb://");
+                var tvdbRaw = ExtractProviderId(guidIds, "tvdb://");
+                var tmdbId = int.TryParse(tmdbRaw, out var parsedTmdb) ? parsedTmdb : (int?)null;
+                var tvdbId = int.TryParse(tvdbRaw, out var parsedTvdb) ? parsedTvdb : (int?)null;
+
+                var item = await GetOrCreateTelevisionItemAsync(
+                    db,
+                    "Series",
+                    BuildSeriesCanonicalKey(tvdbId, tmdbId, imdbId, title, year),
+                    syncSeenAt,
+                    tvdbId,
+                    tmdbId,
+                    imdbId,
+                    title,
+                    year);
+
+                item.MediaType = "Series";
+                item.Title = title;
+                item.SortTitle = sortTitle;
+                item.Year = year;
+                item.TvdbId = tvdbId;
+                item.TmdbId = tmdbId;
+                item.ImdbId = imdbId;
+                item.PlexRatingKey = ratingKey;
+                ApplyPreferredDescription(item, "plex", summary);
+                item.IsAvailable = true;
+                item.SourceUpdatedAtUtc = updatedAt;
+                item.UpdatedAtUtc = syncSeenAt;
+                if (runtimeMinutes.HasValue && runtimeMinutes.Value > 0 && (!item.RuntimeMinutes.HasValue || item.RuntimeMinutes.Value <= 0))
+                {
+                    item.RuntimeMinutes = runtimeMinutes;
+                }
+
+                await UpsertLibrarySourceLinkAsync(db, item.Id, integration.Id, title, sortTitle, ratingKey, "series", updatedAt, syncSeenAt, ratingKey);
+                await UpsertRuntimeMismatchIssueAsync(db, item, runtimePolicy, syncSeenAt, runtimeMismatchIssueType, runtimePolicyVersion);
+                processed++;
+            }
+        }
+    }
+
+    await db.SaveChangesAsync();
+    return new IntegrationSyncOutcome(true, syncSeenAt, $"Synced {processed} Plex TV series item(s).", processed);
+}
+
+static async Task<IntegrationSyncOutcome> SyncOverseerrTelevisionRequestsAsync(
+    IntegrationConfig integration,
+    MediaCloudDbContext db,
+    IHttpClientFactory httpClientFactory)
+{
+    var client = httpClientFactory.CreateClient();
+    client.Timeout = TimeSpan.FromSeconds(45);
+    var syncSeenAt = DateTimeOffset.UtcNow;
+
+    using var request = new HttpRequestMessage(HttpMethod.Get, $"{integration.BaseUrl.TrimEnd('/')}/api/v1/request?take=500&skip=0");
+    ApplyIntegrationAuthHeaders(integration, request);
+    using var response = await client.SendAsync(request);
+    if (!response.IsSuccessStatusCode)
+    {
+        var body = await response.Content.ReadAsStringAsync();
+        var error = string.IsNullOrWhiteSpace(body)
+            ? $"Overseerr TV sync failed with HTTP {(int)response.StatusCode}."
+            : body[..Math.Min(250, body.Length)];
+        return new IntegrationSyncOutcome(false, syncSeenAt, error);
+    }
+
+    var payload = await response.Content.ReadAsStringAsync();
+    using var doc = JsonDocument.Parse(payload);
+    if (!doc.RootElement.TryGetProperty("results", out var results) || results.ValueKind != JsonValueKind.Array)
+    {
+        return new IntegrationSyncOutcome(false, syncSeenAt, "Unexpected Overseerr response payload.");
+    }
+
+    var processed = 0;
+    foreach (var row in results.EnumerateArray())
+    {
+        var requestId = GetJsonInt(row, "id")?.ToString();
+        if (string.IsNullOrWhiteSpace(requestId)) continue;
+
+        if (!row.TryGetProperty("media", out var media) || media.ValueKind != JsonValueKind.Object)
+        {
+            continue;
+        }
+
+        var mediaType = GetJsonString(media, "mediaType") ?? string.Empty;
+        if (!string.Equals(mediaType, "tv", StringComparison.OrdinalIgnoreCase))
+        {
+            continue;
+        }
+
+        var tmdbId = GetJsonInt(media, "tmdbId");
+        var tvdbId = GetJsonInt(media, "tvdbId");
+        var imdbId = GetJsonString(media, "imdbId") ?? string.Empty;
+        var title = GetJsonString(media, "title")
+            ?? GetJsonString(media, "name")
+            ?? GetJsonString(row, "subject")
+            ?? "Unknown";
+        var overview = GetJsonString(media, "overview") ?? string.Empty;
+        var year = ParseYearFromDate(GetJsonString(media, "firstAirDate") ?? GetJsonString(media, "releaseDate"));
+        var status = GetJsonInt(row, "status")?.ToString() ?? "unknown";
+        var requestedAt = ParseJsonDateTimeOffset(row, "createdAt") ?? syncSeenAt;
+
+        var item = await GetOrCreateTelevisionItemAsync(
+            db,
+            "Series",
+            BuildSeriesCanonicalKey(tvdbId, tmdbId, imdbId, title, year),
+            syncSeenAt,
+            tvdbId,
+            tmdbId,
+            imdbId,
+            title,
+            year);
+
+        item.MediaType = "Series";
+        if (string.IsNullOrWhiteSpace(item.Title) || string.Equals(item.Title, "Unknown", StringComparison.OrdinalIgnoreCase))
+        {
+            item.Title = title;
+            item.SortTitle = title;
+            item.Year = year;
+        }
+        if (tvdbId.HasValue) item.TvdbId = tvdbId;
+        if (tmdbId.HasValue) item.TmdbId = tmdbId;
+        if (!string.IsNullOrWhiteSpace(imdbId)) item.ImdbId = imdbId;
+        ApplyPreferredDescription(item, "overseerr", overview);
+        item.UpdatedAtUtc = syncSeenAt;
+
+        await UpsertLibrarySourceLinkAsync(db, item.Id, integration.Id, title, title, requestId, "overseerr_request", requestedAt, syncSeenAt, status);
+        processed++;
+    }
+
+    await db.SaveChangesAsync();
+    return new IntegrationSyncOutcome(true, syncSeenAt, $"Synced {processed} Overseerr TV request(s).", processed);
 }
 
 static async Task<IntegrationSyncOutcome> SyncOverseerrMovieRequestsAsync(
@@ -2440,6 +3229,7 @@ static async Task<IntegrationSyncOutcome> SyncOverseerrMovieRequestsAsync(
         var tmdbId = GetJsonInt(media, "tmdbId");
         var imdbId = GetJsonString(media, "imdbId") ?? string.Empty;
         var title = GetJsonString(media, "title") ?? GetJsonString(row, "subject") ?? "Unknown";
+        var overview = GetJsonString(media, "overview") ?? string.Empty;
         var year = ParseYearFromDate(GetJsonString(media, "releaseDate"));
         var status = GetJsonInt(row, "status")?.ToString() ?? "unknown";
         var requestedAt = ParseJsonDateTimeOffset(row, "createdAt") ?? syncSeenAt;
@@ -2455,14 +3245,51 @@ static async Task<IntegrationSyncOutcome> SyncOverseerrMovieRequestsAsync(
         }
         if (tmdbId.HasValue) item.TmdbId = tmdbId;
         if (!string.IsNullOrWhiteSpace(imdbId)) item.ImdbId = imdbId;
+        ApplyPreferredDescription(item, "overseerr", overview);
         item.UpdatedAtUtc = syncSeenAt;
 
-        await UpsertLibrarySourceLinkAsync(db, item.Id, integration.Id, requestId, "overseerr_request", requestedAt, syncSeenAt, status);
+        await UpsertLibrarySourceLinkAsync(db, item.Id, integration.Id, title, title, requestId, "overseerr_request", requestedAt, syncSeenAt, status);
         processed++;
     }
 
     await db.SaveChangesAsync();
     return new IntegrationSyncOutcome(true, syncSeenAt, $"Synced {processed} Overseerr movie request(s).", processed);
+}
+
+static async Task<LibraryItem> GetOrCreateTelevisionItemAsync(
+    MediaCloudDbContext db,
+    string mediaType,
+    string canonicalKey,
+    DateTimeOffset createdAtUtc,
+    int? tvdbId,
+    int? tmdbId,
+    string imdbId,
+    string title,
+    int? year)
+{
+    var item = await FindExistingTelevisionItemAsync(db, mediaType, canonicalKey, tvdbId, tmdbId, imdbId, title, year);
+    if (item is not null)
+    {
+        if (!string.Equals(item.CanonicalKey, canonicalKey, StringComparison.Ordinal))
+        {
+            var canonicalTaken = await db.LibraryItems.AnyAsync(x => x.CanonicalKey == canonicalKey && x.Id != item.Id);
+            if (!canonicalTaken)
+            {
+                item.CanonicalKey = canonicalKey;
+            }
+        }
+
+        return item;
+    }
+
+    item = new LibraryItem
+    {
+        CanonicalKey = canonicalKey,
+        CreatedAtUtc = createdAtUtc
+    };
+    db.LibraryItems.Add(item);
+    await db.SaveChangesAsync();
+    return item;
 }
 
 static async Task<LibraryItem> GetOrCreateLibraryItemAsync(
@@ -2502,6 +3329,74 @@ static async Task<LibraryItem> GetOrCreateLibraryItemAsync(
     db.LibraryItems.Add(item);
     await db.SaveChangesAsync();
     return item;
+}
+
+static async Task<LibraryItem?> FindExistingTelevisionItemAsync(
+    MediaCloudDbContext db,
+    string mediaType,
+    string canonicalKey,
+    int? tvdbId,
+    int? tmdbId,
+    string imdbId,
+    string title,
+    int? year)
+{
+    if (tvdbId.HasValue && tvdbId.Value > 0)
+    {
+        var byTvdb = await db.LibraryItems
+            .Where(x => x.MediaType == mediaType && x.TvdbId == tvdbId.Value)
+            .OrderBy(x => x.Id)
+            .FirstOrDefaultAsync();
+        if (byTvdb is not null) return byTvdb;
+    }
+
+    if (tmdbId.HasValue && tmdbId.Value > 0)
+    {
+        var byTmdb = await db.LibraryItems
+            .Where(x => x.MediaType == mediaType && x.TmdbId == tmdbId.Value)
+            .OrderBy(x => x.Id)
+            .FirstOrDefaultAsync();
+        if (byTmdb is not null) return byTmdb;
+    }
+
+    var normalizedImdb = (imdbId ?? string.Empty).Trim().ToLowerInvariant();
+    if (!string.IsNullOrWhiteSpace(normalizedImdb))
+    {
+        var byImdb = await db.LibraryItems
+            .Where(x => x.MediaType == mediaType && x.ImdbId.ToLower() == normalizedImdb)
+            .OrderBy(x => x.Id)
+            .FirstOrDefaultAsync();
+        if (byImdb is not null) return byImdb;
+    }
+
+    var byCanonical = await db.LibraryItems
+        .Where(x => x.MediaType == mediaType && x.CanonicalKey == canonicalKey)
+        .OrderBy(x => x.Id)
+        .FirstOrDefaultAsync();
+    if (byCanonical is not null)
+    {
+        return byCanonical;
+    }
+
+    if (!string.Equals(mediaType, "Series", StringComparison.OrdinalIgnoreCase))
+    {
+        return null;
+    }
+
+    var normalizedTitle = NormalizeTitleKey(title);
+    if (string.IsNullOrWhiteSpace(normalizedTitle) || !year.HasValue)
+    {
+        return null;
+    }
+
+    var candidates = await db.LibraryItems
+        .Where(x => x.MediaType == mediaType && x.Year == year.Value)
+        .OrderBy(x => x.Id)
+        .ToListAsync();
+
+    return candidates.FirstOrDefault(x =>
+        string.Equals(NormalizeTitleKey(x.Title), normalizedTitle, StringComparison.Ordinal) ||
+        string.Equals(NormalizeTitleKey(x.SortTitle), normalizedTitle, StringComparison.Ordinal));
 }
 
 static async Task<LibraryItem?> FindExistingMovieItemAsync(
@@ -2550,6 +3445,8 @@ static async Task UpsertLibrarySourceLinkAsync(
     MediaCloudDbContext db,
     long libraryItemId,
     long integrationId,
+    string sourceTitle,
+    string sourceSortTitle,
     string externalId,
     string externalType,
     DateTimeOffset? externalUpdatedAtUtc,
@@ -2567,12 +3464,16 @@ static async Task UpsertLibrarySourceLinkAsync(
         {
             LibraryItemId = libraryItemId,
             IntegrationId = integrationId,
+            SourceTitle = string.Empty,
+            SourceSortTitle = string.Empty,
             ExternalId = externalId,
             FirstSeenAtUtc = seenAtUtc
         };
         db.LibraryItemSourceLinks.Add(link);
     }
 
+    link.SourceTitle = sourceTitle;
+    link.SourceSortTitle = sourceSortTitle;
     link.ExternalType = externalType;
     link.ExternalUpdatedAtUtc = externalUpdatedAtUtc;
     link.LastSeenAtUtc = seenAtUtc;
@@ -2640,6 +3541,63 @@ static string NormalizeTitleKey(string? raw)
     return new string(chars);
 }
 
+static string BuildLibraryDisplayTitle(LibraryItem item, IReadOnlyList<LibraryItemSourceTitleInfo>? sourceTitles)
+{
+    if (string.Equals(item.MediaType, "Movie", StringComparison.OrdinalIgnoreCase))
+    {
+        return BuildPreferredDisplayTitle(item.Title, sourceTitles, "radarr", "plex");
+    }
+
+    if (string.Equals(item.MediaType, "Series", StringComparison.OrdinalIgnoreCase))
+    {
+        return BuildPreferredDisplayTitle(item.Title, sourceTitles, "sonarr", "plex");
+    }
+
+    if (string.Equals(item.MediaType, "Episode", StringComparison.OrdinalIgnoreCase))
+    {
+        return BuildPreferredDisplayTitle(item.Title, sourceTitles, "sonarr", "plex");
+    }
+
+    return item.Title;
+}
+
+static string BuildPreferredDisplayTitle(string fallbackTitle, IReadOnlyList<LibraryItemSourceTitleInfo>? sourceTitles, string primaryServiceKey, string secondaryServiceKey)
+{
+    var titles = sourceTitles ?? [];
+    var primaryTitle = GetPreferredSourceTitle(titles, primaryServiceKey);
+    var secondaryTitle = GetPreferredSourceTitle(titles, secondaryServiceKey);
+
+    if (!string.IsNullOrWhiteSpace(primaryTitle))
+    {
+        if (!string.IsNullOrWhiteSpace(secondaryTitle) && !TitlesEquivalentForDisplay(primaryTitle, secondaryTitle))
+        {
+            return $"{primaryTitle} ({secondaryTitle})";
+        }
+
+        return primaryTitle;
+    }
+
+    if (!string.IsNullOrWhiteSpace(secondaryTitle))
+    {
+        return secondaryTitle;
+    }
+
+    return fallbackTitle;
+}
+
+static string GetPreferredSourceTitle(IReadOnlyList<LibraryItemSourceTitleInfo> sourceTitles, string serviceKey)
+{
+    return sourceTitles
+        .Where(x => string.Equals(x.ServiceKey, serviceKey, StringComparison.OrdinalIgnoreCase))
+        .Select(x => (x.SourceTitle ?? string.Empty).Trim())
+        .FirstOrDefault(x => !string.IsNullOrWhiteSpace(x)) ?? string.Empty;
+}
+
+static bool TitlesEquivalentForDisplay(string left, string right)
+{
+    return string.Equals(NormalizeTitleKey(left), NormalizeTitleKey(right), StringComparison.Ordinal);
+}
+
 static async Task ConsolidateMovieDuplicatesAsync(MediaCloudDbContext db, DateTimeOffset consolidatedAtUtc)
 {
     var movies = await db.LibraryItems
@@ -2673,6 +3631,114 @@ static async Task ConsolidateMovieDuplicatesAsync(MediaCloudDbContext db, DateTi
     await db.SaveChangesAsync();
 }
 
+static async Task ConsolidateTelevisionDuplicatesAsync(MediaCloudDbContext db, DateTimeOffset consolidatedAtUtc)
+{
+    await ConsolidateSeriesDuplicatesAsync(db, consolidatedAtUtc);
+    await ConsolidateEpisodeDuplicatesAsync(db, consolidatedAtUtc);
+}
+
+static async Task ConsolidateSeriesDuplicatesAsync(MediaCloudDbContext db, DateTimeOffset consolidatedAtUtc)
+{
+    var seriesItems = await db.LibraryItems
+        .Where(x => x.MediaType == "Series")
+        .OrderBy(x => x.Id)
+        .ToListAsync();
+
+    var winnerByTvdb = new Dictionary<int, LibraryItem>();
+    var winnerByTmdb = new Dictionary<int, LibraryItem>();
+    var winnerByImdb = new Dictionary<string, LibraryItem>(StringComparer.OrdinalIgnoreCase);
+    var winnerByTitleYear = new Dictionary<string, LibraryItem>(StringComparer.Ordinal);
+
+    foreach (var series in seriesItems)
+    {
+        var winner = ResolveExistingTelevisionWinner(series, winnerByTvdb, winnerByTmdb, winnerByImdb, winnerByTitleYear);
+        if (winner is null)
+        {
+            RegisterTelevisionWinner(series, winnerByTvdb, winnerByTmdb, winnerByImdb, winnerByTitleYear);
+            continue;
+        }
+
+        if (winner.Id == series.Id)
+        {
+            RegisterTelevisionWinner(winner, winnerByTvdb, winnerByTmdb, winnerByImdb, winnerByTitleYear);
+            continue;
+        }
+
+        await MergeLibraryItemIntoWinnerAsync(db, winner, series, consolidatedAtUtc, preserveTmdb: true);
+        RegisterTelevisionWinner(winner, winnerByTvdb, winnerByTmdb, winnerByImdb, winnerByTitleYear);
+    }
+
+    await db.SaveChangesAsync();
+}
+
+static async Task ConsolidateEpisodeDuplicatesAsync(MediaCloudDbContext db, DateTimeOffset consolidatedAtUtc)
+{
+    var episodeItems = await db.LibraryItems
+        .Where(x => x.MediaType == "Episode")
+        .OrderBy(x => x.Id)
+        .ToListAsync();
+
+    var winnerByTvdb = new Dictionary<int, LibraryItem>();
+    var winnerByCanonical = new Dictionary<string, LibraryItem>(StringComparer.OrdinalIgnoreCase);
+
+    foreach (var episode in episodeItems)
+    {
+        LibraryItem? winner = null;
+        if (episode.TvdbId.HasValue && episode.TvdbId.Value > 0)
+        {
+            winnerByTvdb.TryGetValue(episode.TvdbId.Value, out winner);
+        }
+
+        if (winner is null && !string.IsNullOrWhiteSpace(episode.CanonicalKey))
+        {
+            winnerByCanonical.TryGetValue(episode.CanonicalKey, out winner);
+        }
+
+        if (winner is null)
+        {
+            if (episode.TvdbId.HasValue && episode.TvdbId.Value > 0)
+            {
+                winnerByTvdb[episode.TvdbId.Value] = episode;
+            }
+
+            if (!string.IsNullOrWhiteSpace(episode.CanonicalKey))
+            {
+                winnerByCanonical[episode.CanonicalKey] = episode;
+            }
+
+            continue;
+        }
+
+        if (winner.Id == episode.Id)
+        {
+            if (episode.TvdbId.HasValue && episode.TvdbId.Value > 0)
+            {
+                winnerByTvdb[episode.TvdbId.Value] = winner;
+            }
+
+            if (!string.IsNullOrWhiteSpace(episode.CanonicalKey))
+            {
+                winnerByCanonical[episode.CanonicalKey] = winner;
+            }
+
+            continue;
+        }
+
+        await MergeLibraryItemIntoWinnerAsync(db, winner, episode, consolidatedAtUtc, preserveTmdb: false);
+        if (winner.TvdbId.HasValue && winner.TvdbId.Value > 0)
+        {
+            winnerByTvdb[winner.TvdbId.Value] = winner;
+        }
+
+        if (!string.IsNullOrWhiteSpace(winner.CanonicalKey))
+        {
+            winnerByCanonical[winner.CanonicalKey] = winner;
+        }
+    }
+
+    await db.SaveChangesAsync();
+}
+
 static LibraryItem? ResolveExistingWinner(
     LibraryItem movie,
     IReadOnlyDictionary<int, LibraryItem> winnerByTmdb,
@@ -2697,6 +3763,68 @@ static LibraryItem? ResolveExistingWinner(
     }
 
     return null;
+}
+
+static LibraryItem? ResolveExistingTelevisionWinner(
+    LibraryItem item,
+    IReadOnlyDictionary<int, LibraryItem> winnerByTvdb,
+    IReadOnlyDictionary<int, LibraryItem> winnerByTmdb,
+    IReadOnlyDictionary<string, LibraryItem> winnerByImdb,
+    IReadOnlyDictionary<string, LibraryItem> winnerByTitleYear)
+{
+    if (item.TvdbId.HasValue && item.TvdbId.Value > 0 && winnerByTvdb.TryGetValue(item.TvdbId.Value, out var byTvdb))
+    {
+        return byTvdb;
+    }
+
+    if (item.TmdbId.HasValue && item.TmdbId.Value > 0 && winnerByTmdb.TryGetValue(item.TmdbId.Value, out var byTmdb))
+    {
+        return byTmdb;
+    }
+
+    var imdbKey = (item.ImdbId ?? string.Empty).Trim().ToLowerInvariant();
+    if (!string.IsNullOrWhiteSpace(imdbKey) && winnerByImdb.TryGetValue(imdbKey, out var byImdb))
+    {
+        return byImdb;
+    }
+
+    var titleYearKey = BuildTitleYearKey(item);
+    if (!string.IsNullOrWhiteSpace(titleYearKey) && winnerByTitleYear.TryGetValue(titleYearKey, out var byTitleYear))
+    {
+        return byTitleYear;
+    }
+
+    return null;
+}
+
+static void RegisterTelevisionWinner(
+    LibraryItem winner,
+    IDictionary<int, LibraryItem> winnerByTvdb,
+    IDictionary<int, LibraryItem> winnerByTmdb,
+    IDictionary<string, LibraryItem> winnerByImdb,
+    IDictionary<string, LibraryItem> winnerByTitleYear)
+{
+    if (winner.TvdbId.HasValue && winner.TvdbId.Value > 0)
+    {
+        winnerByTvdb[winner.TvdbId.Value] = winner;
+    }
+
+    if (winner.TmdbId.HasValue && winner.TmdbId.Value > 0)
+    {
+        winnerByTmdb[winner.TmdbId.Value] = winner;
+    }
+
+    var imdbKey = (winner.ImdbId ?? string.Empty).Trim().ToLowerInvariant();
+    if (!string.IsNullOrWhiteSpace(imdbKey))
+    {
+        winnerByImdb[imdbKey] = winner;
+    }
+
+    var titleYearKey = BuildTitleYearKey(winner);
+    if (!string.IsNullOrWhiteSpace(titleYearKey))
+    {
+        winnerByTitleYear[titleYearKey] = winner;
+    }
 }
 
 static void RegisterWinner(
@@ -2725,7 +3853,17 @@ static void RegisterWinner(
 
 static async Task MergeMovieIntoWinnerAsync(MediaCloudDbContext db, LibraryItem winner, LibraryItem loser, DateTimeOffset consolidatedAtUtc)
 {
-    winner.TmdbId ??= loser.TmdbId;
+    await MergeLibraryItemIntoWinnerAsync(db, winner, loser, consolidatedAtUtc, preserveTmdb: true);
+}
+
+static async Task MergeLibraryItemIntoWinnerAsync(MediaCloudDbContext db, LibraryItem winner, LibraryItem loser, DateTimeOffset consolidatedAtUtc, bool preserveTmdb)
+{
+    if (preserveTmdb)
+    {
+        winner.TmdbId ??= loser.TmdbId;
+    }
+
+    winner.TvdbId ??= loser.TvdbId;
     if (string.IsNullOrWhiteSpace(winner.ImdbId)) winner.ImdbId = loser.ImdbId;
     if (string.IsNullOrWhiteSpace(winner.PlexRatingKey)) winner.PlexRatingKey = loser.PlexRatingKey;
     if (string.IsNullOrWhiteSpace(winner.Title) || string.Equals(winner.Title, "Unknown", StringComparison.OrdinalIgnoreCase)) winner.Title = loser.Title;
@@ -2736,6 +3874,10 @@ static async Task MergeMovieIntoWinnerAsync(MediaCloudDbContext db, LibraryItem 
     if (string.IsNullOrWhiteSpace(winner.PrimaryFilePath)) winner.PrimaryFilePath = loser.PrimaryFilePath;
     if ((winner.AudioLanguagesJson ?? "[]") == "[]" && !string.IsNullOrWhiteSpace(loser.AudioLanguagesJson)) winner.AudioLanguagesJson = loser.AudioLanguagesJson;
     if ((winner.SubtitleLanguagesJson ?? "[]") == "[]" && !string.IsNullOrWhiteSpace(loser.SubtitleLanguagesJson)) winner.SubtitleLanguagesJson = loser.SubtitleLanguagesJson;
+    if (string.IsNullOrWhiteSpace(winner.PlayabilityScore) && !string.IsNullOrWhiteSpace(loser.PlayabilityScore)) winner.PlayabilityScore = loser.PlayabilityScore;
+    if (string.IsNullOrWhiteSpace(winner.PlayabilitySummary) && !string.IsNullOrWhiteSpace(loser.PlayabilitySummary)) winner.PlayabilitySummary = loser.PlayabilitySummary;
+    if (string.IsNullOrWhiteSpace(winner.PlayabilityDetailsJson) && !string.IsNullOrWhiteSpace(loser.PlayabilityDetailsJson)) winner.PlayabilityDetailsJson = loser.PlayabilityDetailsJson;
+    winner.PlayabilityCheckedAtUtc ??= loser.PlayabilityCheckedAtUtc;
     winner.IsAvailable = winner.IsAvailable || loser.IsAvailable;
     if (string.IsNullOrWhiteSpace(winner.QualityProfile)) winner.QualityProfile = loser.QualityProfile;
     if ((winner.SourceUpdatedAtUtc ?? DateTimeOffset.MinValue) < (loser.SourceUpdatedAtUtc ?? DateTimeOffset.MinValue)) winner.SourceUpdatedAtUtc = loser.SourceUpdatedAtUtc;
@@ -2758,6 +3900,8 @@ static async Task MergeMovieIntoWinnerAsync(MediaCloudDbContext db, LibraryItem 
             if (existing.FirstSeenAtUtc > link.FirstSeenAtUtc) existing.FirstSeenAtUtc = link.FirstSeenAtUtc;
             if (existing.LastSeenAtUtc < link.LastSeenAtUtc) existing.LastSeenAtUtc = link.LastSeenAtUtc;
             existing.IsDeletedAtSource = existing.IsDeletedAtSource && link.IsDeletedAtSource;
+            if (string.IsNullOrWhiteSpace(existing.SourceTitle) && !string.IsNullOrWhiteSpace(link.SourceTitle)) existing.SourceTitle = link.SourceTitle;
+            if (string.IsNullOrWhiteSpace(existing.SourceSortTitle) && !string.IsNullOrWhiteSpace(link.SourceSortTitle)) existing.SourceSortTitle = link.SourceSortTitle;
             if (!string.IsNullOrWhiteSpace(link.SourcePayloadHash)) existing.SourcePayloadHash = link.SourcePayloadHash;
             db.LibraryItemSourceLinks.Remove(link);
         }
@@ -3425,6 +4569,41 @@ static async Task<PlexBackfillEnrichResponse> EnrichPlexBackfillIdsAsync(MediaCl
         .Take(take)
         .ToListAsync();
 
+    var (scanned, updated, failed, errors) = await EnrichPlexMovieIdsCoreAsync(db, plex, httpClientFactory, candidates, DateTimeOffset.UtcNow);
+
+    await db.SaveChangesAsync();
+    return new PlexBackfillEnrichResponse(candidates.Count, scanned, updated, failed, errors.Take(50).ToList());
+}
+
+static async Task<int> EnrichPlexMovieIdsByRatingKeysAsync(
+    MediaCloudDbContext db,
+    IntegrationConfig plex,
+    IHttpClientFactory httpClientFactory,
+    DateTimeOffset seenAtUtc)
+{
+    var candidates = await db.LibraryItems
+        .Where(x => x.MediaType == "Movie"
+            && !string.IsNullOrWhiteSpace(x.PlexRatingKey)
+            && ((x.TmdbId == null || x.TmdbId <= 0) || string.IsNullOrWhiteSpace(x.ImdbId)))
+        .ToListAsync();
+
+    if (candidates.Count == 0)
+    {
+        return 0;
+    }
+
+    var (_, updated, _, _) = await EnrichPlexMovieIdsCoreAsync(db, plex, httpClientFactory, candidates, seenAtUtc);
+    await db.SaveChangesAsync();
+    return updated;
+}
+
+static async Task<(int Scanned, int Updated, int Failed, List<string> Errors)> EnrichPlexMovieIdsCoreAsync(
+    MediaCloudDbContext db,
+    IntegrationConfig plex,
+    IHttpClientFactory httpClientFactory,
+    IReadOnlyList<LibraryItem> candidates,
+    DateTimeOffset updatedAtUtc)
+{
     var client = httpClientFactory.CreateClient();
     client.Timeout = TimeSpan.FromSeconds(35);
 
@@ -3473,7 +4652,7 @@ static async Task<PlexBackfillEnrichResponse> EnrichPlexBackfillIdsAsync(MediaCl
 
             if (changed)
             {
-                item.UpdatedAtUtc = DateTimeOffset.UtcNow;
+                item.UpdatedAtUtc = updatedAtUtc;
                 updated++;
             }
         }
@@ -3484,8 +4663,7 @@ static async Task<PlexBackfillEnrichResponse> EnrichPlexBackfillIdsAsync(MediaCl
         }
     }
 
-    await db.SaveChangesAsync();
-    return new PlexBackfillEnrichResponse(candidates.Count, scanned, updated, failed, errors.Take(50).ToList());
+    return (scanned, updated, failed, errors);
 }
 
 static async Task<ExternalBackfillActionResult> EnsureMovieInRadarrAsync(PlexBackfillCandidateDto candidate, IntegrationConfig radarr, IHttpClientFactory httpClientFactory)
@@ -3622,6 +4800,11 @@ static void ApplyIntegrationAuthHeaders(IntegrationConfig integration, HttpReque
     var authType = IntegrationCatalog.NormalizeAuthType(integration.AuthType);
     if (authType == "ApiKey")
     {
+        if (string.Equals(integration.ServiceKey, "tautulli", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
         if (string.Equals(integration.ServiceKey, "plex", StringComparison.OrdinalIgnoreCase))
         {
             request.Headers.Add("X-Plex-Token", integration.ApiKey);
@@ -3640,6 +4823,458 @@ static void ApplyIntegrationAuthHeaders(IntegrationConfig integration, HttpReque
     }
 }
 
+async Task<PullPlaybackDiagnosticsResponse> PullPlaybackDiagnosticsAsync(LibraryItem item, MediaCloudDbContext db, IHttpClientFactory httpClientFactory, PullPlaybackDiagnosticsRequest? request)
+{
+    var hoursBack = Math.Clamp(request?.HoursBack ?? 48, 1, 24 * 14);
+    var maxItems = Math.Clamp(request?.MaxItems ?? 10, 1, 50);
+    var includeServerLogs = request?.IncludeServerLogs ?? true;
+    var imported = 0;
+    var updated = 0;
+    var usedTautulli = false;
+    var usedPlex = false;
+
+    var tautulli = await db.IntegrationConfigs
+        .Where(x => x.Enabled && x.ServiceKey == "tautulli")
+        .OrderBy(x => x.Id)
+        .FirstOrDefaultAsync();
+
+    if (tautulli is not null && !string.IsNullOrWhiteSpace(item.PlexRatingKey))
+    {
+        usedTautulli = true;
+        var logs = includeServerLogs ? await TryFetchTautulliPlexLogLinesAsync(tautulli, httpClientFactory) : [];
+        var history = await FetchTautulliHistoryAsync(tautulli, httpClientFactory, item.PlexRatingKey, item.Title, item.Year, item.MediaType, hoursBack, maxItems);
+
+        foreach (var session in history)
+        {
+            var stream = await FetchTautulliStreamDetailsAsync(tautulli, httpClientFactory, session.ExternalId);
+            var logSnippet = MatchRelevantPlexLogLines(logs, item.Title, session.Player, session.OccurredAtUtc);
+            var probe = new PlaybackDiagnosticProbe(
+                session.Decision,
+                stream.TranscodeDecision,
+                stream.VideoDecision,
+                stream.AudioDecision,
+                stream.SubtitleDecision,
+                stream.Container,
+                stream.VideoCodec,
+                stream.AudioCodec,
+                stream.SubtitleCodec,
+                stream.QualityProfile,
+                PbxFirstNonEmpty(session.ErrorMessage, stream.ErrorMessage),
+                logSnippet,
+                session.Player,
+                session.Product,
+                session.Platform);
+            var assessment = PlaybackDiagnosticsAnalyzer.Analyze(probe);
+            var wasUpdate = await UpsertPlaybackDiagnosticEntryAsync(db, new PlaybackDiagnosticEntry
+            {
+                LibraryItemId = item.Id,
+                IntegrationId = tautulli.Id,
+                SourceService = "tautulli",
+                ExternalId = session.ExternalId,
+                OccurredAtUtc = session.OccurredAtUtc,
+                ImportedAtUtc = DateTimeOffset.UtcNow,
+                StartedAtUtc = session.StartedAtUtc,
+                StoppedAtUtc = session.StoppedAtUtc,
+                UserName = session.UserName,
+                ClientName = session.ClientName,
+                Player = session.Player,
+                Product = session.Product,
+                Platform = session.Platform,
+                Decision = session.Decision,
+                TranscodeDecision = stream.TranscodeDecision,
+                VideoDecision = stream.VideoDecision,
+                AudioDecision = stream.AudioDecision,
+                SubtitleDecision = stream.SubtitleDecision,
+                Container = stream.Container,
+                VideoCodec = stream.VideoCodec,
+                AudioCodec = stream.AudioCodec,
+                SubtitleCodec = stream.SubtitleCodec,
+                QualityProfile = stream.QualityProfile,
+                HealthLabel = assessment.HealthLabel,
+                Summary = assessment.Summary,
+                SuspectedCause = assessment.SuspectedCause,
+                ErrorMessage = PbxFirstNonEmpty(session.ErrorMessage, stream.ErrorMessage),
+                LogSnippet = logSnippet,
+                RawPayloadJson = stream.RawJson
+            });
+            if (wasUpdate) updated++; else imported++;
+        }
+    }
+
+    if (imported == 0 && updated == 0)
+    {
+        var plex = await db.IntegrationConfigs
+            .Where(x => x.Enabled && x.ServiceKey == "plex")
+            .OrderBy(x => x.Id)
+            .FirstOrDefaultAsync();
+
+        if (plex is not null && !string.IsNullOrWhiteSpace(item.PlexRatingKey))
+        {
+            usedPlex = true;
+            var sessions = await FetchPlexLiveSessionDetailsAsync(plex, httpClientFactory, item.PlexRatingKey);
+            foreach (var session in sessions.Take(maxItems))
+            {
+                var probe = new PlaybackDiagnosticProbe(
+                    session.Decision,
+                    session.TranscodeDecision,
+                    session.VideoDecision,
+                    session.AudioDecision,
+                    session.SubtitleDecision,
+                    session.Container,
+                    session.VideoCodec,
+                    session.AudioCodec,
+                    session.SubtitleCodec,
+                    session.QualityProfile,
+                    string.Empty,
+                    string.Empty,
+                    session.Player,
+                    session.Product,
+                    session.Platform);
+                var assessment = PlaybackDiagnosticsAnalyzer.Analyze(probe);
+                var wasUpdate = await UpsertPlaybackDiagnosticEntryAsync(db, new PlaybackDiagnosticEntry
+                {
+                    LibraryItemId = item.Id,
+                    IntegrationId = plex.Id,
+                    SourceService = "plex",
+                    ExternalId = session.ExternalId,
+                    OccurredAtUtc = session.OccurredAtUtc,
+                    ImportedAtUtc = DateTimeOffset.UtcNow,
+                    UserName = session.UserName,
+                    ClientName = session.ClientName,
+                    Player = session.Player,
+                    Product = session.Product,
+                    Platform = session.Platform,
+                    Decision = session.Decision,
+                    TranscodeDecision = session.TranscodeDecision,
+                    VideoDecision = session.VideoDecision,
+                    AudioDecision = session.AudioDecision,
+                    SubtitleDecision = session.SubtitleDecision,
+                    Container = session.Container,
+                    VideoCodec = session.VideoCodec,
+                    AudioCodec = session.AudioCodec,
+                    SubtitleCodec = session.SubtitleCodec,
+                    QualityProfile = session.QualityProfile,
+                    HealthLabel = assessment.HealthLabel,
+                    Summary = assessment.Summary,
+                    SuspectedCause = assessment.SuspectedCause,
+                    ErrorMessage = string.Empty,
+                    LogSnippet = string.Empty,
+                    RawPayloadJson = session.RawPayload
+                });
+                if (wasUpdate) updated++; else imported++;
+            }
+        }
+    }
+
+    await db.SaveChangesAsync();
+
+    var totalCount = await db.PlaybackDiagnosticEntries.CountAsync(x => x.LibraryItemId == item.Id);
+    var sourceMessage = usedTautulli
+        ? "Pulled historical playback diagnostics from Tautulli."
+        : usedPlex
+            ? "No Tautulli history found; checked active Plex sessions only."
+            : "No Plex or Tautulli playback integration is configured for diagnostics.";
+
+    return new PullPlaybackDiagnosticsResponse(item.Id, imported, updated, totalCount, usedTautulli, usedPlex, sourceMessage);
+}
+
+async Task<List<TautulliHistoryItem>> FetchTautulliHistoryAsync(IntegrationConfig integration, IHttpClientFactory httpClientFactory, string ratingKey, string expectedTitle, int? expectedYear, string mediaType, int hoursBack, int maxItems)
+{
+    var startDate = DateTimeOffset.UtcNow.AddHours(-hoursBack).ToString("yyyy-MM-dd");
+    var normalizedMediaType = NormalizePlaybackMediaType(mediaType);
+
+    var directRows = await FetchTautulliHistoryRowsAsync(integration, httpClientFactory, new Dictionary<string, string?>
+    {
+        ["rating_key"] = ratingKey,
+        ["media_type"] = normalizedMediaType,
+        ["length"] = maxItems.ToString(CultureInfo.InvariantCulture),
+        ["order_column"] = "date",
+        ["order_dir"] = "desc",
+        ["start_date"] = startDate
+    });
+
+    if (directRows.Count > 0)
+    {
+        return directRows;
+    }
+
+    var fallbackRows = await FetchTautulliHistoryRowsAsync(integration, httpClientFactory, new Dictionary<string, string?>
+    {
+        ["search"] = expectedTitle,
+        ["media_type"] = normalizedMediaType,
+        ["length"] = (maxItems * 3).ToString(CultureInfo.InvariantCulture),
+        ["order_column"] = "date",
+        ["order_dir"] = "desc",
+        ["start_date"] = startDate
+    });
+
+    return fallbackRows
+        .Where(x => PlaybackDiagnosticsHistoryMatching.IsLikelyMatch(x.DisplayTitle, expectedTitle, expectedYear))
+        .Take(maxItems)
+        .ToList();
+}
+
+async Task<List<TautulliHistoryItem>> FetchTautulliHistoryRowsAsync(IntegrationConfig integration, IHttpClientFactory httpClientFactory, Dictionary<string, string?> query)
+{
+    var doc = await CallTautulliAsync(integration, httpClientFactory, "get_history", query);
+
+    var rows = new List<TautulliHistoryItem>();
+    if (doc is null) return rows;
+
+    if (!PbxTryGetNestedProperty(doc.RootElement, out var dataArray, "response", "data", "data") || dataArray.ValueKind != JsonValueKind.Array)
+    {
+        return rows;
+    }
+
+    foreach (var row in dataArray.EnumerateArray())
+    {
+        var externalId = GetJsonString(row, "row_id") ?? GetJsonString(row, "reference_id") ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(externalId)) continue;
+        var rowRatingKey = GetJsonString(row, "rating_key") ?? string.Empty;
+        var occurredAt = ParseUnixTime(PbxGetJsonLong(row, "date")) ?? DateTimeOffset.UtcNow;
+        rows.Add(new TautulliHistoryItem(
+            externalId,
+            rowRatingKey,
+            occurredAt,
+            ParseUnixTime(PbxGetJsonLong(row, "started")),
+            ParseUnixTime(PbxGetJsonLong(row, "stopped")),
+            GetJsonString(row, "user") ?? string.Empty,
+            GetJsonString(row, "friendly_name") ?? string.Empty,
+            GetJsonString(row, "player") ?? string.Empty,
+            GetJsonString(row, "product") ?? string.Empty,
+            GetJsonString(row, "platform") ?? string.Empty,
+            GetJsonString(row, "transcode_decision") ?? string.Empty,
+            string.Empty,
+            GetJsonString(row, "full_title") ?? GetJsonString(row, "title") ?? string.Empty));
+    }
+
+    return rows;
+}
+
+async Task<TautulliStreamDetails> FetchTautulliStreamDetailsAsync(IntegrationConfig integration, IHttpClientFactory httpClientFactory, string rowId)
+{
+    var doc = await CallTautulliAsync(integration, httpClientFactory, "get_stream_data", new Dictionary<string, string?>
+    {
+        ["row_id"] = rowId
+    });
+
+    if (doc is null || !PbxTryGetNestedProperty(doc.RootElement, out var data, "response", "data"))
+    {
+        return new TautulliStreamDetails(string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty);
+    }
+
+    return new TautulliStreamDetails(
+        GetJsonString(data, "transcode_decision") ?? string.Empty,
+        GetJsonString(data, "transcode_decision") ?? string.Empty,
+        GetJsonString(data, "stream_video_decision") ?? GetJsonString(data, "video_decision") ?? string.Empty,
+        GetJsonString(data, "stream_audio_decision") ?? GetJsonString(data, "audio_decision") ?? string.Empty,
+        GetJsonString(data, "stream_subtitle_decision") ?? GetJsonString(data, "subtitle_decision") ?? string.Empty,
+        GetJsonString(data, "stream_container") ?? GetJsonString(data, "container") ?? string.Empty,
+        GetJsonString(data, "stream_video_codec") ?? GetJsonString(data, "video_codec") ?? string.Empty,
+        GetJsonString(data, "stream_audio_codec") ?? GetJsonString(data, "audio_codec") ?? string.Empty,
+        GetJsonString(data, "stream_subtitle_codec") ?? GetJsonString(data, "subtitle_codec") ?? string.Empty,
+        GetJsonString(data, "quality_profile") ?? string.Empty,
+        string.Empty,
+        data.GetRawText());
+}
+
+async Task<List<string>> TryFetchTautulliPlexLogLinesAsync(IntegrationConfig integration, IHttpClientFactory httpClientFactory)
+{
+    var doc = await CallTautulliAsync(integration, httpClientFactory, "get_plex_log", new Dictionary<string, string?>
+    {
+        ["window"] = "400",
+        ["log_type"] = "server"
+    });
+
+    var lines = new List<string>();
+    if (doc is null || !PbxTryGetNestedProperty(doc.RootElement, out var data, "response", "data") || data.ValueKind != JsonValueKind.Array)
+    {
+        return lines;
+    }
+
+    foreach (var entry in data.EnumerateArray())
+    {
+        if (entry.ValueKind != JsonValueKind.Array) continue;
+        var parts = entry.EnumerateArray().Select(x => x.ToString()).ToArray();
+        if (parts.Length >= 3)
+        {
+            lines.Add(string.Join(" | ", parts));
+        }
+    }
+
+    return lines;
+}
+
+string MatchRelevantPlexLogLines(IReadOnlyList<string> lines, string title, string player, DateTimeOffset occurredAtUtc)
+{
+    if (lines.Count == 0) return string.Empty;
+
+    var interesting = lines
+        .Where(line => line.Contains("error", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("failed", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("transcod", StringComparison.OrdinalIgnoreCase)
+            || (!string.IsNullOrWhiteSpace(player) && line.Contains(player, StringComparison.OrdinalIgnoreCase))
+            || (!string.IsNullOrWhiteSpace(title) && line.Contains(title, StringComparison.OrdinalIgnoreCase)))
+        .TakeLast(6)
+        .ToList();
+
+    return interesting.Count == 0 ? string.Empty : string.Join("\n", interesting);
+}
+
+async Task<List<PlexLiveSessionDetails>> FetchPlexLiveSessionDetailsAsync(IntegrationConfig integration, IHttpClientFactory httpClientFactory, string ratingKey)
+{
+    var client = httpClientFactory.CreateClient();
+    client.Timeout = TimeSpan.FromSeconds(20);
+    using var request = new HttpRequestMessage(HttpMethod.Get, $"{integration.BaseUrl.TrimEnd('/')}/status/sessions");
+    ApplyIntegrationAuthHeaders(integration, request);
+    using var response = await client.SendAsync(request);
+    if (!response.IsSuccessStatusCode)
+    {
+        return [];
+    }
+
+    var xml = await response.Content.ReadAsStringAsync();
+    var doc = XDocument.Parse(xml);
+    var rows = new List<PlexLiveSessionDetails>();
+    foreach (var video in doc.Descendants().Where(x => x.Name.LocalName is "Video" or "Track" or "Episode"))
+    {
+        var sessionRatingKey = GetXmlAttr(video, "ratingKey") ?? string.Empty;
+        if (!string.Equals(sessionRatingKey, ratingKey, StringComparison.OrdinalIgnoreCase)) continue;
+
+        var playerNode = video.Elements().FirstOrDefault(x => x.Name.LocalName == "Player");
+        var userNode = video.Elements().FirstOrDefault(x => x.Name.LocalName == "User");
+        var sessionNode = video.Elements().FirstOrDefault(x => x.Name.LocalName == "Session");
+        var mediaNode = video.Elements().FirstOrDefault(x => x.Name.LocalName == "Media");
+        var partNode = mediaNode?.Elements().FirstOrDefault(x => x.Name.LocalName == "Part");
+        var streamNodes = partNode?.Elements().Where(x => x.Name.LocalName == "Stream").ToList() ?? [];
+        var videoStream = streamNodes.FirstOrDefault(x => string.Equals(GetXmlAttr(x, "streamType"), "1", StringComparison.OrdinalIgnoreCase));
+        var audioStream = streamNodes.FirstOrDefault(x => string.Equals(GetXmlAttr(x, "streamType"), "2", StringComparison.OrdinalIgnoreCase));
+        var subtitleStream = streamNodes.FirstOrDefault(x => string.Equals(GetXmlAttr(x, "streamType"), "3", StringComparison.OrdinalIgnoreCase));
+        var transcodeNode = video.Elements().FirstOrDefault(x => x.Name.LocalName == "TranscodeSession");
+        var sessionKey = GetXmlAttr(video, "sessionKey") ?? GetXmlAttr(sessionNode, "id") ?? Guid.NewGuid().ToString("N");
+        var transcodeDecision = GetXmlAttr(transcodeNode, "transcodeDecision") ?? GetXmlAttr(video, "transcodeDecision") ?? GetXmlAttr(partNode, "decision") ?? string.Empty;
+        rows.Add(new PlexLiveSessionDetails(
+            $"session:{sessionKey}",
+            DateTimeOffset.UtcNow,
+            GetXmlAttr(userNode, "title") ?? string.Empty,
+            GetXmlAttr(userNode, "title") ?? string.Empty,
+            GetXmlAttr(playerNode, "title") ?? string.Empty,
+            GetXmlAttr(playerNode, "product") ?? string.Empty,
+            GetXmlAttr(playerNode, "platform") ?? string.Empty,
+            transcodeDecision,
+            transcodeDecision,
+            GetXmlAttr(videoStream, "decision") ?? transcodeDecision,
+            GetXmlAttr(audioStream, "decision") ?? transcodeDecision,
+            GetXmlAttr(subtitleStream, "decision") ?? string.Empty,
+            GetXmlAttr(mediaNode, "container") ?? string.Empty,
+            GetXmlAttr(videoStream, "codec") ?? string.Empty,
+            GetXmlAttr(audioStream, "codec") ?? string.Empty,
+            GetXmlAttr(subtitleStream, "codec") ?? string.Empty,
+            GetXmlAttr(transcodeNode, "qualityProfile") ?? "Original",
+            video.ToString(SaveOptions.DisableFormatting)));
+    }
+
+    return rows;
+}
+
+async Task<bool> UpsertPlaybackDiagnosticEntryAsync(MediaCloudDbContext db, PlaybackDiagnosticEntry candidate)
+{
+    var existing = await db.PlaybackDiagnosticEntries.FirstOrDefaultAsync(x => x.LibraryItemId == candidate.LibraryItemId && x.SourceService == candidate.SourceService && x.ExternalId == candidate.ExternalId);
+    if (existing is null)
+    {
+        db.PlaybackDiagnosticEntries.Add(candidate);
+        return false;
+    }
+
+    existing.IntegrationId = candidate.IntegrationId;
+    existing.OccurredAtUtc = candidate.OccurredAtUtc;
+    existing.ImportedAtUtc = candidate.ImportedAtUtc;
+    existing.StartedAtUtc = candidate.StartedAtUtc;
+    existing.StoppedAtUtc = candidate.StoppedAtUtc;
+    existing.UserName = candidate.UserName;
+    existing.ClientName = candidate.ClientName;
+    existing.Player = candidate.Player;
+    existing.Product = candidate.Product;
+    existing.Platform = candidate.Platform;
+    existing.Decision = candidate.Decision;
+    existing.TranscodeDecision = candidate.TranscodeDecision;
+    existing.VideoDecision = candidate.VideoDecision;
+    existing.AudioDecision = candidate.AudioDecision;
+    existing.SubtitleDecision = candidate.SubtitleDecision;
+    existing.Container = candidate.Container;
+    existing.VideoCodec = candidate.VideoCodec;
+    existing.AudioCodec = candidate.AudioCodec;
+    existing.SubtitleCodec = candidate.SubtitleCodec;
+    existing.QualityProfile = candidate.QualityProfile;
+    existing.HealthLabel = candidate.HealthLabel;
+    existing.Summary = candidate.Summary;
+    existing.SuspectedCause = candidate.SuspectedCause;
+    existing.ErrorMessage = candidate.ErrorMessage;
+    existing.LogSnippet = candidate.LogSnippet;
+    existing.RawPayloadJson = candidate.RawPayloadJson;
+    return true;
+}
+
+async Task<JsonDocument?> CallTautulliAsync(IntegrationConfig integration, IHttpClientFactory httpClientFactory, string cmd, IDictionary<string, string?> query)
+{
+    var client = httpClientFactory.CreateClient();
+    client.Timeout = TimeSpan.FromSeconds(20);
+    var parameters = new List<string>
+    {
+        $"apikey={Uri.EscapeDataString(integration.ApiKey ?? string.Empty)}",
+        $"cmd={Uri.EscapeDataString(cmd)}"
+    };
+
+    foreach (var pair in query)
+    {
+        if (string.IsNullOrWhiteSpace(pair.Value)) continue;
+        parameters.Add($"{Uri.EscapeDataString(pair.Key)}={Uri.EscapeDataString(pair.Value)}");
+    }
+
+    var url = $"{integration.BaseUrl.TrimEnd('/')}/api/v2?{string.Join("&", parameters)}";
+    using var response = await client.GetAsync(url);
+    if (!response.IsSuccessStatusCode)
+    {
+        return null;
+    }
+
+    var body = await response.Content.ReadAsStringAsync();
+    return JsonDocument.Parse(body);
+}
+
+string NormalizePlaybackMediaType(string mediaType)
+    => (mediaType ?? string.Empty).Trim().ToLowerInvariant() switch
+    {
+        "movie" => "movie",
+        "track" => "track",
+        _ => "episode"
+    };
+
+DateTimeOffset? ParseUnixTime(long? seconds)
+    => seconds.HasValue && seconds.Value > 0 ? DateTimeOffset.FromUnixTimeSeconds(seconds.Value) : null;
+
+long? PbxGetJsonLong(JsonElement element, string propertyName)
+{
+    if (!element.TryGetProperty(propertyName, out var value)) return null;
+    if (value.ValueKind == JsonValueKind.Number && value.TryGetInt64(out var number)) return number;
+    if (value.ValueKind == JsonValueKind.String && long.TryParse(value.GetString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed)) return parsed;
+    return null;
+}
+
+bool PbxTryGetNestedProperty(JsonElement root, out JsonElement value, params string[] names)
+{
+    value = root;
+    foreach (var name in names)
+    {
+        if (value.ValueKind != JsonValueKind.Object || !value.TryGetProperty(name, out value)) return false;
+    }
+
+    return true;
+}
+
+string PbxFirstNonEmpty(params string[] values)
+    => values.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x))?.Trim() ?? string.Empty;
+
 static string BuildCanonicalMovieKey(int? tmdbId, string imdbId, string title, int? year)
 {
     if (tmdbId.HasValue && tmdbId.Value > 0)
@@ -3657,6 +5292,48 @@ static string BuildCanonicalMovieKey(int? tmdbId, string imdbId, string title, i
     return $"movie:titleyear:{safeTitle}:{safeYear}";
 }
 
+static string BuildSeriesCanonicalKey(int? tvdbId, int? tmdbId, string imdbId, string title, int? year)
+{
+    if (tvdbId.HasValue && tvdbId.Value > 0)
+    {
+        return $"series:tvdb:{tvdbId.Value}";
+    }
+
+    if (tmdbId.HasValue && tmdbId.Value > 0)
+    {
+        return $"series:tmdb:{tmdbId.Value}";
+    }
+
+    if (!string.IsNullOrWhiteSpace(imdbId))
+    {
+        return $"series:imdb:{imdbId.Trim().ToLowerInvariant()}";
+    }
+
+    var safeTitle = NormalizeTitleKey(title);
+    var safeYear = year?.ToString() ?? "na";
+    return $"series:titleyear:{safeTitle}:{safeYear}";
+}
+
+static string BuildEpisodeCanonicalKey(int? seriesTvdbId, string seriesTitle, int seasonNumber, int episodeNumber, int? episodeTvdbId)
+{
+    if (episodeTvdbId.HasValue && episodeTvdbId.Value > 0)
+    {
+        return $"episode:tvdb:{episodeTvdbId.Value}";
+    }
+
+    var seriesScope = seriesTvdbId.HasValue && seriesTvdbId.Value > 0
+        ? $"tvdb:{seriesTvdbId.Value}"
+        : $"title:{NormalizeTitleKey(seriesTitle)}";
+
+    return $"episode:{seriesScope}:s{seasonNumber:00}:e{episodeNumber:00}";
+}
+
+static string BuildEpisodeDisplayTitle(string seriesTitle, int seasonNumber, int episodeNumber, string episodeTitle)
+    => $"{seriesTitle} — S{seasonNumber:00}E{episodeNumber:00} — {episodeTitle}";
+
+static string BuildEpisodeSortTitle(string seriesSortTitle, int seasonNumber, int episodeNumber, string episodeTitle)
+    => $"{seriesSortTitle} s{seasonNumber:00}e{episodeNumber:00} {episodeTitle}";
+
 static string? GetJsonString(JsonElement element, string property)
 {
     if (!element.TryGetProperty(property, out var value)) return null;
@@ -3673,6 +5350,14 @@ static string? GetNestedJsonString(JsonElement element, string parentProperty, s
     return child.GetString();
 }
 
+static int? GetNestedJsonInt(JsonElement element, string parentProperty, string childProperty)
+{
+    if (!element.TryGetProperty(parentProperty, out var parent)) return null;
+    if (parent.ValueKind != JsonValueKind.Object) return null;
+    if (!parent.TryGetProperty(childProperty, out var child)) return null;
+    return child.ValueKind == JsonValueKind.Number && child.TryGetInt32(out var v) ? v : null;
+}
+
 static int? GetJsonInt(JsonElement element, string property)
 {
     if (!element.TryGetProperty(property, out var value)) return null;
@@ -3682,8 +5367,13 @@ static int? GetJsonInt(JsonElement element, string property)
 static double? GetJsonDouble(JsonElement element, string property)
 {
     if (!element.TryGetProperty(property, out var value)) return null;
-    return value.ValueKind == JsonValueKind.Number && value.TryGetDouble(out var v) ? v : null;
+    if (value.ValueKind == JsonValueKind.Number && value.TryGetDouble(out var v)) return v;
+    if (value.ValueKind == JsonValueKind.String && double.TryParse(value.GetString(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var parsed)) return parsed;
+    return null;
 }
+
+static long? TryParseLong(string? value)
+    => long.TryParse(value, out var parsed) ? parsed : null;
 
 static bool? GetJsonBool(JsonElement element, string property)
 {
@@ -3735,6 +5425,62 @@ static async Task<RuntimePolicyValues> LoadRuntimePolicyValuesAsync(
         settings.HighMinutes,
         settings.CriticalPercent,
         settings.CriticalMinutes);
+}
+
+static async Task UpsertRuntimeProbeFailureIssueAsync(
+    MediaCloudDbContext db,
+    LibraryItem item,
+    string filePath,
+    string probeError,
+    int? probeExitCode,
+    DateTimeOffset detectedAtUtc,
+    string issueType)
+{
+    var issue = await db.LibraryIssues
+        .Where(x => x.LibraryItemId == item.Id && x.IssueType == issueType)
+        .OrderByDescending(x => x.Id)
+        .FirstOrDefaultAsync();
+
+    var hasFailure = item.ActualRuntimeMinutes is null;
+    if (!hasFailure)
+    {
+        if (issue is not null && !string.Equals(issue.Status, "Resolved", StringComparison.OrdinalIgnoreCase))
+        {
+            issue.Status = "Resolved";
+            issue.ResolvedAtUtc = detectedAtUtc;
+            issue.LastDetectedAtUtc = detectedAtUtc;
+        }
+
+        return;
+    }
+
+    if (issue is null)
+    {
+        issue = new LibraryIssue
+        {
+            LibraryItemId = item.Id,
+            IssueType = issueType,
+            FirstDetectedAtUtc = detectedAtUtc
+        };
+        db.LibraryIssues.Add(issue);
+    }
+
+    var normalizedPath = (filePath ?? string.Empty).Trim();
+    var normalizedError = (probeError ?? string.Empty).Trim();
+    var isMissingFile = string.IsNullOrWhiteSpace(normalizedPath) || !File.Exists(normalizedPath);
+
+    issue.PolicyVersion = "runtime-probe-v1";
+    issue.Status = "Open";
+    issue.ResolvedAtUtc = null;
+    issue.LastDetectedAtUtc = detectedAtUtc;
+    issue.Severity = isMissingFile ? "Warning" : "High";
+    issue.Summary = isMissingFile
+        ? "Runtime probe could not find the local media file."
+        : "Runtime probe failed to read media duration from the local file.";
+    issue.SuggestedAction = isMissingFile
+        ? "Verify path mapping and local file availability, then resync or reprobe."
+        : "Verify the media file is readable/healthy in Plex/Sonarr and replace or redownload if needed.";
+    issue.DetailsJson = RuntimeProbeFailurePolicy.BuildIssueDetailsJson(normalizedPath, normalizedError, probeExitCode);
 }
 
 static async Task UpsertRuntimeMismatchIssueAsync(
@@ -3973,15 +5719,118 @@ static async Task<string> TryRefreshPrimaryFilePathFromSourceAsync(LibraryItem i
     return string.Empty;
 }
 
+static Guid StartRuntimeReprobeJob(
+    ConcurrentDictionary<Guid, RuntimeReprobeJobStatusResponse> runtimeReprobeJobs,
+    IServiceScopeFactory scopeFactory,
+    BatchRuntimeReprobeRequest request,
+    string queuedMessage)
+{
+    var now = DateTimeOffset.UtcNow;
+    var jobId = Guid.NewGuid();
+    runtimeReprobeJobs[jobId] = new RuntimeReprobeJobStatusResponse(
+        jobId,
+        "running",
+        queuedMessage,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        now,
+        null);
+
+    _ = Task.Run(async () =>
+    {
+        try
+        {
+            await using var scope = scopeFactory.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<MediaCloudDbContext>();
+
+            var runtimePolicy = await LoadRuntimePolicyValuesAsync(db,
+                runtimeToleranceMinutesFloorKey,
+                runtimeTolerancePercentKey,
+                runtimeWarningPercentKey,
+                runtimeHighMinutesKey,
+                runtimeCriticalPercentKey,
+                runtimeCriticalMinutesKey,
+                runtimeToleranceMinutesFloorDefault,
+                runtimeTolerancePercentDefault,
+                runtimeWarningPercentDefault,
+                runtimeHighMinutesDefault,
+                runtimeCriticalPercentDefault,
+                runtimeCriticalMinutesDefault);
+
+            var result = await ExecuteBatchRuntimeReprobeAsync(
+                db,
+                request,
+                runtimePolicy,
+                runtimeMismatchIssueType,
+                runtimePolicyVersion,
+                progress =>
+                {
+                    runtimeReprobeJobs[jobId] = new RuntimeReprobeJobStatusResponse(
+                        jobId,
+                        "running",
+                        progress.TotalCandidates > 0
+                            ? $"Probing runtimes... {progress.Inspected}/{progress.TotalCandidates}"
+                            : "Scanning candidates...",
+                        progress.TotalCandidates,
+                        progress.Inspected,
+                        progress.Attempted,
+                        progress.Updated,
+                        progress.MissingFiles,
+                        progress.Failed,
+                        now,
+                        null);
+                });
+
+            var finishedAt = DateTimeOffset.UtcNow;
+            runtimeReprobeJobs[jobId] = new RuntimeReprobeJobStatusResponse(
+                jobId,
+                "completed",
+                $"Probe complete: updated {result.Updated}/{result.Inspected}, missing {result.MissingFiles}, failures {result.Failed}.",
+                result.Inspected,
+                result.Inspected,
+                result.Attempted,
+                result.Updated,
+                result.MissingFiles,
+                result.Failed,
+                now,
+                finishedAt);
+        }
+        catch (Exception ex)
+        {
+            var finishedAt = DateTimeOffset.UtcNow;
+            var message = ex.Message;
+            if (message.Length > 250) message = message[..250];
+            runtimeReprobeJobs[jobId] = new RuntimeReprobeJobStatusResponse(
+                jobId,
+                "failed",
+                $"Probe job failed: {message}",
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                now,
+                finishedAt);
+        }
+    });
+
+    return jobId;
+}
+
 static async Task<BatchRuntimeReprobeResponse> ExecuteBatchRuntimeReprobeAsync(
     MediaCloudDbContext db,
     BatchRuntimeReprobeRequest request,
     RuntimePolicyValues runtimePolicy,
     string runtimeMismatchIssueType,
     string runtimePolicyVersion,
-    Action<RuntimeReprobeJobProgress>? progress)
+    Action<RuntimeReprobeJobProgress>? progress = null)
 {
-    var take = Math.Clamp(request.Take <= 0 ? 200 : request.Take, 1, 2000);
+    var take = Math.Clamp(request.Take <= 0 ? 200 : request.Take, 1, 10000);
     var query = db.LibraryItems.AsQueryable();
 
     if (!request.ForceAll)
@@ -4002,6 +5851,25 @@ static async Task<BatchRuntimeReprobeResponse> ExecuteBatchRuntimeReprobeAsync(
         .Take(take)
         .ToListAsync();
 
+    var probeFailureIssues = await db.LibraryIssues
+        .Where(x => x.IssueType == runtimeProbeFailureIssueType && x.Status == "Open")
+        .ToListAsync();
+
+    candidates = candidates
+        .Where(item => request.ForceAll || !RuntimeProbeFailurePolicy.ShouldSkipAutomaticReprobe(
+            probeFailureIssues
+                .Where(issue => issue.LibraryItemId == item.Id)
+                .OrderByDescending(issue => issue.Id)
+                .Select(issue => issue.Status)
+                .FirstOrDefault(),
+            probeFailureIssues
+                .Where(issue => issue.LibraryItemId == item.Id)
+                .OrderByDescending(issue => issue.Id)
+                .Select(issue => issue.DetailsJson)
+                .FirstOrDefault(),
+            item.PrimaryFilePath))
+        .ToList();
+
     var totalCandidates = candidates.Count;
     var inspected = 0;
     var attempted = 0;
@@ -4019,27 +5887,32 @@ static async Task<BatchRuntimeReprobeResponse> ExecuteBatchRuntimeReprobeAsync(
         {
             missingFiles++;
             item.ActualRuntimeMinutes = null;
+            ClearPlayability(item);
             item.UpdatedAtUtc = DateTimeOffset.UtcNow;
+            await UpsertRuntimeProbeFailureIssueAsync(db, item, filePath, string.Empty, null, item.UpdatedAtUtc, runtimeProbeFailureIssueType);
             await UpsertRuntimeMismatchIssueAsync(db, item, runtimePolicy, item.UpdatedAtUtc, runtimeMismatchIssueType, runtimePolicyVersion);
             progress?.Invoke(new RuntimeReprobeJobProgress(totalCandidates, inspected, attempted, updated, missingFiles, failed));
             continue;
         }
 
         attempted++;
-        var runtime = ProbeRuntimeMinutes(filePath);
-        if (runtime.HasValue && runtime.Value > 0)
+        var probe = ProbeMediaFile(filePath);
+        if (probe.RuntimeMinutes.HasValue && probe.RuntimeMinutes.Value > 0)
         {
-            item.ActualRuntimeMinutes = runtime;
+            item.ActualRuntimeMinutes = probe.RuntimeMinutes;
+            ApplyPlayabilityProbe(item, probe, DateTimeOffset.UtcNow);
             item.UpdatedAtUtc = DateTimeOffset.UtcNow;
             updated++;
         }
         else
         {
             item.ActualRuntimeMinutes = null;
+            ClearPlayability(item);
             item.UpdatedAtUtc = DateTimeOffset.UtcNow;
             failed++;
         }
 
+        await UpsertRuntimeProbeFailureIssueAsync(db, item, filePath, probe.Error, probe.ExitCode, item.UpdatedAtUtc, runtimeProbeFailureIssueType);
         await UpsertRuntimeMismatchIssueAsync(db, item, runtimePolicy, item.UpdatedAtUtc, runtimeMismatchIssueType, runtimePolicyVersion);
         progress?.Invoke(new RuntimeReprobeJobProgress(totalCandidates, inspected, attempted, updated, missingFiles, failed));
     }
@@ -4048,19 +5921,19 @@ static async Task<BatchRuntimeReprobeResponse> ExecuteBatchRuntimeReprobeAsync(
     return new BatchRuntimeReprobeResponse(inspected, attempted, updated, missingFiles, failed);
 }
 
-static RuntimeProbeResult ProbeRuntime(string filePath)
+static MediaProbeResult ProbeMediaFile(string filePath)
 {
     try
     {
         if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath))
         {
-            return new RuntimeProbeResult(null, null, "File not found.");
+            return new MediaProbeResult(null, null, "File not found.", null);
         }
 
         var psi = new ProcessStartInfo
         {
             FileName = "ffprobe",
-            Arguments = $"-v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 \"{filePath}\"",
+            Arguments = $"-v error -show_entries format=duration,format_name,bit_rate:stream=codec_type,codec_name,profile,width,height,pix_fmt -of json \"{filePath}\"",
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
@@ -4070,31 +5943,82 @@ static RuntimeProbeResult ProbeRuntime(string filePath)
         using var proc = Process.Start(psi);
         if (proc is null)
         {
-            return new RuntimeProbeResult(null, null, "Failed to start ffprobe process.");
+            return new MediaProbeResult(null, null, "Failed to start ffprobe process.", null);
         }
 
         if (!proc.WaitForExit(5000))
         {
             try { proc.Kill(entireProcessTree: true); } catch { }
-            return new RuntimeProbeResult(null, null, "ffprobe timed out after 5s.");
+            return new MediaProbeResult(null, null, "ffprobe timed out after 5s.", null);
         }
 
         var stdout = proc.StandardOutput.ReadToEnd().Trim();
         var stderr = proc.StandardError.ReadToEnd().Trim();
         var exitCode = proc.ExitCode;
-
-        if (double.TryParse(stdout, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var seconds) && seconds > 0)
+        if (string.IsNullOrWhiteSpace(stdout))
         {
-            return new RuntimeProbeResult(Math.Round(seconds / 60d, 2), exitCode, string.Empty);
+            var emptyError = !string.IsNullOrWhiteSpace(stderr)
+                ? stderr[..Math.Min(300, stderr.Length)]
+                : (exitCode != 0 ? $"ffprobe exited with code {exitCode}." : "ffprobe returned no output.");
+            return new MediaProbeResult(null, exitCode, emptyError, null);
         }
 
-        var error = !string.IsNullOrWhiteSpace(stderr)
-            ? stderr[..Math.Min(300, stderr.Length)]
-            : (exitCode != 0
-                ? $"ffprobe exited with code {exitCode}."
-                : "ffprobe returned no duration output.");
+        using var document = JsonDocument.Parse(stdout);
+        var root = document.RootElement;
+        var format = root.TryGetProperty("format", out var formatElement) ? formatElement : default;
+        var formatNames = GetJsonString(format, "format_name") ?? string.Empty;
+        var durationSeconds = GetJsonDouble(format, "duration");
+        var bitrateBitsPerSecond = TryParseLong(GetJsonString(format, "bit_rate"));
+        var streams = root.TryGetProperty("streams", out var streamsElement) && streamsElement.ValueKind == JsonValueKind.Array
+            ? streamsElement.EnumerateArray().ToArray()
+            : [];
 
-        return new RuntimeProbeResult(null, exitCode, error);
+        var videoStream = streams.FirstOrDefault(stream => string.Equals(GetJsonString(stream, "codec_type"), "video", StringComparison.OrdinalIgnoreCase));
+        var videoCodec = GetJsonString(videoStream, "codec_name") ?? string.Empty;
+        var videoProfile = GetJsonString(videoStream, "profile") ?? string.Empty;
+        var pixelFormat = GetJsonString(videoStream, "pix_fmt") ?? string.Empty;
+        var width = GetJsonInt(videoStream, "width");
+        var height = GetJsonInt(videoStream, "height");
+        var audioCodecs = streams
+            .Where(stream => string.Equals(GetJsonString(stream, "codec_type"), "audio", StringComparison.OrdinalIgnoreCase))
+            .Select(stream => GetJsonString(stream, "codec_name") ?? string.Empty)
+            .Where(codec => !string.IsNullOrWhiteSpace(codec))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var subtitleCodecs = streams
+            .Where(stream => string.Equals(GetJsonString(stream, "codec_type"), "subtitle", StringComparison.OrdinalIgnoreCase))
+            .Select(stream => GetJsonString(stream, "codec_name") ?? string.Empty)
+            .Where(codec => !string.IsNullOrWhiteSpace(codec))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        var runtimeMinutes = durationSeconds.HasValue && durationSeconds.Value > 0
+            ? Math.Round(durationSeconds.Value / 60d, 2)
+            : (double?)null;
+        var probeInfo = new MediaPlayabilityProbeInfo(
+            string.IsNullOrWhiteSpace(formatNames) ? [] : new[] { formatNames },
+            videoCodec,
+            videoProfile,
+            pixelFormat,
+            width,
+            height,
+            bitrateBitsPerSecond,
+            audioCodecs,
+            subtitleCodecs);
+        var assessment = MediaPlayabilityScoring.Evaluate(probeInfo);
+        var details = new MediaPlayabilityStoredDetails(
+            probeInfo.ContainerNames,
+            probeInfo.VideoCodec,
+            probeInfo.VideoProfile,
+            probeInfo.PixelFormat,
+            probeInfo.Width,
+            probeInfo.Height,
+            probeInfo.BitrateBitsPerSecond,
+            probeInfo.AudioCodecs,
+            probeInfo.SubtitleCodecs,
+            assessment.Reasons);
+
+        return new MediaProbeResult(runtimeMinutes, exitCode, string.Empty, new MediaPlayabilitySnapshot(assessment.Label, assessment.Summary, details));
     }
     catch (Exception ex)
     {
@@ -4107,16 +6031,36 @@ static RuntimeProbeResult ProbeRuntime(string filePath)
         }
 
         if (error.Length > 300) error = error[..300];
-        return new RuntimeProbeResult(null, null, error);
+        return new MediaProbeResult(null, null, error, null);
     }
 }
 
-static double? ProbeRuntimeMinutes(string filePath)
-    => ProbeRuntime(filePath).RuntimeMinutes;
+static void ApplyPlayabilityProbe(LibraryItem item, MediaProbeResult probe, DateTimeOffset checkedAtUtc)
+{
+    if (probe.Playability is null)
+    {
+        ClearPlayability(item);
+        return;
+    }
+
+    item.PlayabilityScore = probe.Playability.Label;
+    item.PlayabilitySummary = probe.Playability.Summary;
+    item.PlayabilityDetailsJson = JsonSerializer.Serialize(probe.Playability.Details);
+    item.PlayabilityCheckedAtUtc = checkedAtUtc;
+}
+
+static void ClearPlayability(LibraryItem item)
+{
+    item.PlayabilityScore = string.Empty;
+    item.PlayabilitySummary = string.Empty;
+    item.PlayabilityDetailsJson = string.Empty;
+    item.PlayabilityCheckedAtUtc = null;
+}
 
 file sealed record RuntimePolicyValues(double ToleranceMinutesFloor, double TolerancePercent, double WarningPercent, double HighMinutes, double CriticalPercent, double CriticalMinutes);
 file sealed record RuntimeMismatchEvaluation(bool IsMismatch, double DiffMinutes, double DiffPercent, double ThresholdMinutes, string Severity);
-file sealed record RuntimeProbeResult(double? RuntimeMinutes, int? ExitCode, string Error);
+file sealed record MediaPlayabilitySnapshot(string Label, string Summary, MediaPlayabilityStoredDetails Details);
+file sealed record MediaProbeResult(double? RuntimeMinutes, int? ExitCode, string Error, MediaPlayabilitySnapshot? Playability);
 file sealed record IntegrationSyncOutcome(bool Success, DateTimeOffset SyncSeenAtUtc, string Message, int Processed = 0);
 file sealed record ExternalBackfillActionResult(bool Success, bool PerformedAction, string Message);
 file sealed record RadarrMovieState(bool Exists, long? RadarrMovieId, bool? Monitored);
@@ -4143,7 +6087,7 @@ public record LibraryPathMappingTestResponse(long MappingId, long IntegrationId,
 public record IntegrationRemoteRootsResponse(long IntegrationId, string ServiceKey, IReadOnlyList<string> Paths, string Message);
 public record LocalDirectoryBrowseResponse(string Path, string ParentPath, IReadOnlyList<string> Directories);
 public record IntegrationTestResponse(long IntegrationId, string ServiceKey, string InstanceName, bool Success, int StatusCode, string Message);
-public record TriggerIntegrationSyncRequest(bool ForceFullResync = false);
+public record TriggerIntegrationSyncRequest(bool ForceFullResync = false, string? MediaScope = null);
 public record TriggerIntegrationSyncResponse(long IntegrationId, bool Accepted, string Message);
 public record PlexBackfillPreviewRequest(int Take = 100, bool IncludeItemsAlreadyRequested = false);
 public record PlexBackfillEnrichRequest(int Take = 200);
@@ -4155,20 +6099,31 @@ public record PlexBackfillApplyResponse(int TotalPlexMovies, int MissingRadarrCo
 public record IntegrationSyncStateDto(long IntegrationId, DateTimeOffset? LastAttemptedAtUtc, DateTimeOffset? LastSuccessfulAtUtc, string LastCursor, string LastEtag, string LastError, int ConsecutiveFailureCount, DateTimeOffset UpdatedAtUtc);
 public record DashboardSourceTruthIntegrationDto(long IntegrationId, string ServiceKey, string DisplayName, string InstanceName, bool Enabled, string RoleSummary, int SourceLinkCount, DateTimeOffset? LastAttemptedAtUtc, DateTimeOffset? LastSuccessfulAtUtc, string LastError, int ConsecutiveFailureCount);
 public record DashboardSourceTruthResponse(IReadOnlyList<DashboardSourceTruthIntegrationDto> Integrations);
-public record LibraryItemDto(long Id, string CanonicalKey, string MediaType, string Title, string SortTitle, int? Year, int? TmdbId, int? TvdbId, string ImdbId, string PlexRatingKey, double? RuntimeMinutes, double? ActualRuntimeMinutes, IReadOnlyList<string> AudioLanguages, IReadOnlyList<string> SubtitleLanguages, bool IsAvailable, string QualityProfile, DateTimeOffset? SourceUpdatedAtUtc, DateTimeOffset UpdatedAtUtc, string PrimaryFilePath, IReadOnlyList<string> SourceServices);
-public record LibraryItemRuntimeProbeResponse(long Id, string MediaType, string Title, string PrimaryFilePath, bool FileExists, bool Success, double? ActualRuntimeMinutes, string Message, int? ProbeExitCode, string ProbeError);
+public record LibraryItemDto(long Id, string CanonicalKey, string MediaType, string DisplayTitle, string Title, string SortTitle, int? Year, int? TmdbId, int? TvdbId, string ImdbId, string PlexRatingKey, string Description, string DescriptionSourceService, double? RuntimeMinutes, double? ActualRuntimeMinutes, IReadOnlyList<string> AudioLanguages, IReadOnlyList<string> SubtitleLanguages, string PlayabilityScore, string PlayabilitySummary, DateTimeOffset? PlayabilityCheckedAtUtc, IReadOnlyList<string> PlayabilityReasons, string PlayabilityVideoCodec, IReadOnlyList<string> PlayabilityAudioCodecs, IReadOnlyList<string> PlayabilitySubtitleCodecs, bool IsAvailable, string QualityProfile, DateTimeOffset? SourceUpdatedAtUtc, DateTimeOffset UpdatedAtUtc, string PrimaryFilePath, bool LocalFileExists, IReadOnlyList<string> SourceServices);
+public record LibraryItemRuntimeProbeResponse(long Id, string MediaType, string Title, string PrimaryFilePath, bool FileExists, bool Success, double? ActualRuntimeMinutes, string Message, int? ProbeExitCode, string ProbeError, string PlayabilityScore, string PlayabilitySummary, DateTimeOffset? PlayabilityCheckedAtUtc);
+public record PlaybackDiagnosticDto(long Id, long LibraryItemId, string SourceService, string SourceDisplayName, string ExternalId, DateTimeOffset OccurredAtUtc, DateTimeOffset ImportedAtUtc, DateTimeOffset? StartedAtUtc, DateTimeOffset? StoppedAtUtc, string UserName, string ClientName, string Player, string Product, string Platform, string Decision, string TranscodeDecision, string VideoDecision, string AudioDecision, string SubtitleDecision, string Container, string VideoCodec, string AudioCodec, string SubtitleCodec, string QualityProfile, string HealthLabel, string Summary, string SuspectedCause, string ErrorMessage, string LogSnippet);
+public record PullPlaybackDiagnosticsRequest(int HoursBack = 48, int MaxItems = 10, bool IncludeServerLogs = true);
+public record PullPlaybackDiagnosticsResponse(long LibraryItemId, int ImportedCount, int UpdatedCount, int TotalCount, bool UsedTautulli, bool UsedPlex, string Message);
+public record TautulliHistoryItem(string ExternalId, string RatingKey, DateTimeOffset OccurredAtUtc, DateTimeOffset? StartedAtUtc, DateTimeOffset? StoppedAtUtc, string UserName, string ClientName, string Player, string Product, string Platform, string Decision, string ErrorMessage, string DisplayTitle);
+public record TautulliStreamDetails(string Decision, string TranscodeDecision, string VideoDecision, string AudioDecision, string SubtitleDecision, string Container, string VideoCodec, string AudioCodec, string SubtitleCodec, string QualityProfile, string ErrorMessage, string RawJson);
+public record PlexLiveSessionDetails(string ExternalId, DateTimeOffset OccurredAtUtc, string UserName, string ClientName, string Player, string Product, string Platform, string Decision, string TranscodeDecision, string VideoDecision, string AudioDecision, string SubtitleDecision, string Container, string VideoCodec, string AudioCodec, string SubtitleCodec, string QualityProfile, string RawPayload);
 public record BatchRuntimeReprobeRequest(string? MediaType, int Take = 200, bool ForceAll = false);
 public record BatchRuntimeReprobeResponse(int Inspected, int Attempted, int Updated, int MissingFiles, int Failed);
 public record CreateLibraryIssueRequest(string IssueType, string Severity, string Summary, string SuggestedAction, string DetailsJson, string Status = "Open");
 public record StartRuntimeReprobeJobResponse(Guid JobId);
 public record RuntimeReprobeJobStatusResponse(Guid JobId, string Status, string Message, int TotalCandidates, int Inspected, int Attempted, int Updated, int MissingFiles, int Failed, DateTimeOffset StartedAtUtc, DateTimeOffset? FinishedAtUtc);
 public record RuntimeReprobeJobProgress(int TotalCandidates, int Inspected, int Attempted, int Updated, int MissingFiles, int Failed);
-public record LibraryItemSourceLinkDto(long Id, long LibraryItemId, long IntegrationId, string ServiceKey, string InstanceName, string ExternalId, string ExternalType, DateTimeOffset? ExternalUpdatedAtUtc, DateTimeOffset LastSeenAtUtc, bool IsDeletedAtSource);
+public record SonarrCollectionFetchResult(bool Success, string ErrorMessage, List<JsonElement> Items);
+public record SonarrSeriesContext(string Title, string SortTitle, int? Year, int? TvdbId, int? TmdbId, string ImdbId, string QualityProfile);
+public record LibraryItemSourceTitleInfo(long LibraryItemId, string ServiceKey, string InstanceName, string SourceTitle, string SourceSortTitle);
+public record LibraryItemSourceLinkDto(long Id, long LibraryItemId, long IntegrationId, string ServiceKey, string InstanceName, string SourceTitle, string SourceSortTitle, string ExternalId, string ExternalType, DateTimeOffset? ExternalUpdatedAtUtc, DateTimeOffset LastSeenAtUtc, bool IsDeletedAtSource);
 public record LibraryItemSourceStatusDto(string ServiceKey, string DisplayName, long? IntegrationId, string InstanceName, bool HasSourceLink, bool CanSync, string Note, bool? RadarrMonitored, bool? DesiredMonitored, bool? MonitoringDrift, bool? OverseerrInMedia, bool SupportsMonitoringSync, bool? MonitoringSynced, bool AutoSyncEnabled);
 public record LibraryItemSourceSyncResponse(long LibraryItemId, string ServiceKey, bool Success, bool HadSourceLinkBefore, bool HasSourceLinkAfter, bool AttemptedCreateAction, string Message);
 public record SetDesiredMonitoringRequest(bool DesiredMonitored);
 public record UpdateMonitoringSettingsRequest(bool ManagedByMediaCloud, bool AutoSyncEnabled);
 public record MonitoringSettingsResponse(bool ManagedByMediaCloud, bool AutoSyncEnabled);
+public record UpdateTvDisplaySettingsRequest(bool HideSpecialsByDefault);
+public record TvDisplaySettingsResponse(bool HideSpecialsByDefault);
 public record LibraryItemMonitoringStateResponse(long LibraryItemId, bool? DesiredMonitored, bool? RadarrMonitored, bool? MonitoringDrift, bool OverseerrSignalPresent, bool RadarrExists, bool AutoSyncEnabled);
 public record LibraryItemMonitoringApplyResponse(long LibraryItemId, bool Success, bool? DesiredMonitored, bool? RadarrMonitoredBefore, bool? RadarrMonitoredAfter, bool? MonitoringDriftAfter, bool ActionAttempted, string Message);
 public record LibraryItemCountResponse(int Total);
@@ -4252,6 +6207,37 @@ public static class AppAuthSettings
     }
 }
 
+public static class TvDisplaySettings
+{
+    public static async Task<TvDisplaySettingsResponse> LoadAsync(MediaCloudDbContext db, string key, bool fallbackHideSpecials)
+    {
+        var raw = await db.AppConfigEntries.Where(x => x.Key == key).Select(x => x.Value).FirstOrDefaultAsync();
+        return new TvDisplaySettingsResponse(ParseBool(raw, fallbackHideSpecials));
+    }
+
+    public static async Task UpsertAsync(MediaCloudDbContext db, string key, bool hideSpecialsByDefault, DateTimeOffset now)
+    {
+        var setting = await db.AppConfigEntries.FirstOrDefaultAsync(x => x.Key == key);
+        if (setting is null)
+        {
+            setting = new AppConfigEntry { Key = key };
+            db.AppConfigEntries.Add(setting);
+        }
+
+        setting.Value = hideSpecialsByDefault ? "true" : "false";
+        setting.UpdatedAtUtc = now;
+    }
+
+    private static bool ParseBool(string? raw, bool fallback)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return fallback;
+        return raw.Equals("true", StringComparison.OrdinalIgnoreCase)
+               || raw.Equals("1", StringComparison.OrdinalIgnoreCase)
+               || raw.Equals("yes", StringComparison.OrdinalIgnoreCase)
+               || raw.Equals("on", StringComparison.OrdinalIgnoreCase);
+    }
+}
+
 public static class IntegrationCatalog
 {
     public static readonly (string Key, string Name)[] SupportedServices =
@@ -4261,7 +6247,8 @@ public static class IntegrationCatalog
         ("sonarr", "Sonarr"),
         ("lidarr", "Lidarr"),
         ("prowlarr", "Prowlarr"),
-        ("plex", "Plex")
+        ("plex", "Plex"),
+        ("tautulli", "Tautulli")
     ];
 
     private static readonly string[] SupportedAuthTypes = ["None", "ApiKey", "Basic"];
@@ -4271,7 +6258,9 @@ public static class IntegrationCatalog
 
     public static bool ServiceRequiresCredentials(string key) => IsSupported(key);
     public static IReadOnlyList<string> GetAllowedAuthTypesForService(string key)
-        => ServiceRequiresCredentials(key) ? ["ApiKey", "Basic"] : ["None", "ApiKey", "Basic"];
+        => key.Equals("tautulli", StringComparison.OrdinalIgnoreCase)
+            ? ["ApiKey"]
+            : ServiceRequiresCredentials(key) ? ["ApiKey", "Basic"] : ["None", "ApiKey", "Basic"];
 
     public static bool IsSupportedAuthType(string? value)
         => SupportedAuthTypes.Any(x => x.Equals(value ?? string.Empty, StringComparison.OrdinalIgnoreCase));
@@ -4299,6 +6288,7 @@ public static class IntegrationCatalog
             "lidarr" => $"{baseUrl}/api/v1/system/status",
             "prowlarr" => $"{baseUrl}/api/v1/system/status",
             "plex" => $"{baseUrl}/identity",
+            "tautulli" => $"{baseUrl}/api/v2?apikey={Uri.EscapeDataString(config.ApiKey ?? string.Empty)}&cmd=get_activity",
             _ => baseUrl
         };
 

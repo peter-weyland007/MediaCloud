@@ -13,12 +13,18 @@ public class LibraryItem
     public int? TvdbId { get; set; }
     public string ImdbId { get; set; } = string.Empty;
     public string PlexRatingKey { get; set; } = string.Empty;
+    public string Description { get; set; } = string.Empty;
+    public string DescriptionSourceService { get; set; } = string.Empty;
 
     public double? RuntimeMinutes { get; set; }
     public double? ActualRuntimeMinutes { get; set; }
     public string PrimaryFilePath { get; set; } = string.Empty;
     public string AudioLanguagesJson { get; set; } = "[]";
     public string SubtitleLanguagesJson { get; set; } = "[]";
+    public string PlayabilityScore { get; set; } = string.Empty;
+    public string PlayabilitySummary { get; set; } = string.Empty;
+    public string PlayabilityDetailsJson { get; set; } = string.Empty;
+    public DateTimeOffset? PlayabilityCheckedAtUtc { get; set; }
 
     public bool IsAvailable { get; set; }
     public string QualityProfile { get; set; } = string.Empty;

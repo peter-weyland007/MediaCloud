@@ -7,7 +7,7 @@
 <PageTitle>Issues</PageTitle>
 
 <h1>Issues</h1>
-<p class="subtitle">Runtime mismatches are flagged when actual runtime falls outside tolerance.</p>
+<p class="subtitle">Track runtime mismatches and runtime probe failures so bad files and metadata drift are visible in one place.</p>
 
 <div class="card" style="margin-bottom:1rem;">
     <div style="display:flex; gap:0.6rem; align-items:end; flex-wrap:wrap;">
@@ -17,6 +17,16 @@
                 <option value="Open">Open</option>
                 <option value="Resolved">Resolved</option>
                 <option value="">All</option>
+            </select>
+        </div>
+
+        <div class="form-group" style="min-width:180px;">
+            <label>Issue Type</label>
+            <select class="input" @bind="_issueTypeFilter">
+                @foreach (var option in IssueTypeOptions)
+                {
+                    <option value="@option">@option</option>
+                }
             </select>
         </div>
 
@@ -41,7 +51,7 @@
     }
     else if (VisibleIssues.Count == 0)
     {
-        <p class="card-note">No runtime mismatch issues for the selected filter.</p>
+        <p class="card-note">No issues found for the selected filter.</p>
     }
     else
     {
@@ -50,33 +60,44 @@
                 <tr>
                     <th style="text-align:left; padding:0.5rem;"><button style="all:unset; cursor:pointer;" @onclick='() => ToggleSort("detected")'>Detected @SortGlyph("detected")</button></th>
                     <th style="text-align:left; padding:0.5rem;"><button style="all:unset; cursor:pointer;" @onclick='() => ToggleSort("item")'>Item @SortGlyph("item")</button></th>
+                    <th style="text-align:left; padding:0.5rem;"><button style="all:unset; cursor:pointer;" @onclick='() => ToggleSort("type")'>Issue Type @SortGlyph("type")</button></th>
                     <th style="text-align:left; padding:0.5rem;"><button style="all:unset; cursor:pointer;" @onclick='() => ToggleSort("media")'>Media Type @SortGlyph("media")</button></th>
                     <th style="text-align:left; padding:0.5rem;"><button style="all:unset; cursor:pointer;" @onclick='() => ToggleSort("severity")'>Severity @SortGlyph("severity")</button></th>
                     <th style="text-align:left; padding:0.5rem;"><button style="all:unset; cursor:pointer;" @onclick='() => ToggleSort("status")'>Status @SortGlyph("status")</button></th>
-                    <th style="text-align:left; padding:0.5rem;"><button style="all:unset; cursor:pointer;" @onclick='() => ToggleSort("difference")'>Difference @SortGlyph("difference")</button></th>
+                    <th style="text-align:left; padding:0.5rem;"><button style="all:unset; cursor:pointer;" @onclick='() => ToggleSort("difference")'>Details @SortGlyph("difference")</button></th>
                     <th style="text-align:left; padding:0.5rem;">Summary</th>
                 </tr>
             </thead>
             <tbody>
                 @foreach (var row in VisibleIssues)
                 {
-                    var details = ParseRuntimeMismatchDetails(row.DetailsJson);
+                    var mismatchDetails = ParseRuntimeMismatchDetails(row.DetailsJson);
+                    var probeDetails = ParseRuntimeProbeFailureDetails(row.DetailsJson);
                     <tr>
                         <td style="padding:0.5rem; border-top:1px solid rgba(148,163,184,0.15);">@row.LastDetectedAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
                         <td style="padding:0.5rem; border-top:1px solid rgba(148,163,184,0.15);">
-                            <a href="/media/movies/@row.LibraryItemId" style="color:#93c5fd; text-decoration:none;">@GetItemDisplayName(row)</a>
+                            <a href="@GetItemHref(row)" style="color:#93c5fd; text-decoration:none;">@GetItemDisplayName(row)</a>
                         </td>
+                        <td style="padding:0.5rem; border-top:1px solid rgba(148,163,184,0.15);"><span style="@GetIssueTypeBadgeStyle(row.IssueType)">@GetIssueTypeLabel(row.IssueType)</span></td>
                         <td style="padding:0.5rem; border-top:1px solid rgba(148,163,184,0.15);">@(string.IsNullOrWhiteSpace(row.MediaType) ? "—" : row.MediaType)</td>
                         <td style="padding:0.5rem; border-top:1px solid rgba(148,163,184,0.15);"><span style="@GetSeverityBadgeStyle(row.Severity)">@row.Severity</span></td>
                         <td style="padding:0.5rem; border-top:1px solid rgba(148,163,184,0.15);">@row.Status</td>
                         <td style="padding:0.5rem; border-top:1px solid rgba(148,163,184,0.15);">
-                            @if (details is null)
+                            @if (string.Equals(row.IssueType, "runtime_probe_failed", StringComparison.OrdinalIgnoreCase))
+                            {
+                                <div>@(string.IsNullOrWhiteSpace(probeDetails?.FilePath) ? "Probe failed" : Path.GetFileName(probeDetails.FilePath))</div>
+                                @if (!string.IsNullOrWhiteSpace(probeDetails?.ProbeError))
+                                {
+                                    <div style="color:#cbd5e1; font-size:0.8rem; margin-top:0.2rem;">@TrimForCell(probeDetails.ProbeError)</div>
+                                }
+                            }
+                            else if (mismatchDetails is null)
                             {
                                 <span>—</span>
                             }
                             else
                             {
-                                <span>Δ @details.DiffMinutes.ToString("0.##")m (@details.DiffPercent.ToString("0.##")%)</span>
+                                <span>Δ @mismatchDetails.DiffMinutes.ToString("0.##")m (@mismatchDetails.DiffPercent.ToString("0.##")%)</span>
                             }
                         </td>
                         <td style="padding:0.5rem; border-top:1px solid rgba(148,163,184,0.15);">@row.Summary</td>
@@ -90,11 +111,13 @@
 @code {
     private bool _loading = true;
     private string _statusFilter = "Open";
+    private string _issueTypeFilter = "All";
     private string _mediaTypeFilter = "All";
     private string _sortBy = "detected";
     private string _sortDir = "desc";
     private readonly List<LibraryIssueDto> _issues = [];
 
+    private static readonly IReadOnlyList<string> IssueTypeOptions = ["All", "Runtime mismatch", "Runtime probe failed"];
     private IReadOnlyList<string> MediaTypeOptions => ["All", .. _issues.Select(x => x.MediaType).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(x => x, StringComparer.OrdinalIgnoreCase)];
 
     private List<LibraryIssueDto> VisibleIssues
@@ -102,6 +125,11 @@
         get
         {
             IEnumerable<LibraryIssueDto> query = _issues;
+
+            if (!string.Equals(_issueTypeFilter, "All", StringComparison.OrdinalIgnoreCase))
+            {
+                query = query.Where(x => string.Equals(GetIssueTypeLabel(x.IssueType), _issueTypeFilter, StringComparison.OrdinalIgnoreCase));
+            }
 
             if (!string.Equals(_mediaTypeFilter, "All", StringComparison.OrdinalIgnoreCase))
             {
@@ -123,8 +151,13 @@
         _loading = true;
         try
         {
-            var statusQuery = string.IsNullOrWhiteSpace(_statusFilter) ? string.Empty : $"&status={Uri.EscapeDataString(_statusFilter)}";
-            using var request = new HttpRequestMessage(HttpMethod.Get, $"/api/library/issues?issueType=runtime_mismatch{statusQuery}&take=300");
+            var query = new List<string> { "take=500" };
+            if (!string.IsNullOrWhiteSpace(_statusFilter))
+            {
+                query.Add($"status={Uri.EscapeDataString(_statusFilter)}");
+            }
+
+            using var request = new HttpRequestMessage(HttpMethod.Get, $"/api/library/issues?{string.Join("&", query)}");
             await AttachBearerAsync(request);
             using var response = await Http.SendAsync(request);
             if (!response.IsSuccessStatusCode)
@@ -155,6 +188,9 @@
             "item" => desc
                 ? source.OrderByDescending(x => GetItemDisplayName(x), StringComparer.OrdinalIgnoreCase)
                 : source.OrderBy(x => GetItemDisplayName(x), StringComparer.OrdinalIgnoreCase),
+            "type" => desc
+                ? source.OrderByDescending(x => GetIssueTypeLabel(x.IssueType), StringComparer.OrdinalIgnoreCase)
+                : source.OrderBy(x => GetIssueTypeLabel(x.IssueType), StringComparer.OrdinalIgnoreCase),
             "media" => desc
                 ? source.OrderByDescending(x => x.MediaType ?? string.Empty, StringComparer.OrdinalIgnoreCase)
                 : source.OrderBy(x => x.MediaType ?? string.Empty, StringComparer.OrdinalIgnoreCase),
@@ -175,6 +211,27 @@
 
     private static double GetDiffPercent(LibraryIssueDto issue)
         => ParseRuntimeMismatchDetails(issue.DetailsJson)?.DiffPercent ?? 0;
+
+    private static string GetIssueTypeLabel(string issueType)
+    {
+        var value = (issueType ?? string.Empty).Trim().ToLowerInvariant();
+        return value switch
+        {
+            "runtime_probe_failed" => "Runtime probe failed",
+            "runtime_mismatch" => "Runtime mismatch",
+            _ => string.IsNullOrWhiteSpace(issueType) ? "Unknown" : issueType
+        };
+    }
+
+    private static string GetItemHref(LibraryIssueDto issue)
+        => MediaItemRoutes.GetDetailsHref(issue.MediaType, issue.LibraryItemId);
+
+    private static string TrimForCell(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return string.Empty;
+        var singleLine = value.Replace("\r", " ").Replace("\n", " ").Trim();
+        return singleLine.Length <= 120 ? singleLine : $"{singleLine[..117]}...";
+    }
 
     private static int SeverityRank(string severity)
     {
@@ -210,7 +267,9 @@
     {
         var title = (issue.LibraryItemTitle ?? string.Empty).Trim();
         if (!string.IsNullOrWhiteSpace(title)) return title;
-        return issue.LibraryItemId > 0 ? $"Movie #{issue.LibraryItemId}" : "Unknown item";
+        return issue.LibraryItemId > 0
+            ? MediaItemRoutes.GetFallbackDisplayName(issue.MediaType, issue.LibraryItemId)
+            : "Unknown item";
     }
 
     private static string GetSeverityBadgeStyle(string severity)
@@ -222,6 +281,18 @@
             "critical" => baseStyle + "background:rgba(239,68,68,0.22); color:#fecaca; border:1px solid rgba(239,68,68,0.65);",
             "high" => baseStyle + "background:rgba(249,115,22,0.22); color:#fed7aa; border:1px solid rgba(249,115,22,0.65);",
             "warning" => baseStyle + "background:rgba(234,179,8,0.22); color:#fde68a; border:1px solid rgba(234,179,8,0.65);",
+            _ => baseStyle + "background:rgba(148,163,184,0.18); color:#cbd5e1; border:1px solid rgba(148,163,184,0.35);"
+        };
+    }
+
+    private static string GetIssueTypeBadgeStyle(string issueType)
+    {
+        const string baseStyle = "display:inline-block; padding:0.2rem 0.52rem; border-radius:999px; font-size:0.78rem; font-weight:700; letter-spacing:0.01em;";
+        var value = (issueType ?? string.Empty).Trim().ToLowerInvariant();
+        return value switch
+        {
+            "runtime_probe_failed" => baseStyle + "background:rgba(168,85,247,0.22); color:#e9d5ff; border:1px solid rgba(168,85,247,0.65);",
+            "runtime_mismatch" => baseStyle + "background:rgba(59,130,246,0.22); color:#bfdbfe; border:1px solid rgba(59,130,246,0.65);",
             _ => baseStyle + "background:rgba(148,163,184,0.18); color:#cbd5e1; border:1px solid rgba(148,163,184,0.35);"
         };
     }
@@ -238,6 +309,27 @@
             var diffPercent = root.TryGetProperty("diffPercent", out var diffPercentElement) ? diffPercentElement.GetDouble() : 0;
             var thresholdMinutes = root.TryGetProperty("thresholdMinutes", out var thresholdElement) ? thresholdElement.GetDouble() : 0;
             return new RuntimeMismatchDetails(diffMinutes, diffPercent, thresholdMinutes);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static RuntimeProbeFailureDetails? ParseRuntimeProbeFailureDetails(string? detailsJson)
+    {
+        if (string.IsNullOrWhiteSpace(detailsJson)) return null;
+
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(detailsJson);
+            var root = doc.RootElement;
+            var filePath = root.TryGetProperty("filePath", out var filePathElement) ? filePathElement.GetString() ?? string.Empty : string.Empty;
+            var probeError = root.TryGetProperty("probeError", out var probeErrorElement) ? probeErrorElement.GetString() ?? string.Empty : string.Empty;
+            var exitCode = root.TryGetProperty("exitCode", out var exitCodeElement) && exitCodeElement.ValueKind != System.Text.Json.JsonValueKind.Null
+                ? exitCodeElement.GetInt32()
+                : (int?)null;
+            return new RuntimeProbeFailureDetails(filePath, probeError, exitCode);
         }
         catch
         {
@@ -273,4 +365,9 @@
         double DiffMinutes,
         double DiffPercent,
         double ThresholdMinutes);
+
+    private record RuntimeProbeFailureDetails(
+        string FilePath,
+        string ProbeError,
+        int? ExitCode);
 }

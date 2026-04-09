@@ -18,18 +18,40 @@ else if (_item is null)
 else
 {
     <a href="/media/movies" style="color:#93c5fd; text-decoration:none;">← Back to Movies</a>
-    <h1 style="margin-top:0.5rem;">@_item.Title</h1>
+    <h1 style="margin-top:0.5rem;">@_item.DisplayTitle</h1>
     <p class="subtitle">@_item.Year · @_item.MediaType</p>
 
-    <div class="card" style="display:grid; grid-template-columns: repeat(3, minmax(180px, 1fr)); gap:1rem; margin-bottom:1rem;">
+    @if (!string.IsNullOrWhiteSpace(_item.Description))
+    {
+        <div class="card" style="margin-bottom:1rem;">
+            <p class="card-label">MOVIE DESCRIPTION</p>
+            <p style="margin:0.35rem 0 0; line-height:1.55; color:#e2e8f0; white-space:pre-wrap;">@GetMovieDescriptionText()</p>
+            <div style="display:flex; align-items:center; gap:0.75rem; flex-wrap:wrap; margin-top:0.6rem;">
+                @if (ShouldShowDescriptionToggle())
+                {
+                    <button class="button-secondary" @onclick="ToggleMovieDescriptionExpanded">@(_isMovieDescriptionExpanded ? "Show less" : "Show more")</button>
+                }
+                <span class="card-note">Source: @GetDescriptionSourceLabel(_item.DescriptionSourceService)</span>
+            </div>
+        </div>
+    }
+
+    <div class="card" style="display:grid; grid-template-columns: repeat(4, minmax(180px, 1fr)); gap:1rem; margin-bottom:1rem;">
         <div>
             <p class="card-label">REPORTED RUNTIME</p>
             <p>@FormatRuntime(_item.RuntimeMinutes)</p>
         </div>
         <div>
             <p class="card-label">ACTUAL RUNTIME (FFPROBE)</p>
-            <p>@FormatRuntime(_item.ActualRuntimeMinutes)</p>
-            <button class="button-secondary" style="margin-top:0.4rem;" @onclick="ProbeRuntimeNowAsync" disabled="@_probingRuntime">@(_probingRuntime ? "Probing..." : "Probe actual runtime now")</button>
+            <p>@FormatActualRuntime(_item.ActualRuntimeMinutes)</p>
+            <p class="card-note" style="margin-top:0.35rem;">From ffprobe.</p>
+            @if (ShowActualRuntimeUnavailableNote())
+            {
+                <p class="card-note" style="margin-top:0.5rem;">Actual runtime unavailable on this host. MediaCloud cannot see the mapped file path.</p>
+            }
+            <div style="margin-top:0.75rem; display:flex; justify-content:flex-start; align-items:flex-end; min-height:2.2rem;">
+                <button class="source-action-button" @onclick="ProbeRuntimeNowAsync" disabled="@_probingRuntime">@(_probingRuntime ? "Analyzing..." : "Analyze file")</button>
+            </div>
         </div>
         <div>
             <p class="card-label">RUNTIME MATCH</p>
@@ -37,6 +59,13 @@ else
                 <span style="@GetRuntimeMatchBadgeStyle()">@GetRuntimeMatchLabel()</span>
             </div>
             <p class="card-note" style="margin-top:0.45rem;">@GetRuntimeMatchDetail()</p>
+        </div>
+        <div>
+            <p class="card-label">PLAYABILITY</p>
+            <div style="margin-top:0.15rem;">
+                <span style="@GetPlayabilityBadgeStyle()">@GetPlayabilityLabel()</span>
+            </div>
+            <p class="card-note" style="margin-top:0.45rem;">@GetPlayabilitySummary()</p>
         </div>
     </div>
 
@@ -46,6 +75,11 @@ else
         <p>IMDB: @_item.ImdbId</p>
         <p>Available: @(_item.IsAvailable ? "Yes" : "No")</p>
         <p>File Path: @(string.IsNullOrWhiteSpace(_item.PrimaryFilePath) ? "Not available" : _item.PrimaryFilePath)</p>
+        <p>Local File Available: @(_item.LocalFileExists ? "Yes" : "No")</p>
+        @if (!_item.LocalFileExists && !string.IsNullOrWhiteSpace(_item.PrimaryFilePath))
+        {
+            <p class="card-note" style="margin-top:0.35rem;">This path is mapped in MediaCloud, but the file does not exist on this machine. Check mounts or update the path mapping.</p>
+        }
     </div>
 
     <div class="card" style="margin-bottom:1rem;">
@@ -121,6 +155,62 @@ else
     </div>
 
     <div class="card" style="margin-bottom:1rem;">
+        <p class="card-label">PLAYBACK DIAGNOSTICS</p>
+        <p class="card-note" style="margin-top:0.2rem;">Pull recent Plex/Tautulli playback evidence for this title and compare what actually happened against the file score.</p>
+        <div style="display:flex; gap:0.75rem; align-items:end; flex-wrap:wrap; margin-top:0.6rem;">
+            <div>
+                <label for="diagnostics-hours-back">Hours back</label>
+                <InputNumber id="diagnostics-hours-back" class="input" @bind-Value="_diagnosticsHoursBack" />
+            </div>
+            <button class="button-secondary" @onclick="PullPlaybackDiagnosticsAsync" disabled="@_pullingPlaybackDiagnostics">@(_pullingPlaybackDiagnostics ? "Pulling..." : "Pull playback diagnostics")</button>
+            <span class="card-note">@_playbackDiagnosticsStatus</span>
+        </div>
+
+        @if (_playbackDiagnostics.Count == 0)
+        {
+            <p class="card-note" style="margin-top:0.75rem;">No playback diagnostics captured yet for this title.</p>
+        }
+        else
+        {
+            <table style="width:100%; border-collapse:collapse; font-size:0.85rem; margin-top:0.75rem;">
+                <thead>
+                    <tr style="border-bottom:1px solid rgba(148,163,184,0.2); text-align:left;">
+                        <th style="padding:0.35rem 0.4rem;">When</th>
+                        <th style="padding:0.35rem 0.4rem;">Source</th>
+                        <th style="padding:0.35rem 0.4rem;">Client</th>
+                        <th style="padding:0.35rem 0.4rem;">Health</th>
+                        <th style="padding:0.35rem 0.4rem;">Decision</th>
+                        <th style="padding:0.35rem 0.4rem;">Suspected cause</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var entry in _playbackDiagnostics)
+                    {
+                        <tr style="border-bottom:1px solid rgba(148,163,184,0.12); vertical-align:top;">
+                            <td style="padding:0.35rem 0.4rem; white-space:nowrap;">@entry.OccurredAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
+                            <td style="padding:0.35rem 0.4rem;">@entry.SourceDisplayName</td>
+                            <td style="padding:0.35rem 0.4rem;">@PlaybackDiagnosticsPresentation.BuildClientLabel(entry)</td>
+                            <td style="padding:0.35rem 0.4rem;"><span style="@PlaybackDiagnosticsPresentation.GetHealthBadgeStyle(entry.HealthLabel)">@entry.HealthLabel</span></td>
+                            <td style="padding:0.35rem 0.4rem;">@PlaybackDiagnosticsPresentation.BuildDecisionLabel(entry)</td>
+                            <td style="padding:0.35rem 0.4rem;">
+                                <div>@(string.IsNullOrWhiteSpace(entry.SuspectedCause) ? entry.Summary : entry.SuspectedCause)</div>
+                                @if (!string.IsNullOrWhiteSpace(entry.ErrorMessage))
+                                {
+                                    <div class="card-note" style="margin-top:0.25rem;">Error: @entry.ErrorMessage</div>
+                                }
+                                @if (!string.IsNullOrWhiteSpace(entry.LogSnippet))
+                                {
+                                    <pre style="margin-top:0.45rem; white-space:pre-wrap; background:rgba(15,23,42,0.55); padding:0.55rem; border-radius:8px; color:#cbd5e1;">@entry.LogSnippet</pre>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </div>
+
+    <div class="card" style="margin-bottom:1rem;">
         <p class="card-label">MONITORED</p>
         <div style="display:flex; align-items:center; gap:0.65rem; flex-wrap:wrap; margin-top:0.25rem;">
             <label style="display:flex; align-items:center; gap:0.45rem; font-weight:600;">
@@ -181,7 +271,7 @@ else
                             <td style="padding:0.3rem 0.4rem; min-width:360px; white-space:nowrap;">
                                 <div style="display:grid; gap:0.35rem;">
                                     <div style="display:flex; gap:0.35rem; align-items:center; flex-wrap:nowrap;">
-                                        <button class="button-secondary" style="border:1px solid rgba(148,163,184,0.35); background:rgba(30,41,59,0.55); padding:0.28rem 0.62rem; border-radius:6px; white-space:nowrap;" @onclick="(() => SyncSourceNowAsync(status.ServiceKey))" disabled="@(!status.CanSync || syncing || status.HasSourceLink)">
+                                        <button class="source-action-button" @onclick="(() => SyncSourceNowAsync(status.ServiceKey))" disabled="@(!status.CanSync || syncing || status.HasSourceLink)" title="@(status.HasSourceLink ? "Source already linked" : (!status.CanSync ? status.Note : (syncing ? "Sync in progress" : "Sync source link now")))">
                                             @(syncing ? "Syncing..." : "Sync link")
                                         </button>
                                         @if (status.HasSourceLink)
@@ -193,12 +283,12 @@ else
                                     @if (status.SupportsMonitoringSync)
                                     {
                                         <div style="display:flex; gap:0.35rem; flex-wrap:nowrap; margin-top:0.15rem;">
-                                            <button class="button-secondary" style="border:1px solid rgba(59,130,246,0.45); background:rgba(30,64,175,0.18); padding:0.28rem 0.62rem; border-radius:6px; white-space:nowrap;" @onclick="(() => SyncMonitoringToIntegrationAsync(status.ServiceKey))" disabled="@(_syncingMonitoringStatus || status.MonitoringSynced == true)">
+                                            <button class="source-action-button source-action-button-monitor" @onclick="(() => SyncMonitoringToIntegrationAsync(status.ServiceKey))" disabled="@(_syncingMonitoringStatus || status.MonitoringSynced == true)" title="@(status.MonitoringSynced == true ? "Monitor state already in sync" : (_syncingMonitoringStatus ? "Monitoring sync in progress" : $"Sync monitor state to {status.DisplayName}"))">
                                                 @(_syncingMonitoringStatus ? "Syncing..." : $"Sync monitor → {status.DisplayName}")
                                             </button>
                                             @if (status.MonitoringSynced == true)
                                             {
-                                                <span class="card-note" style="margin:0; white-space:nowrap;">Already synced</span>
+                                                <span class="card-note" style="margin:0; white-space:nowrap;">Monitor state already in sync</span>
                                             }
                                         </div>
                                     }
@@ -221,8 +311,12 @@ else
     private bool _savingManualIssue;
     private bool _resolvingManualIssue;
     private bool _syncingMonitoringStatus;
+    private bool _isMovieDescriptionExpanded;
+    private bool _pullingPlaybackDiagnostics;
+    private int _diagnosticsHoursBack = 72;
     private string _selectedManualIssueType = "audio_language_mismatch";
     private string _manualIssueNotes = string.Empty;
+    private string _playbackDiagnosticsStatus = "";
     private LibraryItemDto? _item;
     private LibraryIssueDto? _runtimeMismatchIssue;
     private LibraryIssueDto? _selectedManualIssue;
@@ -230,6 +324,7 @@ else
     private readonly List<LibraryItemSourceStatusDto> _sourceStatuses = [];
     private readonly HashSet<string> _syncingSources = [];
     private readonly List<LibraryIssueDto> _manualIssueHistory = [];
+    private readonly List<PlaybackDiagnosticDto> _playbackDiagnostics = [];
     private static readonly ManualIssueOption[] ManualIssueOptions =
     [
         new("audio_language_mismatch", "Incorrect/missing audio language", "Warning", "Preferred audio language not available on file.", "Replace or remux file with preferred audio track."),
@@ -245,6 +340,7 @@ else
     protected override async Task OnParametersSetAsync()
     {
         _loading = true;
+        _isMovieDescriptionExpanded = false;
         try
         {
             using var itemRequest = new HttpRequestMessage(HttpMethod.Get, $"/api/library/items/{Id}");
@@ -262,6 +358,7 @@ else
             await LoadRuntimeMismatchAsync();
             await LoadSelectedManualIssueAsync();
             await LoadManualIssueHistoryAsync();
+            await LoadPlaybackDiagnosticsAsync();
         }
         catch
         {
@@ -298,7 +395,7 @@ else
                 return;
             }
 
-            _item = _item with { ActualRuntimeMinutes = payload.ActualRuntimeMinutes, PrimaryFilePath = payload.PrimaryFilePath };
+            _item = _item with { ActualRuntimeMinutes = payload.ActualRuntimeMinutes, PrimaryFilePath = payload.PrimaryFilePath, LocalFileExists = payload.FileExists, PlayabilityScore = payload.PlayabilityScore, PlayabilitySummary = payload.PlayabilitySummary, PlayabilityCheckedAtUtc = payload.PlayabilityCheckedAtUtc };
             var toast = payload.Message;
             if (!payload.Success && !string.IsNullOrWhiteSpace(payload.ProbeError))
             {
@@ -340,6 +437,67 @@ else
 
         var payload = await response.Content.ReadFromJsonAsync<List<LibraryItemSourceStatusDto>>() ?? [];
         _sourceStatuses.AddRange(payload);
+    }
+
+    private async Task LoadPlaybackDiagnosticsAsync()
+    {
+        _playbackDiagnostics.Clear();
+
+        if (_item is null)
+        {
+            return;
+        }
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"/api/library/items/{_item.Id}/playback-diagnostics?take=15");
+        await AttachBearerAsync(request);
+        using var response = await Http.SendAsync(request);
+        if (!response.IsSuccessStatusCode)
+        {
+            _playbackDiagnosticsStatus = response.StatusCode == System.Net.HttpStatusCode.NotFound
+                ? "Playback diagnostics feature is not available yet on the API."
+                : string.Empty;
+            return;
+        }
+
+        var payload = await response.Content.ReadFromJsonAsync<List<PlaybackDiagnosticDto>>() ?? [];
+        _playbackDiagnostics.AddRange(payload.OrderByDescending(x => x.OccurredAtUtc));
+        _playbackDiagnosticsStatus = _playbackDiagnostics.Count == 0
+            ? "No diagnostics pulled yet."
+            : $"Loaded {_playbackDiagnostics.Count} diagnostic entr{(_playbackDiagnostics.Count == 1 ? "y" : "ies")}.";
+    }
+
+    private async Task PullPlaybackDiagnosticsAsync()
+    {
+        if (_item is null) return;
+
+        _pullingPlaybackDiagnostics = true;
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, $"/api/library/items/{_item.Id}/playback-diagnostics/pull")
+            {
+                Content = JsonContent.Create(new PullPlaybackDiagnosticsRequest(_diagnosticsHoursBack, 10, true))
+            };
+            await AttachBearerAsync(request);
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add($"Playback diagnostics pull failed ({(int)response.StatusCode}).", Severity.Error);
+                return;
+            }
+
+            var payload = await response.Content.ReadFromJsonAsync<PullPlaybackDiagnosticsResponse>();
+            _playbackDiagnosticsStatus = payload?.Message ?? "Playback diagnostics pull complete.";
+            await LoadPlaybackDiagnosticsAsync();
+            Snackbar.Add(_playbackDiagnosticsStatus, Severity.Success);
+        }
+        catch
+        {
+            Snackbar.Add("Playback diagnostics pull failed.", Severity.Error);
+        }
+        finally
+        {
+            _pullingPlaybackDiagnostics = false;
+        }
     }
 
     private async Task SyncSourceNowAsync(string serviceKey)
@@ -718,8 +876,18 @@ else
 
     private string GetRuntimeMatchDetail()
     {
-        if (_item is null || !_item.RuntimeMinutes.HasValue || !_item.ActualRuntimeMinutes.HasValue)
+        if (_item is null)
         {
+            return "Probe actual runtime to compare against reported runtime.";
+        }
+
+        if (!_item.RuntimeMinutes.HasValue || !_item.ActualRuntimeMinutes.HasValue)
+        {
+            if (!_item.LocalFileExists && !string.IsNullOrWhiteSpace(_item.PrimaryFilePath))
+            {
+                return "Actual runtime unavailable on this host because the mapped file path is not accessible locally.";
+            }
+
             return "Probe actual runtime to compare against reported runtime.";
         }
 
@@ -769,10 +937,89 @@ else
     private static string FormatRuntime(double? runtimeMinutes)
         => runtimeMinutes.HasValue && runtimeMinutes.Value > 0 ? $"{runtimeMinutes.Value:0.##} min" : "—";
 
+    private const int MovieDescriptionPreviewLength = 360;
+
+    private bool ShouldShowDescriptionToggle()
+        => !string.IsNullOrWhiteSpace(_item?.Description) && _item.Description.Length > MovieDescriptionPreviewLength;
+
+    private string GetMovieDescriptionText()
+    {
+        var description = (_item?.Description ?? string.Empty).Trim();
+        if (_isMovieDescriptionExpanded || description.Length <= MovieDescriptionPreviewLength)
+        {
+            return description;
+        }
+
+        return description[..MovieDescriptionPreviewLength].TrimEnd() + "…";
+    }
+
+    private void ToggleMovieDescriptionExpanded()
+        => _isMovieDescriptionExpanded = !_isMovieDescriptionExpanded;
+
+    private static string GetDescriptionSourceLabel(string? serviceKey)
+    {
+        var key = (serviceKey ?? string.Empty).Trim();
+        if (key.Equals("radarr", StringComparison.OrdinalIgnoreCase)) return "Radarr";
+        if (key.Equals("plex", StringComparison.OrdinalIgnoreCase)) return "Plex";
+        if (key.Equals("overseerr", StringComparison.OrdinalIgnoreCase)) return "Overseerr";
+        if (key.Equals("sonarr", StringComparison.OrdinalIgnoreCase)) return "Sonarr";
+        return string.IsNullOrWhiteSpace(key) ? "Unknown" : char.ToUpperInvariant(key[0]) + key[1..];
+    }
+
+    private string FormatActualRuntime(double? runtimeMinutes)
+    {
+        if (runtimeMinutes.HasValue && runtimeMinutes.Value > 0)
+        {
+            return $"{runtimeMinutes.Value:0.##} min";
+        }
+
+        return ShowActualRuntimeUnavailableNote()
+            ? "Unavailable on this host"
+            : "—";
+    }
+
+    private bool ShowActualRuntimeUnavailableNote()
+        => _item is not null
+           && !_item.LocalFileExists
+           && !string.IsNullOrWhiteSpace(_item.PrimaryFilePath)
+           && !_item.ActualRuntimeMinutes.HasValue;
+
+    private string GetPlayabilityLabel()
+        => string.IsNullOrWhiteSpace(_item?.PlayabilityScore) ? "Unknown" : _item!.PlayabilityScore;
+
+    private string GetPlayabilitySummary()
+    {
+        if (_item is null || string.IsNullOrWhiteSpace(_item.PlayabilitySummary))
+        {
+            return "Run ffprobe against a locally visible file to score practical Plex compatibility.";
+        }
+
+        if (_item.PlayabilityCheckedAtUtc.HasValue)
+        {
+            return $"{_item.PlayabilitySummary} Checked {_item.PlayabilityCheckedAtUtc.Value.ToLocalTime():yyyy-MM-dd HH:mm}.";
+        }
+
+        return _item.PlayabilitySummary;
+    }
+
+    private string GetPlayabilityBadgeStyle()
+    {
+        const string baseStyle = "display:inline-block; padding:0.2rem 0.52rem; border-radius:999px; font-size:0.78rem; font-weight:700; letter-spacing:0.01em;";
+        return (_item?.PlayabilityScore ?? string.Empty).Trim().ToLowerInvariant() switch
+        {
+            "excellent" => baseStyle + "background:rgba(16,185,129,0.18); color:#6ee7b7; border:1px solid rgba(16,185,129,0.45);",
+            "good" => baseStyle + "background:rgba(59,130,246,0.18); color:#bfdbfe; border:1px solid rgba(59,130,246,0.45);",
+            "transcode likely" => baseStyle + "background:rgba(234,179,8,0.22); color:#fde68a; border:1px solid rgba(234,179,8,0.65);",
+            "problematic" => baseStyle + "background:rgba(239,68,68,0.22); color:#fecaca; border:1px solid rgba(239,68,68,0.65);",
+            _ => baseStyle + "background:rgba(148,163,184,0.18); color:#cbd5e1; border:1px solid rgba(148,163,184,0.35);"
+        };
+    }
+
     private record LibraryItemDto(
         long Id,
         string CanonicalKey,
         string MediaType,
+        string DisplayTitle,
         string Title,
         string SortTitle,
         int? Year,
@@ -780,15 +1027,25 @@ else
         int? TvdbId,
         string ImdbId,
         string PlexRatingKey,
+        string Description,
+        string DescriptionSourceService,
         double? RuntimeMinutes,
         double? ActualRuntimeMinutes,
         IReadOnlyList<string> AudioLanguages,
         IReadOnlyList<string> SubtitleLanguages,
+        string PlayabilityScore,
+        string PlayabilitySummary,
+        DateTimeOffset? PlayabilityCheckedAtUtc,
+        IReadOnlyList<string> PlayabilityReasons,
+        string PlayabilityVideoCodec,
+        IReadOnlyList<string> PlayabilityAudioCodecs,
+        IReadOnlyList<string> PlayabilitySubtitleCodecs,
         bool IsAvailable,
         string QualityProfile,
         DateTimeOffset? SourceUpdatedAtUtc,
         DateTimeOffset UpdatedAtUtc,
-        string PrimaryFilePath);
+        string PrimaryFilePath,
+        bool LocalFileExists);
 
     private record LibraryItemSourceStatusDto(
         string ServiceKey,
@@ -837,7 +1094,10 @@ else
         double? ActualRuntimeMinutes,
         string Message,
         int? ProbeExitCode,
-        string ProbeError);
+        string ProbeError,
+        string PlayabilityScore,
+        string PlayabilitySummary,
+        DateTimeOffset? PlayabilityCheckedAtUtc);
 
     private record CreateLibraryIssueRequest(
         string IssueType,
