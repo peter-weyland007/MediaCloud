@@ -14,6 +14,7 @@ public class MediaCloudDbContext(DbContextOptions<MediaCloudDbContext> options) 
     public DbSet<LibraryItem> LibraryItems => Set<LibraryItem>();
     public DbSet<LibraryItemSourceLink> LibraryItemSourceLinks => Set<LibraryItemSourceLink>();
     public DbSet<LibraryIssue> LibraryIssues => Set<LibraryIssue>();
+    public DbSet<LibraryRemediationJob> LibraryRemediationJobs => Set<LibraryRemediationJob>();
     public DbSet<PlaybackDiagnosticEntry> PlaybackDiagnosticEntries => Set<PlaybackDiagnosticEntry>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -120,6 +121,32 @@ public class MediaCloudDbContext(DbContextOptions<MediaCloudDbContext> options) 
             entity.Property(x => x.SuggestedAction).HasMaxLength(256).IsRequired();
             entity.HasIndex(x => new { x.LibraryItemId, x.Status });
             entity.HasIndex(x => new { x.IssueType, x.Status });
+        });
+
+        modelBuilder.Entity<LibraryRemediationJob>(entity =>
+        {
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.ServiceKey).HasMaxLength(64).IsRequired();
+            entity.Property(x => x.ServiceDisplayName).HasMaxLength(64).IsRequired();
+            entity.Property(x => x.RequestedAction).HasMaxLength(64).IsRequired();
+            entity.Property(x => x.CommandName).HasMaxLength(64).IsRequired();
+            entity.Property(x => x.IssueType).HasMaxLength(64).IsRequired();
+            entity.Property(x => x.Reason).HasMaxLength(64).IsRequired();
+            entity.Property(x => x.Notes).HasMaxLength(2048).IsRequired();
+            entity.Property(x => x.ReasonCategory).HasMaxLength(64).IsRequired();
+            entity.Property(x => x.Confidence).HasMaxLength(16).IsRequired();
+            entity.Property(x => x.PolicySummary).HasMaxLength(512).IsRequired();
+            entity.Property(x => x.NotesHandling).HasMaxLength(512).IsRequired();
+            entity.Property(x => x.Status).HasMaxLength(32).IsRequired();
+            entity.Property(x => x.SearchStatus).HasMaxLength(32).IsRequired();
+            entity.Property(x => x.BlacklistStatus).HasMaxLength(32).IsRequired();
+            entity.Property(x => x.OutcomeSummary).HasMaxLength(2048).IsRequired();
+            entity.Property(x => x.ResultMessage).HasMaxLength(2048).IsRequired();
+            entity.Property(x => x.ReleaseSummary).HasMaxLength(512).IsRequired();
+            entity.Property(x => x.ReleaseContextJson).HasMaxLength(8192).IsRequired();
+            entity.Property(x => x.RequestedBy).HasMaxLength(64).IsRequired();
+            entity.HasIndex(x => new { x.LibraryItemId, x.RequestedAtUtc });
+            entity.HasIndex(x => new { x.LibraryItemId, x.Status });
         });
 
         modelBuilder.Entity<PlaybackDiagnosticEntry>(entity =>

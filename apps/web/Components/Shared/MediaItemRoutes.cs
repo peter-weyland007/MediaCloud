@@ -9,6 +9,7 @@ public static class MediaItemRoutes
         {
             "movie" => $"/media/movies/{itemId}",
             "series" or "episode" => $"/media/tv-shows/{itemId}",
+            "album" or "track" => $"/media/music/{itemId}",
             _ => $"/media/{itemId}"
         };
     }
@@ -21,6 +22,8 @@ public static class MediaItemRoutes
             "movie" => "Movie",
             "series" => "Series",
             "episode" => "Episode",
+            "album" => "Album",
+            "track" => "Track",
             _ => "Item"
         };
 

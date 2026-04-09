@@ -7,6 +7,7 @@ using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
 using System.Xml.Linq;
+using api;
 using api.Auth;
 using api.Data;
 using api.Models;
@@ -205,6 +206,46 @@ CREATE TABLE IF NOT EXISTS LibraryIssues (
 );
 CREATE INDEX IF NOT EXISTS IX_LibraryIssues_LibraryItemId_Status ON LibraryIssues(LibraryItemId, Status);
 CREATE INDEX IF NOT EXISTS IX_LibraryIssues_IssueType_Status ON LibraryIssues(IssueType, Status);
+CREATE TABLE IF NOT EXISTS LibraryRemediationJobs (
+    Id INTEGER NOT NULL CONSTRAINT PK_LibraryRemediationJobs PRIMARY KEY AUTOINCREMENT,
+    LibraryItemId INTEGER NOT NULL,
+    LibraryIssueId INTEGER NULL,
+    ServiceKey TEXT NOT NULL DEFAULT '',
+    ServiceDisplayName TEXT NOT NULL DEFAULT '',
+    RequestedAction TEXT NOT NULL DEFAULT '',
+    CommandName TEXT NOT NULL DEFAULT '',
+    ExternalItemId INTEGER NULL,
+    IssueType TEXT NOT NULL DEFAULT '',
+    Reason TEXT NOT NULL DEFAULT '',
+    Notes TEXT NOT NULL DEFAULT '',
+    ReasonCategory TEXT NOT NULL DEFAULT '',
+    Confidence TEXT NOT NULL DEFAULT '',
+    ShouldSearchNow INTEGER NOT NULL DEFAULT 0,
+    ShouldBlacklistCurrentRelease INTEGER NOT NULL DEFAULT 0,
+    NeedsManualReview INTEGER NOT NULL DEFAULT 0,
+    NotesRecordedOnly INTEGER NOT NULL DEFAULT 1,
+    LookedUpRemotely INTEGER NOT NULL DEFAULT 0,
+    PolicySummary TEXT NOT NULL DEFAULT '',
+    NotesHandling TEXT NOT NULL DEFAULT '',
+    ProfileDecision TEXT NOT NULL DEFAULT '',
+    ProfileSummary TEXT NOT NULL DEFAULT '',
+    Status TEXT NOT NULL DEFAULT '',
+    SearchStatus TEXT NOT NULL DEFAULT '',
+    BlacklistStatus TEXT NOT NULL DEFAULT '',
+    OutcomeSummary TEXT NOT NULL DEFAULT '',
+    ResultMessage TEXT NOT NULL DEFAULT '',
+    ReleaseSummary TEXT NOT NULL DEFAULT '',
+    ReleaseContextJson TEXT NOT NULL DEFAULT '',
+    RequestedBy TEXT NOT NULL DEFAULT '',
+    RequestedAtUtc TEXT NOT NULL,
+    FinishedAtUtc TEXT NULL,
+    CreatedAtUtc TEXT NOT NULL,
+    UpdatedAtUtc TEXT NOT NULL,
+    FOREIGN KEY (LibraryItemId) REFERENCES LibraryItems(Id) ON DELETE CASCADE,
+    FOREIGN KEY (LibraryIssueId) REFERENCES LibraryIssues(Id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS IX_LibraryRemediationJobs_Item_RequestedAtUtc ON LibraryRemediationJobs(LibraryItemId, RequestedAtUtc);
+CREATE INDEX IF NOT EXISTS IX_LibraryRemediationJobs_Item_Status ON LibraryRemediationJobs(LibraryItemId, Status);
 CREATE TABLE IF NOT EXISTS PlaybackDiagnosticEntries (
     Id INTEGER NOT NULL CONSTRAINT PK_PlaybackDiagnosticEntries PRIMARY KEY AUTOINCREMENT,
     LibraryItemId INTEGER NOT NULL,
@@ -259,6 +300,14 @@ CREATE UNIQUE INDEX IF NOT EXISTS IX_PlaybackDiagnosticEntries_Item_Source_Exter
     EnsureSqliteColumn(db, "LibraryItems", "PlayabilityCheckedAtUtc", "TEXT NULL");
     EnsureSqliteColumn(db, "LibraryItemSourceLinks", "SourceTitle", "TEXT NOT NULL DEFAULT ''");
     EnsureSqliteColumn(db, "LibraryItemSourceLinks", "SourceSortTitle", "TEXT NOT NULL DEFAULT ''");
+    EnsureSqliteColumn(db, "LibraryRemediationJobs", "ReleaseSummary", "TEXT NOT NULL DEFAULT ''");
+    EnsureSqliteColumn(db, "LibraryRemediationJobs", "ReleaseContextJson", "TEXT NOT NULL DEFAULT ''");
+    EnsureSqliteColumn(db, "LibraryRemediationJobs", "ProfileDecision", "TEXT NOT NULL DEFAULT ''");
+    EnsureSqliteColumn(db, "LibraryRemediationJobs", "ProfileSummary", "TEXT NOT NULL DEFAULT ''");
+    EnsureSqliteColumn(db, "LibraryRemediationJobs", "SearchStatus", "TEXT NOT NULL DEFAULT ''");
+    EnsureSqliteColumn(db, "LibraryRemediationJobs", "BlacklistStatus", "TEXT NOT NULL DEFAULT ''");
+    EnsureSqliteColumn(db, "LibraryRemediationJobs", "OutcomeSummary", "TEXT NOT NULL DEFAULT ''");
+    EnsureSqliteColumn(db, "LibraryRemediationJobs", "LastCheckedAtUtc", "TEXT NULL");
 
     db.Database.ExecuteSqlRaw(@"INSERT INTO LibraryPathMappings (IntegrationId, RemoteRootPath, LocalRootPath, UpdatedAtUtc)
 SELECT c.Id, c.RemoteRootPath, c.LocalRootPath, c.UpdatedAtUtc
@@ -1594,12 +1643,17 @@ app.MapGet("/api/library/items/jump", async (MediaCloudDbContext db, string toke
     return Results.Ok(new LibraryJumpResponse(true, normalizedToken, pageIndex, targetId));
 }).RequireAuthorization();
 
-app.MapGet("/api/library/items/{id:long}", async (long id, MediaCloudDbContext db) =>
+app.MapGet("/api/library/items/{id:long}", async (long id, MediaCloudDbContext db, IHttpClientFactory httpClientFactory) =>
 {
     var row = await db.LibraryItems.FirstOrDefaultAsync(x => x.Id == id);
     if (row is null)
     {
         return Results.NotFound(new ErrorResponse("Library item not found."));
+    }
+
+    if (string.Equals(row.MediaType, "Series", StringComparison.OrdinalIgnoreCase))
+    {
+        await TryEnrichSeriesIdentifiersFromSourceAsync(row, db, httpClientFactory, persistChanges: false);
     }
 
     var sourceServices = await (
@@ -1624,6 +1678,52 @@ app.MapGet("/api/library/items/{id:long}", async (long id, MediaCloudDbContext d
         .ToListAsync();
 
     return Results.Ok(MapLibraryItemDto(row, sourceServices, sourceTitles));
+}).RequireAuthorization();
+
+app.MapGet("/api/library/items/{id:long}/series-parent", async (long id, MediaCloudDbContext db) =>
+{
+    var item = await db.LibraryItems.FirstOrDefaultAsync(x => x.Id == id);
+    if (item is null)
+    {
+        return Results.NotFound(new ErrorResponse("Library item not found."));
+    }
+
+    if (!string.Equals(item.MediaType, "Episode", StringComparison.OrdinalIgnoreCase))
+    {
+        return Results.BadRequest(new ErrorResponse("Series parent lookup is only available for Episode items."));
+    }
+
+    var candidateSeries = await db.LibraryItems
+        .Where(x => x.MediaType == "Series")
+        .ToListAsync();
+    var parentSeries = TelevisionHierarchy.TryFindParentSeries(item, candidateSeries);
+    if (parentSeries is null)
+    {
+        return Results.NotFound(new ErrorResponse("Parent series not found."));
+    }
+
+    var sourceServices = await (
+        from link in db.LibraryItemSourceLinks
+        join integration in db.IntegrationConfigs on link.IntegrationId equals integration.Id
+        where link.LibraryItemId == parentSeries.Id
+        select integration.ServiceKey)
+        .Distinct()
+        .OrderBy(x => x)
+        .ToListAsync();
+
+    var sourceTitles = await (
+        from link in db.LibraryItemSourceLinks
+        join integration in db.IntegrationConfigs on link.IntegrationId equals integration.Id
+        where link.LibraryItemId == parentSeries.Id
+        select new LibraryItemSourceTitleInfo(
+            link.LibraryItemId,
+            integration.ServiceKey,
+            integration.InstanceName,
+            link.SourceTitle,
+            link.SourceSortTitle))
+        .ToListAsync();
+
+    return Results.Ok(MapLibraryItemDto(parentSeries, sourceServices, sourceTitles));
 }).RequireAuthorization();
 
 app.MapGet("/api/library/items/{id:long}/episodes", async (long id, MediaCloudDbContext db) =>
@@ -1783,6 +1883,25 @@ app.MapPost("/api/library/items/{id:long}/playback-diagnostics/pull", async (lon
     return Results.Ok(response);
 }).RequireAuthorization("AdminOnly");
 
+app.MapGet("/api/library/items/{id:long}/remediation-jobs", async (long id, MediaCloudDbContext db, int? take) =>
+{
+    var itemExists = await db.LibraryItems.AnyAsync(x => x.Id == id);
+    if (!itemExists)
+    {
+        return Results.NotFound(new ErrorResponse("Library item not found."));
+    }
+
+    var limit = Math.Clamp(take ?? 20, 1, 100);
+    var rows = (await db.LibraryRemediationJobs
+        .Where(x => x.LibraryItemId == id)
+        .ToListAsync())
+        .OrderByDescending(x => x.RequestedAtUtc)
+        .Take(limit)
+        .ToList();
+
+    return Results.Ok(rows.Select(MapLibraryRemediationJobDto).ToList());
+}).RequireAuthorization("AdminOnly");
+
 app.MapGet("/api/library/items/{id:long}/sources", async (long id, MediaCloudDbContext db) =>
 {
     var itemExists = await db.LibraryItems.AnyAsync(x => x.Id == id);
@@ -1822,9 +1941,112 @@ app.MapGet("/api/library/items/{id:long}/source-status", async (long id, MediaCl
         return Results.NotFound(new ErrorResponse("Library item not found."));
     }
 
-    var statuses = await GetMovieSourceStatusesAsync(item, db, httpClientFactory);
+    IReadOnlyList<LibraryItemSourceStatusDto> statuses;
+    if (string.Equals(item.MediaType, "Movie", StringComparison.OrdinalIgnoreCase))
+    {
+        statuses = await GetMovieSourceStatusesAsync(item, db, httpClientFactory);
+    }
+    else if (string.Equals(item.MediaType, "Series", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(item.MediaType, "Episode", StringComparison.OrdinalIgnoreCase))
+    {
+        statuses = await GetTelevisionSourceStatusesAsync(item, db);
+    }
+    else
+    {
+        statuses = [];
+    }
+
     return Results.Ok(statuses);
 }).RequireAuthorization();
+
+app.MapPost("/api/library/items/{id:long}/remediation/search-replacement", async (long id, SearchReplacementRequest? request, MediaCloudDbContext db, IHttpClientFactory httpClientFactory, ClaimsPrincipal principal) =>
+{
+    var item = await db.LibraryItems.FirstOrDefaultAsync(x => x.Id == id);
+    if (item is null)
+    {
+        return Results.NotFound(new ErrorResponse("Library item not found."));
+    }
+
+    var sourceLinks = await GetLibraryRemediationSourceLinksAsync(db, item.Id);
+    var plan = LibraryRemediationPlanner.PlanSearchReplacement(item.MediaType, sourceLinks);
+    var normalizedIssueType = string.IsNullOrWhiteSpace(request?.IssueType)
+        ? (!string.IsNullOrWhiteSpace(request?.Reason) ? request!.Reason.Trim() : "other")
+        : request!.IssueType!.Trim();
+    var normalizedReason = string.IsNullOrWhiteSpace(request?.Reason) ? "unspecified" : request!.Reason.Trim();
+    var normalizedNotes = string.IsNullOrWhiteSpace(request?.Notes) ? string.Empty : request!.Notes.Trim();
+    var actor = principal.Identity?.Name ?? "admin";
+    var intent = LibraryRemediationPlanner.BuildIntent(normalizedIssueType, request?.Notes);
+    if (!intent.ShouldSearchNow)
+    {
+        var blockedResult = LibraryRemediationExecution.BuildBlockedResult(item.Id, plan.ServiceKey, plan.DisplayName, plan.CommandName, plan.ExternalItemId, normalizedReason, normalizedNotes, intent.PolicySummary, intent);
+        var blockedIssueId = await db.LibraryIssues
+            .Where(x => x.LibraryItemId == item.Id && x.IssueType == intent.IssueType)
+            .OrderByDescending(x => x.Id)
+            .Select(x => (long?)x.Id)
+            .FirstOrDefaultAsync();
+        db.LibraryRemediationJobs.Add(LibraryRemediationJobFactory.Create(item.Id, blockedIssueId, intent, blockedResult, null, actor, DateTimeOffset.UtcNow, null));
+        await db.SaveChangesAsync();
+        return Results.BadRequest(new ErrorResponse(intent.PolicySummary));
+    }
+
+    if (!plan.IsSupported)
+    {
+        return Results.BadRequest(new ErrorResponse(plan.Message));
+    }
+
+    var latestDiagnostic = await db.PlaybackDiagnosticEntries
+        .Where(x => x.LibraryItemId == item.Id)
+        .OrderByDescending(x => x.OccurredAtUtc)
+        .FirstOrDefaultAsync();
+    intent = LibraryRemediationDiagnosticsDecisioning.ApplyLatestDiagnostic(intent, latestDiagnostic);
+    intent = LibraryRemediationProfileDecisioning.Apply(intent, item);
+    if (!intent.ShouldSearchNow)
+    {
+        var blockedMessage = intent.ProfileDecision is "review_language_profile" or "review_quality_profile"
+            ? intent.ProfileSummary
+            : intent.PolicySummary;
+        var blockedResult = LibraryRemediationExecution.BuildBlockedResult(item.Id, plan.ServiceKey, plan.DisplayName, plan.CommandName, plan.ExternalItemId, normalizedReason, normalizedNotes, blockedMessage, intent);
+        var blockedIssueId = await db.LibraryIssues
+            .Where(x => x.LibraryItemId == item.Id && x.IssueType == intent.IssueType)
+            .OrderByDescending(x => x.Id)
+            .Select(x => (long?)x.Id)
+            .FirstOrDefaultAsync();
+        db.LibraryRemediationJobs.Add(LibraryRemediationJobFactory.Create(item.Id, blockedIssueId, intent, blockedResult, null, actor, DateTimeOffset.UtcNow, null));
+        await db.SaveChangesAsync();
+        return Results.BadRequest(new ErrorResponse(blockedMessage));
+    }
+
+    var preSearchReleaseContext = await BuildRemediationReleaseContextAsync(item, plan, db, httpClientFactory);
+    var integrationForBlacklist = plan.IntegrationId.HasValue
+        ? await db.IntegrationConfigs.FirstOrDefaultAsync(x => x.Id == plan.IntegrationId.Value && x.Enabled)
+        : await GetEnabledIntegrationByServiceAsync(db, plan.ServiceKey);
+    var blacklistPlan = LibraryRemediationBlacklistPlanner.BuildPlan(intent, preSearchReleaseContext);
+    (bool Success, string Message)? blacklistOutcome = null;
+    if (integrationForBlacklist is not null && blacklistPlan.ShouldAttempt)
+    {
+        blacklistOutcome = await ExecuteBlacklistPlanAsync(integrationForBlacklist, blacklistPlan, httpClientFactory);
+    }
+
+    var result = await ExecuteSearchReplacementAsync(item, plan, db, httpClientFactory);
+    var combinedMessage = blacklistOutcome is null
+        ? result.Message
+        : blacklistOutcome.Value.Success
+            ? $"Blacklisted current release. {result.Message}"
+            : $"Blacklist skipped/failed: {blacklistOutcome.Value.Message} {result.Message}".Trim();
+    var normalizedResult = result with { Reason = normalizedReason, Notes = normalizedNotes, Message = combinedMessage, Intent = ToIntentDto(intent) };
+    var contextPlan = plan with { ExternalItemId = normalizedResult.ExternalItemId };
+    var releaseContext = await BuildRemediationReleaseContextAsync(item, contextPlan, db, httpClientFactory);
+    var relatedIssueId = await db.LibraryIssues
+        .Where(x => x.LibraryItemId == item.Id && x.IssueType == intent.IssueType)
+        .OrderByDescending(x => x.Id)
+        .Select(x => (long?)x.Id)
+        .FirstOrDefaultAsync();
+    db.LibraryRemediationJobs.Add(LibraryRemediationJobFactory.Create(item.Id, relatedIssueId, intent, normalizedResult, releaseContext, actor, DateTimeOffset.UtcNow, blacklistOutcome?.Success));
+    var summary = $"Search replacement for library item {item.Id} ({item.MediaType}) via {normalizedResult.ServiceKey}: success={normalizedResult.Success}, issueType={intent.IssueType}, action={intent.RequestedAction}, confidence={intent.Confidence}, reason={normalizedReason}, notes={normalizedNotes}";
+    await WriteAuditAsync(db, principal, "library_remediation_search_replacement", actor, summary);
+    await db.SaveChangesAsync();
+    return Results.Ok(normalizedResult);
+}).RequireAuthorization("AdminOnly");
 
 app.MapPost("/api/library/items/{id:long}/sources/{serviceKey}/sync", async (long id, string serviceKey, MediaCloudDbContext db, IHttpClientFactory httpClientFactory) =>
 {
@@ -2336,6 +2558,43 @@ static PlaybackDiagnosticDto MapPlaybackDiagnosticDto(PlaybackDiagnosticEntry ro
         row.SuspectedCause,
         row.ErrorMessage,
         row.LogSnippet);
+}
+
+static LibraryRemediationJobDto MapLibraryRemediationJobDto(LibraryRemediationJob row)
+{
+    return new LibraryRemediationJobDto(
+        row.Id,
+        row.LibraryItemId,
+        row.LibraryIssueId,
+        row.ServiceKey,
+        row.ServiceDisplayName,
+        row.RequestedAction,
+        row.CommandName,
+        row.ExternalItemId,
+        row.IssueType,
+        row.Reason,
+        row.Notes,
+        row.ReasonCategory,
+        row.Confidence,
+        row.ShouldSearchNow,
+        row.ShouldBlacklistCurrentRelease,
+        row.NeedsManualReview,
+        row.NotesRecordedOnly,
+        row.LookedUpRemotely,
+        row.PolicySummary,
+        row.NotesHandling,
+        row.ProfileDecision,
+        row.ProfileSummary,
+        row.Status,
+        row.SearchStatus,
+        row.BlacklistStatus,
+        row.OutcomeSummary,
+        row.ResultMessage,
+        row.ReleaseSummary,
+        row.RequestedBy,
+        row.RequestedAtUtc,
+        row.FinishedAtUtc,
+        row.LastCheckedAtUtc);
 }
 
 static void ApplyPreferredDescription(LibraryItem item, string sourceService, string? candidateDescription)
@@ -4156,6 +4415,34 @@ static async Task<LibraryItemMonitoringApplyResponse> SyncDesiredMonitoringToInt
     return new LibraryItemMonitoringApplyResponse(item.Id, false, desiredMonitored, null, null, null, false, "Unsupported monitoring sync target.");
 }
 
+static async Task<IReadOnlyList<LibraryItemSourceStatusDto>> GetTelevisionSourceStatusesAsync(LibraryItem item, MediaCloudDbContext db)
+{
+    var integrations = await db.IntegrationConfigs
+        .Where(x => x.Enabled)
+        .ToListAsync();
+    var links = await db.LibraryItemSourceLinks
+        .Where(x => x.LibraryItemId == item.Id)
+        .ToListAsync();
+
+    return TelevisionSourceCoverage.BuildRows(item, integrations, links)
+        .Select(row => new LibraryItemSourceStatusDto(
+            row.ServiceKey,
+            row.DisplayName,
+            row.IntegrationId,
+            row.InstanceName,
+            row.HasSourceLink,
+            false,
+            row.Note,
+            null,
+            null,
+            null,
+            null,
+            false,
+            null,
+            false))
+        .ToList();
+}
+
 static async Task<IReadOnlyList<LibraryItemSourceStatusDto>> GetMovieSourceStatusesAsync(LibraryItem item, MediaCloudDbContext db, IHttpClientFactory httpClientFactory)
 {
     var services = new[] { "plex", "radarr", "overseerr" };
@@ -4429,6 +4716,303 @@ static async Task<IntegrationConfig?> GetEnabledIntegrationByServiceAsync(MediaC
         .Where(x => x.Enabled && x.ServiceKey.ToLower() == serviceKey.ToLower())
         .OrderBy(x => x.Id)
         .FirstOrDefaultAsync();
+}
+
+static async Task<List<LibraryRemediationSourceLink>> GetLibraryRemediationSourceLinksAsync(MediaCloudDbContext db, long libraryItemId)
+{
+    return await (
+        from link in db.LibraryItemSourceLinks
+        join integration in db.IntegrationConfigs on link.IntegrationId equals integration.Id
+        where link.LibraryItemId == libraryItemId
+        select new LibraryRemediationSourceLink(
+            integration.ServiceKey,
+            integration.Id,
+            link.ExternalId,
+            link.ExternalType,
+            link.IsDeletedAtSource))
+        .ToListAsync();
+}
+
+static LibraryRemediationIntentDto ToIntentDto(LibraryRemediationIntent intent)
+    => new(intent.IssueType, intent.RequestedAction, intent.ReasonCategory, intent.Confidence, intent.ShouldSearchNow, intent.ShouldBlacklistCurrentRelease, intent.NeedsManualReview, intent.NotesRecordedOnly, intent.PolicySummary, intent.NotesHandling, intent.ProfileDecision, intent.ProfileSummary);
+
+static async Task<LibraryRemediationReleaseContext> BuildRemediationReleaseContextAsync(
+    LibraryItem item,
+    LibraryRemediationPlan plan,
+    MediaCloudDbContext db,
+    IHttpClientFactory httpClientFactory)
+{
+    var sourceTitle = await db.LibraryItemSourceLinks
+        .Where(x => x.LibraryItemId == item.Id && x.IntegrationId == (plan.IntegrationId ?? x.IntegrationId))
+        .OrderByDescending(x => x.LastSeenAtUtc)
+        .Select(x => x.SourceTitle)
+        .FirstOrDefaultAsync();
+
+    var integration = plan.IntegrationId.HasValue
+        ? await db.IntegrationConfigs.FirstOrDefaultAsync(x => x.Id == plan.IntegrationId.Value && x.Enabled)
+        : await GetEnabledIntegrationByServiceAsync(db, plan.ServiceKey);
+
+    var historyCandidates = integration is null || !plan.ExternalItemId.HasValue
+        ? []
+        : await FetchRemediationHistoryCandidatesAsync(plan, integration, httpClientFactory);
+
+    return LibraryRemediationReleaseAwareness.BuildContext(
+        plan.ServiceKey,
+        plan.ExternalItemId,
+        item.PrimaryFilePath,
+        item.QualityProfile,
+        sourceTitle ?? item.Title,
+        historyCandidates);
+}
+
+static async Task<List<LibraryRemediationHistoryCandidate>> FetchRemediationHistoryCandidatesAsync(
+    LibraryRemediationPlan plan,
+    IntegrationConfig integration,
+    IHttpClientFactory httpClientFactory)
+{
+    string? endpoint = plan.ServiceKey switch
+    {
+        "radarr" when plan.ExternalItemId.HasValue => $"/api/v3/history/movie?movieId={plan.ExternalItemId.Value}&page=1&pageSize=20&sortDirection=descending",
+        "sonarr" when plan.ExternalItemId.HasValue && string.Equals(plan.CommandName, "EpisodeSearch", StringComparison.OrdinalIgnoreCase) => $"/api/v3/history/episode?episodeId={plan.ExternalItemId.Value}&page=1&pageSize=20&sortDirection=descending",
+        _ => null
+    };
+
+    if (string.IsNullOrWhiteSpace(endpoint))
+    {
+        return [];
+    }
+
+    try
+    {
+        var client = httpClientFactory.CreateClient();
+        client.Timeout = TimeSpan.FromSeconds(20);
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"{integration.BaseUrl.TrimEnd('/')}{endpoint}");
+        ApplyIntegrationAuthHeaders(integration, request);
+        using var response = await client.SendAsync(request);
+        if (!response.IsSuccessStatusCode)
+        {
+            return [];
+        }
+
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var root = document.RootElement;
+        var rows = root.ValueKind == JsonValueKind.Object && root.TryGetProperty("records", out var recordsElement)
+            ? recordsElement
+            : root;
+        if (rows.ValueKind != JsonValueKind.Array)
+        {
+            return [];
+        }
+
+        return rows.EnumerateArray()
+            .Select(x => new LibraryRemediationHistoryCandidate(
+                (long?)GetJsonInt(x, "id"),
+                GetJsonString(x, "eventType") ?? string.Empty,
+                GetJsonString(x, "sourceTitle") ?? string.Empty,
+                GetJsonString(x, "downloadId") ?? string.Empty,
+                GetJsonString(x, "data") ?? x.ToString(),
+                ParseJsonDateTimeOffset(x, "date") ?? ParseJsonDateTimeOffset(x, "eventTime") ?? ParseJsonDateTimeOffset(x, "importedDate")))
+            .Where(x => x.HistoryRecordId.HasValue || !string.IsNullOrWhiteSpace(x.EventType) || !string.IsNullOrWhiteSpace(x.SourceTitle) || !string.IsNullOrWhiteSpace(x.DownloadId))
+            .ToList();
+    }
+    catch
+    {
+        return [];
+    }
+}
+
+static async Task<(bool Success, string Message)> ExecuteBlacklistPlanAsync(
+    IntegrationConfig integration,
+    LibraryRemediationBlacklistPlan blacklistPlan,
+    IHttpClientFactory httpClientFactory)
+{
+    if (!blacklistPlan.ShouldAttempt || string.IsNullOrWhiteSpace(blacklistPlan.EndpointPath))
+    {
+        return (false, blacklistPlan.Reason);
+    }
+
+    var client = httpClientFactory.CreateClient();
+    client.Timeout = TimeSpan.FromSeconds(20);
+    using var request = new HttpRequestMessage(HttpMethod.Post, $"{integration.BaseUrl.TrimEnd('/')}{blacklistPlan.EndpointPath}");
+    ApplyIntegrationAuthHeaders(integration, request);
+    using var response = await client.SendAsync(request);
+    if (response.IsSuccessStatusCode)
+    {
+        return (true, blacklistPlan.Reason);
+    }
+
+    var body = await response.Content.ReadAsStringAsync();
+    var message = string.IsNullOrWhiteSpace(body)
+        ? $"Blacklist request failed with HTTP {(int)response.StatusCode}."
+        : body[..Math.Min(250, body.Length)];
+    return (false, message);
+}
+
+static async Task<LibraryItemRemediationResponse> ExecuteSearchReplacementAsync(
+    LibraryItem item,
+    LibraryRemediationPlan plan,
+    MediaCloudDbContext db,
+    IHttpClientFactory httpClientFactory)
+{
+    var integration = plan.IntegrationId.HasValue
+        ? await db.IntegrationConfigs.FirstOrDefaultAsync(x => x.Id == plan.IntegrationId.Value && x.Enabled)
+        : null;
+    integration ??= await GetEnabledIntegrationByServiceAsync(db, plan.ServiceKey);
+    if (integration is null)
+    {
+        return new LibraryItemRemediationResponse(item.Id, false, plan.ServiceKey, plan.DisplayName, plan.CommandName, plan.ExternalItemId, false, string.Empty, string.Empty, $"No enabled {plan.DisplayName} integration is configured.");
+    }
+
+    try
+    {
+        return plan.ServiceKey switch
+        {
+            "radarr" => await ExecuteRadarrSearchReplacementAsync(item, plan, integration, httpClientFactory),
+            "sonarr" => await ExecuteSonarrSearchReplacementAsync(item, plan, integration, httpClientFactory),
+            "lidarr" => await ExecuteLidarrSearchReplacementAsync(item, plan, integration, httpClientFactory),
+            _ => new LibraryItemRemediationResponse(item.Id, false, plan.ServiceKey, plan.DisplayName, plan.CommandName, plan.ExternalItemId, false, string.Empty, string.Empty, $"Search replacement is not supported for service '{plan.ServiceKey}'.")
+        };
+    }
+    catch (Exception ex)
+    {
+        return new LibraryItemRemediationResponse(item.Id, false, plan.ServiceKey, plan.DisplayName, plan.CommandName, plan.ExternalItemId, false, string.Empty, string.Empty, ex.Message);
+    }
+}
+
+static async Task<LibraryItemRemediationResponse> ExecuteRadarrSearchReplacementAsync(
+    LibraryItem item,
+    LibraryRemediationPlan plan,
+    IntegrationConfig integration,
+    IHttpClientFactory httpClientFactory)
+{
+    var lookedUpRemotely = false;
+    var radarrMovieId = plan.ExternalItemId;
+    if (!radarrMovieId.HasValue)
+    {
+        radarrMovieId = await TryLookupRadarrMovieIdAsync(item, integration, httpClientFactory);
+        lookedUpRemotely = radarrMovieId.HasValue;
+    }
+
+    if (!radarrMovieId.HasValue)
+    {
+        return new LibraryItemRemediationResponse(item.Id, false, plan.ServiceKey, plan.DisplayName, plan.CommandName, null, false, string.Empty, string.Empty, "MediaCloud could not resolve the Radarr movie ID for this item.");
+    }
+
+    var (success, responseMessage) = await QueueArrCommandAsync(
+        integration,
+        "/api/v3/command",
+        new { name = "MoviesSearch", movieIds = new[] { radarrMovieId.Value } },
+        httpClientFactory,
+        $"Queued Radarr replacement search for movie ID {radarrMovieId.Value}.");
+
+    return new LibraryItemRemediationResponse(item.Id, success, plan.ServiceKey, plan.DisplayName, plan.CommandName, radarrMovieId, lookedUpRemotely, string.Empty, string.Empty, responseMessage);
+}
+
+static async Task<LibraryItemRemediationResponse> ExecuteSonarrSearchReplacementAsync(
+    LibraryItem item,
+    LibraryRemediationPlan plan,
+    IntegrationConfig integration,
+    IHttpClientFactory httpClientFactory)
+{
+    if (!plan.ExternalItemId.HasValue)
+    {
+        return new LibraryItemRemediationResponse(item.Id, false, plan.ServiceKey, plan.DisplayName, plan.CommandName, null, false, string.Empty, string.Empty, plan.Message);
+    }
+
+    object payload = string.Equals(plan.CommandName, "SeriesSearch", StringComparison.OrdinalIgnoreCase)
+        ? new { name = "SeriesSearch", seriesId = plan.ExternalItemId.Value }
+        : new { name = "EpisodeSearch", episodeIds = new[] { plan.ExternalItemId.Value } };
+
+    var (success, responseMessage) = await QueueArrCommandAsync(
+        integration,
+        "/api/v3/command",
+        payload,
+        httpClientFactory,
+        $"Queued Sonarr replacement search for {plan.CommandName} target {plan.ExternalItemId.Value}.");
+
+    return new LibraryItemRemediationResponse(item.Id, success, plan.ServiceKey, plan.DisplayName, plan.CommandName, plan.ExternalItemId, false, string.Empty, string.Empty, responseMessage);
+}
+
+static async Task<LibraryItemRemediationResponse> ExecuteLidarrSearchReplacementAsync(
+    LibraryItem item,
+    LibraryRemediationPlan plan,
+    IntegrationConfig integration,
+    IHttpClientFactory httpClientFactory)
+{
+    if (!plan.ExternalItemId.HasValue)
+    {
+        return new LibraryItemRemediationResponse(item.Id, false, plan.ServiceKey, plan.DisplayName, plan.CommandName, null, false, string.Empty, string.Empty, plan.Message);
+    }
+
+    var (success, responseMessage) = await QueueArrCommandAsync(
+        integration,
+        "/api/v1/command",
+        new { name = "AlbumSearch", albumIds = new[] { plan.ExternalItemId.Value } },
+        httpClientFactory,
+        $"Queued Lidarr replacement search for album ID {plan.ExternalItemId.Value}.");
+
+    return new LibraryItemRemediationResponse(item.Id, success, plan.ServiceKey, plan.DisplayName, plan.CommandName, plan.ExternalItemId, false, string.Empty, string.Empty, responseMessage);
+}
+
+static async Task<int?> TryLookupRadarrMovieIdAsync(LibraryItem item, IntegrationConfig integration, IHttpClientFactory httpClientFactory)
+{
+    if (!item.TmdbId.HasValue || item.TmdbId.Value <= 0)
+    {
+        return null;
+    }
+
+    try
+    {
+        var client = httpClientFactory.CreateClient();
+        client.Timeout = TimeSpan.FromSeconds(20);
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"{integration.BaseUrl.TrimEnd('/')}/api/v3/movie?tmdbId={item.TmdbId.Value}");
+        ApplyIntegrationAuthHeaders(integration, request);
+        using var response = await client.SendAsync(request);
+        if (!response.IsSuccessStatusCode)
+        {
+            return null;
+        }
+
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        if (document.RootElement.ValueKind != JsonValueKind.Array || document.RootElement.GetArrayLength() == 0)
+        {
+            return null;
+        }
+
+        var match = document.RootElement.EnumerateArray().FirstOrDefault();
+        return GetJsonInt(match, "id");
+    }
+    catch
+    {
+        return null;
+    }
+}
+
+static async Task<(bool Success, string Message)> QueueArrCommandAsync(
+    IntegrationConfig integration,
+    string endpointPath,
+    object payload,
+    IHttpClientFactory httpClientFactory,
+    string successMessage)
+{
+    var client = httpClientFactory.CreateClient();
+    client.Timeout = TimeSpan.FromSeconds(20);
+    using var request = new HttpRequestMessage(HttpMethod.Post, $"{integration.BaseUrl.TrimEnd('/')}{endpointPath}")
+    {
+        Content = JsonContent.Create(payload)
+    };
+    ApplyIntegrationAuthHeaders(integration, request);
+    using var response = await client.SendAsync(request);
+    if (response.IsSuccessStatusCode)
+    {
+        return (true, successMessage);
+    }
+
+    var body = await response.Content.ReadAsStringAsync();
+    var message = string.IsNullOrWhiteSpace(body)
+        ? $"{integration.ServiceKey} remediation command failed with HTTP {(int)response.StatusCode}."
+        : body[..Math.Min(250, body.Length)];
+    return (false, message);
 }
 
 static async Task<RadarrMovieState> FetchRadarrMovieStateAsync(int? tmdbId, IntegrationConfig? radarr, IHttpClientFactory httpClientFactory)
@@ -5639,6 +6223,124 @@ static string ResolveLocalPath(LibraryPathMapping? mapping, string sourcePath)
     return Path.Combine(local, normalizedTail);
 }
 
+static async Task<bool> TryEnrichSeriesIdentifiersFromSourceAsync(LibraryItem item, MediaCloudDbContext db, IHttpClientFactory httpClientFactory, bool persistChanges = true)
+{
+    if (!string.Equals(item.MediaType, "Series", StringComparison.OrdinalIgnoreCase))
+    {
+        return false;
+    }
+
+    var needsIdentifiers = !item.TvdbId.HasValue
+        || !item.TmdbId.HasValue
+        || string.IsNullOrWhiteSpace(item.ImdbId)
+        || string.IsNullOrWhiteSpace(item.PrimaryFilePath);
+    if (!needsIdentifiers)
+    {
+        return false;
+    }
+
+    var sourceLink = await db.LibraryItemSourceLinks
+        .Where(x => x.LibraryItemId == item.Id
+            && !x.IsDeletedAtSource
+            && (x.ExternalType ?? string.Empty).ToLower() == "series")
+        .Join(
+            db.IntegrationConfigs.Where(x => x.Enabled && x.ServiceKey == "sonarr"),
+            link => link.IntegrationId,
+            integration => integration.Id,
+            (link, integration) => new { Link = link, Integration = integration })
+        .OrderBy(x => x.Link.Id)
+        .FirstOrDefaultAsync();
+
+    if (sourceLink is null || !int.TryParse((sourceLink.Link.ExternalId ?? string.Empty).Trim(), out var seriesId) || seriesId <= 0)
+    {
+        return false;
+    }
+
+    var client = httpClientFactory.CreateClient();
+    client.Timeout = TimeSpan.FromSeconds(20);
+    using var request = new HttpRequestMessage(HttpMethod.Get, $"{sourceLink.Integration.BaseUrl.TrimEnd('/')}/api/v3/series/{seriesId}");
+    ApplyIntegrationAuthHeaders(sourceLink.Integration, request);
+    using var response = await client.SendAsync(request);
+    if (!response.IsSuccessStatusCode)
+    {
+        return false;
+    }
+
+    var payload = await response.Content.ReadAsStringAsync();
+    using var document = JsonDocument.Parse(payload);
+    if (document.RootElement.ValueKind != JsonValueKind.Object)
+    {
+        return false;
+    }
+
+    var series = document.RootElement;
+    var updated = false;
+
+    var tvdbId = GetJsonInt(series, "tvdbId");
+    if (tvdbId.HasValue && tvdbId.Value > 0 && item.TvdbId != tvdbId)
+    {
+        item.TvdbId = tvdbId;
+        updated = true;
+    }
+
+    var tmdbId = GetJsonInt(series, "tmdbId");
+    if (tmdbId.HasValue && tmdbId.Value > 0 && item.TmdbId != tmdbId)
+    {
+        item.TmdbId = tmdbId;
+        updated = true;
+    }
+
+    var imdbId = GetJsonString(series, "imdbId") ?? string.Empty;
+    if (!string.IsNullOrWhiteSpace(imdbId) && !string.Equals(item.ImdbId, imdbId, StringComparison.OrdinalIgnoreCase))
+    {
+        item.ImdbId = imdbId;
+        updated = true;
+    }
+
+    var rawSeriesPath = GetJsonString(series, "path") ?? string.Empty;
+    if (!string.IsNullOrWhiteSpace(rawSeriesPath))
+    {
+        var pathMappings = await db.LibraryPathMappings
+            .Where(x => x.IntegrationId == sourceLink.Integration.Id)
+            .ToListAsync();
+        var pathMapping = pathMappings
+            .OrderByDescending(x => rawSeriesPath.StartsWith((x.RemoteRootPath ?? string.Empty).Trim(), StringComparison.OrdinalIgnoreCase))
+            .ThenByDescending(x => (x.RemoteRootPath ?? string.Empty).Length)
+            .FirstOrDefault();
+        var resolvedSeriesPath = ResolveLocalPath(pathMapping, rawSeriesPath);
+        if (!string.Equals(item.PrimaryFilePath, resolvedSeriesPath, StringComparison.Ordinal))
+        {
+            item.PrimaryFilePath = resolvedSeriesPath;
+            updated = true;
+        }
+    }
+
+    var title = GetJsonString(series, "title") ?? string.Empty;
+    if (!string.IsNullOrWhiteSpace(title) && (string.IsNullOrWhiteSpace(item.Title) || string.Equals(item.Title, "Unknown", StringComparison.OrdinalIgnoreCase)))
+    {
+        item.Title = title;
+        updated = true;
+    }
+
+    var sortTitle = GetJsonString(series, "sortTitle") ?? string.Empty;
+    if (!string.IsNullOrWhiteSpace(sortTitle) && (string.IsNullOrWhiteSpace(item.SortTitle) || string.Equals(item.SortTitle, item.Title, StringComparison.OrdinalIgnoreCase)))
+    {
+        item.SortTitle = sortTitle;
+        updated = true;
+    }
+
+    if (updated)
+    {
+        item.UpdatedAtUtc = DateTimeOffset.UtcNow;
+        if (persistChanges)
+        {
+            await db.SaveChangesAsync();
+        }
+    }
+
+    return updated;
+}
+
 static async Task<string> TryRefreshPrimaryFilePathFromSourceAsync(LibraryItem item, MediaCloudDbContext db, IHttpClientFactory httpClientFactory)
 {
     var links = await db.LibraryItemSourceLinks
@@ -6119,6 +6821,10 @@ public record LibraryItemSourceTitleInfo(long LibraryItemId, string ServiceKey, 
 public record LibraryItemSourceLinkDto(long Id, long LibraryItemId, long IntegrationId, string ServiceKey, string InstanceName, string SourceTitle, string SourceSortTitle, string ExternalId, string ExternalType, DateTimeOffset? ExternalUpdatedAtUtc, DateTimeOffset LastSeenAtUtc, bool IsDeletedAtSource);
 public record LibraryItemSourceStatusDto(string ServiceKey, string DisplayName, long? IntegrationId, string InstanceName, bool HasSourceLink, bool CanSync, string Note, bool? RadarrMonitored, bool? DesiredMonitored, bool? MonitoringDrift, bool? OverseerrInMedia, bool SupportsMonitoringSync, bool? MonitoringSynced, bool AutoSyncEnabled);
 public record LibraryItemSourceSyncResponse(long LibraryItemId, string ServiceKey, bool Success, bool HadSourceLinkBefore, bool HasSourceLinkAfter, bool AttemptedCreateAction, string Message);
+public record SearchReplacementRequest(string Reason, string Notes, string? IssueType = null);
+public record LibraryRemediationIntentDto(string IssueType, string RequestedAction, string ReasonCategory, string Confidence, bool ShouldSearchNow, bool ShouldBlacklistCurrentRelease, bool NeedsManualReview, bool NotesRecordedOnly, string PolicySummary, string NotesHandling, string ProfileDecision, string ProfileSummary);
+public record LibraryItemRemediationResponse(long LibraryItemId, bool Success, string ServiceKey, string ServiceDisplayName, string CommandName, int? ExternalItemId, bool LookedUpRemotely, string Reason, string Notes, string Message, LibraryRemediationIntentDto? Intent = null);
+public record LibraryRemediationJobDto(long Id, long LibraryItemId, long? LibraryIssueId, string ServiceKey, string ServiceDisplayName, string RequestedAction, string CommandName, int? ExternalItemId, string IssueType, string Reason, string Notes, string ReasonCategory, string Confidence, bool ShouldSearchNow, bool ShouldBlacklistCurrentRelease, bool NeedsManualReview, bool NotesRecordedOnly, bool LookedUpRemotely, string PolicySummary, string NotesHandling, string ProfileDecision, string ProfileSummary, string Status, string SearchStatus, string BlacklistStatus, string OutcomeSummary, string ResultMessage, string ReleaseSummary, string RequestedBy, DateTimeOffset RequestedAtUtc, DateTimeOffset? FinishedAtUtc, DateTimeOffset? LastCheckedAtUtc);
 public record SetDesiredMonitoringRequest(bool DesiredMonitored);
 public record UpdateMonitoringSettingsRequest(bool ManagedByMediaCloud, bool AutoSyncEnabled);
 public record MonitoringSettingsResponse(bool ManagedByMediaCloud, bool AutoSyncEnabled);

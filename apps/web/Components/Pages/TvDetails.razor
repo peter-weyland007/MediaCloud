@@ -7,6 +7,18 @@
 <PageTitle>TV Details</PageTitle>
 
 <style>
+    .movie-refresh-style-button.mud-button-root {
+        min-height: auto;
+        padding: 0.6rem 0.9rem;
+        font-weight: 600;
+        letter-spacing: 0;
+        line-height: normal;
+        text-transform: none;
+        background: var(--mud-palette-primary);
+        border-color: var(--mud-palette-primary);
+        color: var(--mud-palette-primary-text);
+    }
+
     .tv-season-group {
         border: 1px solid rgba(148,163,184,0.18);
         border-radius: 10px;
@@ -58,7 +70,14 @@ else if (_item is null || !IsTvItem(_item.MediaType))
 }
 else
 {
-    <a href="/media/tv-shows" style="color:#93c5fd; text-decoration:none;">← Back to TV Shows</a>
+    <div style="display:flex; gap:0.5rem; flex-wrap:wrap; align-items:center; color:#93c5fd; margin-bottom:0.25rem;">
+        <a href="/media/tv-shows" style="color:#93c5fd; text-decoration:none;">TV Shows</a>
+        @if (_parentSeries is not null && string.Equals(_item.MediaType, "Episode", StringComparison.OrdinalIgnoreCase))
+        {
+            <span style="color:#64748b;">/</span>
+            <a href="@MediaItemRoutes.GetDetailsHref(_parentSeries.MediaType, _parentSeries.Id)" style="color:#93c5fd; text-decoration:none;">@_parentSeries.DisplayTitle</a>
+        }
+    </div>
     <h1 style="margin-top:0.5rem;">@_item.DisplayTitle</h1>
     <p class="subtitle">@GetSubtitle(_item)</p>
 
@@ -98,7 +117,7 @@ else
             <div>
                 <p class="card-label">LIBRARY STATUS</p>
                 <p>@GetSeriesLibraryStatus()</p>
-                <p class="card-note" style="margin-top:0.35rem;">@_sourceLinks.Count source link(s) · Quality: @DisplayValue(_item.QualityProfile)</p>
+                <p class="card-note" style="margin-top:0.35rem;">@GetLinkedSourceCoverageCount() source link(s) · Quality: @DisplayValue(_item.QualityProfile)</p>
             </div>
         </div>
     }
@@ -130,7 +149,7 @@ else
             <div>
                 <p class="card-label">LIBRARY STATUS</p>
                 <p>@(_item.IsAvailable ? "Available" : "Unavailable")</p>
-                <p class="card-note" style="margin-top:0.35rem;">@_sourceLinks.Count source link(s) · Quality: @DisplayValue(_item.QualityProfile)</p>
+                <p class="card-note" style="margin-top:0.35rem;">@GetLinkedSourceCoverageCount() source link(s) · Quality: @DisplayValue(_item.QualityProfile)</p>
             </div>
         </div>
     }
@@ -148,32 +167,31 @@ else
     </div>
 
     <div class="card" style="margin-bottom:1rem;">
-        <p class="card-label">SOURCE LINKS</p>
-        @if (_sourceLinks.Count == 0)
+        <p class="card-label">SOURCE COVERAGE</p>
+        <p class="card-note" style="margin-top:0.2rem; margin-bottom:0.55rem;">Series use Sonarr for catalog truth, Plex for playback/library truth, and Overseerr for request-intent truth. Episodes use Sonarr + Plex coverage.</p>
+        @if (_sourceStatuses.Count == 0)
         {
-            <p class="card-note">No source links recorded for this item yet.</p>
+            <p class="card-note">Source coverage is unavailable.</p>
         }
         else
         {
-            <table style="width:100%; border-collapse:collapse; font-size:0.88rem;">
+            <table style="width:100%; border-collapse:collapse; font-size:0.88rem; margin-top:0.35rem;">
                 <thead>
                     <tr style="text-align:left; border-bottom:1px solid rgba(148,163,184,0.25);">
-                        <th style="padding:0.35rem 0.4rem;">Source</th>
-                        <th style="padding:0.35rem 0.4rem;">Instance</th>
-                        <th style="padding:0.35rem 0.4rem;">Source Title</th>
-                        <th style="padding:0.35rem 0.4rem;">External</th>
-                        <th style="padding:0.35rem 0.4rem;">Last Seen</th>
+                        <th style="padding:0.3rem 0.4rem;">Source</th>
+                        <th style="padding:0.3rem 0.4rem;">Linked</th>
+                        <th style="padding:0.3rem 0.4rem;">Integration</th>
+                        <th style="padding:0.3rem 0.4rem;">Note</th>
                     </tr>
                 </thead>
                 <tbody>
-                    @foreach (var source in _sourceLinks)
+                    @foreach (var status in _sourceStatuses)
                     {
                         <tr style="border-bottom:1px solid rgba(148,163,184,0.12); vertical-align:top;">
-                            <td style="padding:0.35rem 0.4rem;">@FormatSourceServiceLabel(source.ServiceKey)</td>
-                            <td style="padding:0.35rem 0.4rem;">@DisplayValue(source.InstanceName)</td>
-                            <td style="padding:0.35rem 0.4rem;">@DisplaySourceTitle(source)</td>
-                            <td style="padding:0.35rem 0.4rem;">@FormatExternalRef(source)</td>
-                            <td style="padding:0.35rem 0.4rem;">@source.LastSeenAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
+                            <td style="padding:0.3rem 0.4rem;">@status.DisplayName</td>
+                            <td style="padding:0.3rem 0.4rem;">@(status.HasSourceLink ? "Yes" : "Missing")</td>
+                            <td style="padding:0.3rem 0.4rem;">@(string.IsNullOrWhiteSpace(status.InstanceName) ? "—" : status.InstanceName)</td>
+                            <td style="padding:0.3rem 0.4rem;">@status.Note</td>
                         </tr>
                     }
                 </tbody>
@@ -346,6 +364,180 @@ else
                 </table>
             }
         </div>
+
+        <div class="card" style="margin-bottom:1rem;">
+            <p class="card-label">ISSUE FLAGS &amp; REMEDIATION</p>
+            <p class="card-note" style="margin-top:0;">Log an episode issue first, then let MediaCloud decide whether Sonarr should search now, block for profile review, or just record the issue for manual follow-up.</p>
+            <p>Audio Languages: @(string.Join(", ", _item.AudioLanguages ?? []))</p>
+
+            <div style="display:grid; grid-template-columns: minmax(220px, 1fr) 1.5fr auto; gap:0.6rem; align-items:end; margin-top:0.6rem;">
+                <div>
+                    <label for="episode-manual-issue-type">Issue type</label>
+                    <InputSelect id="episode-manual-issue-type" class="input" @bind-Value="_selectedManualIssueType" @bind-Value:after="OnManualIssueTypeChangedAsync">
+                        @foreach (var option in ManualIssueOptions)
+                        {
+                            <option value="@option.Key">@option.Label</option>
+                        }
+                    </InputSelect>
+                </div>
+
+                <div>
+                    <label for="episode-manual-issue-notes">Notes</label>
+                    <input id="episode-manual-issue-notes" class="input" @bind="_manualIssueNotes" placeholder="e.g. english track missing, wrong cut, bad transcode" />
+                </div>
+
+                <MudButton Class="media-btn media-btn--primary movie-refresh-style-button" Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small" OnClick="SaveManualIssueAsync" Disabled="@_savingManualIssue">@(_savingManualIssue ? "Saving..." : "Save issue")</MudButton>
+
+                @if (_selectedManualIssue is not null && string.Equals(_selectedManualIssue.Status, "Open", StringComparison.OrdinalIgnoreCase))
+                {
+                    <button class="button-secondary" @onclick="ResolveSelectedManualIssueAsync" disabled="@_resolvingManualIssue">@(_resolvingManualIssue ? "Resolving..." : "Resolve")</button>
+                }
+            </div>
+
+            @if (_selectedManualIssue is not null)
+            {
+                <p class="card-note" style="margin-top:0.65rem;">Current issue: @_selectedManualIssue.Summary</p>
+                <p class="card-note" style="margin-top:0.2rem;">Status: @_selectedManualIssue.Status · Severity: @_selectedManualIssue.Severity</p>
+            }
+
+            <div style="margin-top:0.85rem;">
+                <p class="card-label" style="margin-bottom:0.45rem;">ISSUE HISTORY (THIS EPISODE)</p>
+                @if (_manualIssueHistory.Count == 0)
+                {
+                    <p class="card-note">No issues logged yet for this episode.</p>
+                }
+                else
+                {
+                    <table style="width:100%; border-collapse:collapse; font-size:0.85rem;">
+                        <thead>
+                            <tr style="border-bottom:1px solid rgba(148,163,184,0.2); text-align:left;">
+                                <th style="padding:0.35rem 0.4rem;">Type</th>
+                                <th style="padding:0.35rem 0.4rem;">Status</th>
+                                <th style="padding:0.35rem 0.4rem;">Severity</th>
+                                <th style="padding:0.35rem 0.4rem;">Summary</th>
+                                <th style="padding:0.35rem 0.4rem;">Notes</th>
+                                <th style="padding:0.35rem 0.4rem;">Last Seen</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var issue in _manualIssueHistory)
+                            {
+                                <tr style="border-bottom:1px solid rgba(148,163,184,0.12); vertical-align:top;">
+                                    <td style="padding:0.35rem 0.4rem;">@GetIssueTypeLabel(issue.IssueType)</td>
+                                    <td style="padding:0.35rem 0.4rem;">@issue.Status</td>
+                                    <td style="padding:0.35rem 0.4rem;">@issue.Severity</td>
+                                    <td style="padding:0.35rem 0.4rem;">@issue.Summary</td>
+                                    <td style="padding:0.35rem 0.4rem;">@ExtractIssueNotes(issue.DetailsJson)</td>
+                                    <td style="padding:0.35rem 0.4rem;">@issue.LastDetectedAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                }
+            </div>
+
+            <div style="margin:1rem 0 0.9rem; border-top:1px solid rgba(148,163,184,0.2);"></div>
+
+            <div>
+                <p class="card-label" style="margin-bottom:0.35rem;">REMEDIATION</p>
+                <div style="display:grid; grid-template-columns:minmax(320px, 1.45fr) minmax(260px, 1fr); gap:1.25rem; align-items:start;">
+                    <div>
+                        <p class="card-note" style="margin-top:0;">@GetSearchReplacementNotesDisclaimer()</p>
+                        @if (!string.IsNullOrWhiteSpace(_searchReplacementStatus))
+                        {
+                            <p class="card-note" style="margin-top:0.55rem;">Last remediation action: @_searchReplacementStatus</p>
+                        }
+                    </div>
+
+                    <div style="display:grid; gap:0.75rem;">
+                        <div>
+                            <p class="card-label" style="margin-bottom:0.4rem;">THIS BUTTON WILL TRY TO</p>
+                            <ol style="margin:0; padding-left:1.1rem; display:grid; gap:0.5rem; color:#e2e8f0;">
+                                @foreach (var step in GetSearchReplacementRequestSteps())
+                                {
+                                    <li>@step</li>
+                                }
+                            </ol>
+                        </div>
+
+                        <div style="display:flex; justify-content:flex-end; align-items:flex-end; min-height:2.75rem;">
+                            <MudButton Class="media-btn media-btn--primary movie-refresh-style-button" Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small" OnClick="SearchReplacementAsync" Disabled="@(!CanSearchReplacementForSelectedIssue() || _searchingReplacement)">@(_searchingReplacement ? "Sending..." : "Search replacement")</MudButton>
+                        </div>
+                    </div>
+                </div>
+
+                <div style="margin-top:0.95rem;">
+                    <p class="card-label" style="margin-bottom:0.45rem;">REMEDIATION HISTORY</p>
+                    @if (_remediationJobs.Count == 0)
+                    {
+                        <p class="card-note">No remediation jobs recorded for this episode yet.</p>
+                    }
+                    else
+                    {
+                        <table style="width:100%; border-collapse:collapse; font-size:0.85rem;">
+                            <thead>
+                                <tr style="border-bottom:1px solid rgba(148,163,184,0.2); text-align:left;">
+                                    <th style="padding:0.35rem 0.4rem;">When</th>
+                                    <th style="padding:0.35rem 0.4rem;">Issue</th>
+                                    <th style="padding:0.35rem 0.4rem;">Policy</th>
+                                    <th style="padding:0.35rem 0.4rem;">Current release</th>
+                                    <th style="padding:0.35rem 0.4rem;">Lifecycle</th>
+                                    <th style="padding:0.35rem 0.4rem;">Verification</th>
+                                    <th style="padding:0.35rem 0.4rem;">Result</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var job in _remediationJobs)
+                                {
+                                    <tr style="border-bottom:1px solid rgba(148,163,184,0.12); vertical-align:top;">
+                                        <td style="padding:0.35rem 0.4rem; white-space:nowrap;">@job.RequestedAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
+                                        <td style="padding:0.35rem 0.4rem;">
+                                            <div>@GetIssueTypeLabel(job.IssueType)</div>
+                                            @if (!string.IsNullOrWhiteSpace(job.Notes))
+                                            {
+                                                <div class="card-note" style="margin-top:0.2rem;">Notes: @job.Notes</div>
+                                            }
+                                        </td>
+                                        <td style="padding:0.35rem 0.4rem;">
+                                            <div>@job.RequestedAction · @job.Confidence</div>
+                                            <div class="card-note" style="margin-top:0.2rem;">@job.PolicySummary</div>
+                                            @if (!string.IsNullOrWhiteSpace(job.ProfileSummary))
+                                            {
+                                                <div class="card-note" style="margin-top:0.2rem;">Profile: @job.ProfileSummary</div>
+                                            }
+                                        </td>
+                                        <td style="padding:0.35rem 0.4rem;">
+                                            <div>@(string.IsNullOrWhiteSpace(job.ReleaseSummary) ? "Unknown release" : job.ReleaseSummary)</div>
+                                            @if (job.LookedUpRemotely)
+                                            {
+                                                <div class="card-note" style="margin-top:0.2rem;">External item resolved remotely before queueing.</div>
+                                            }
+                                        </td>
+                                        <td style="padding:0.35rem 0.4rem;">
+                                            <div><span style="@GetRemediationStatusBadgeStyle(job.Status)">@GetRemediationStatusLabel(job.Status)</span></div>
+                                            <div class="card-note" style="margin-top:0.35rem;">Search: @job.SearchStatus · Blacklist: @job.BlacklistStatus</div>
+                                            @if (job.LastCheckedAtUtc.HasValue)
+                                            {
+                                                <div class="card-note" style="margin-top:0.2rem;">Checked @job.LastCheckedAtUtc.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</div>
+                                            }
+                                        </td>
+                                        <td style="padding:0.35rem 0.4rem;">
+                                            <div><span style="@GetVerificationBadgeStyle(job.Status)">@GetVerificationLabel(job.Status)</span></div>
+                                            <div class="card-note" style="margin-top:0.35rem;">@GetVerificationHelperText(job)</div>
+                                        </td>
+                                        <td style="padding:0.35rem 0.4rem;">
+                                            <div>@(string.IsNullOrWhiteSpace(job.OutcomeSummary) ? job.ResultMessage : job.OutcomeSummary)</div>
+                                            <div class="card-note" style="margin-top:0.2rem;">@job.ResultMessage</div>
+                                            <div class="card-note" style="margin-top:0.2rem;">@job.ServiceDisplayName · @job.CommandName · by @job.RequestedBy</div>
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    }
+                </div>
+            </div>
+        </div>
     }
 
     <div class="card" style="margin-bottom:1rem;">
@@ -392,21 +584,43 @@ else
     private bool _hideSpecials;
     private bool _isSeriesDescriptionExpanded;
     private bool _pullingPlaybackDiagnostics;
+    private bool _savingManualIssue;
+    private bool _resolvingManualIssue;
+    private bool _searchingReplacement;
     private int _diagnosticsHoursBack = 72;
     private string _playbackDiagnosticsStatus = string.Empty;
+    private string _selectedManualIssueType = "corrupt_file";
+    private string _manualIssueNotes = string.Empty;
+    private string _searchReplacementStatus = string.Empty;
     private LibraryItemDto? _item;
+    private LibraryItemDto? _parentSeries;
     private readonly HashSet<int> _expandedSeasonNumbers = [];
     private readonly HashSet<long> _pullingEpisodeDiagnostics = [];
     private readonly List<LibraryItemDto> _episodes = [];
-    private readonly List<LibraryItemSourceLinkDto> _sourceLinks = [];
+    private readonly List<LibraryItemSourceStatusDto> _sourceStatuses = [];
     private readonly List<LibraryIssueDto> _issues = [];
+    private readonly List<LibraryIssueDto> _manualIssueHistory = [];
+    private readonly List<LibraryRemediationJobDto> _remediationJobs = [];
     private readonly List<PlaybackDiagnosticDto> _playbackDiagnostics = [];
     private readonly Dictionary<long, string> _episodeDiagnosticsStatus = [];
+    private LibraryIssueDto? _selectedManualIssue;
+    private static readonly ManualIssueOption[] ManualIssueOptions =
+    [
+        new("audio_language_mismatch", "Incorrect/missing audio language", "Warning", "Preferred audio language not available on this episode file.", "Replace or remux the episode with the preferred audio track."),
+        new("subtitle_missing", "Missing subtitles", "Warning", "Expected subtitles are missing for this episode.", "Fetch subtitles or replace the episode with subtitle tracks."),
+        new("subtitle_language_mismatch", "Incorrect subtitle language", "Warning", "Subtitle language is not what was expected for this episode.", "Download or mux the correct subtitle language."),
+        new("audio_out_of_sync", "Audio out of sync", "High", "Audio is out of sync with video on this episode.", "Replace the episode or remux with corrected timing."),
+        new("wrong_version", "Wrong version / cut", "Warning", "This episode is not the expected version/cut.", "Replace with the correct release/version of the episode."),
+        new("quality_issue", "Poor quality", "Warning", "Episode quality is below expectation.", "Replace with a higher-quality source/profile."),
+        new("corrupt_file", "Corrupt or unplayable", "High", "Episode appears corrupt or fails playback.", "Re-download or repair the episode file."),
+        new("metadata_issue", "Incorrect metadata/mapping", "Info", "Metadata or source mapping appears incorrect for this episode.", "Review IDs/mapping and refresh metadata.")
+    ];
 
     protected override async Task OnParametersSetAsync()
     {
         _loading = true;
         _isSeriesDescriptionExpanded = false;
+        _parentSeries = null;
         _episodeDiagnosticsStatus.Clear();
         _playbackDiagnosticsStatus = string.Empty;
         try
@@ -417,7 +631,7 @@ else
             if (!itemResponse.IsSuccessStatusCode)
             {
                 _item = null;
-                _sourceLinks.Clear();
+                _sourceStatuses.Clear();
                 _issues.Clear();
                 return;
             }
@@ -426,22 +640,27 @@ else
             if (_item is null || !IsTvItem(_item.MediaType))
             {
                 _episodes.Clear();
-                _sourceLinks.Clear();
+                _sourceStatuses.Clear();
                 _issues.Clear();
                 return;
             }
 
             await LoadTvDisplaySettingsAsync();
-            await LoadSourceLinksAsync();
+            await LoadParentSeriesAsync();
+            await LoadSourceStatusesAsync();
             await LoadIssuesAsync();
+            await LoadSelectedManualIssueAsync();
+            await LoadManualIssueHistoryAsync();
             await LoadEpisodesAsync();
             if (IsSeries(_item))
             {
+                _remediationJobs.Clear();
                 _playbackDiagnostics.Clear();
                 _playbackDiagnosticsStatus = "Playback diagnostics are episode-specific. Use the episode actions below or open an episode for full history.";
             }
             else
             {
+                await LoadRemediationJobsAsync();
                 await LoadPlaybackDiagnosticsAsync();
             }
         }
@@ -450,7 +669,7 @@ else
             Snackbar.Add("Failed to load TV details.", Severity.Error);
             _item = null;
             _episodes.Clear();
-            _sourceLinks.Clear();
+            _sourceStatuses.Clear();
             _issues.Clear();
         }
         finally
@@ -483,6 +702,29 @@ else
         }
     }
 
+    private async Task LoadParentSeriesAsync()
+    {
+        _parentSeries = null;
+        if (_item is null || !string.Equals(_item.MediaType, "Episode", StringComparison.OrdinalIgnoreCase)) return;
+
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, $"/api/library/items/{_item.Id}/series-parent");
+            await AttachBearerAsync(request);
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                return;
+            }
+
+            _parentSeries = await response.Content.ReadFromJsonAsync<LibraryItemDto>();
+        }
+        catch
+        {
+            _parentSeries = null;
+        }
+    }
+
     private async Task LoadEpisodesAsync()
     {
         _episodes.Clear();
@@ -509,12 +751,12 @@ else
         }
     }
 
-    private async Task LoadSourceLinksAsync()
+    private async Task LoadSourceStatusesAsync()
     {
-        _sourceLinks.Clear();
+        _sourceStatuses.Clear();
         if (_item is null) return;
 
-        using var request = new HttpRequestMessage(HttpMethod.Get, $"/api/library/items/{_item.Id}/sources");
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"/api/library/items/{_item.Id}/source-status");
         await AttachBearerAsync(request);
         using var response = await Http.SendAsync(request);
         if (!response.IsSuccessStatusCode)
@@ -522,8 +764,8 @@ else
             return;
         }
 
-        var payload = await response.Content.ReadFromJsonAsync<List<LibraryItemSourceLinkDto>>() ?? [];
-        _sourceLinks.AddRange(payload);
+        var payload = await response.Content.ReadFromJsonAsync<List<LibraryItemSourceStatusDto>>() ?? [];
+        _sourceStatuses.AddRange(payload);
     }
 
     private async Task LoadIssuesAsync()
@@ -543,6 +785,27 @@ else
         _issues.AddRange(payload
             .Where(x => x.LibraryItemId == _item.Id)
             .OrderByDescending(x => x.LastDetectedAtUtc));
+    }
+
+    private async Task LoadRemediationJobsAsync()
+    {
+        _remediationJobs.Clear();
+
+        if (_item is null || IsSeries(_item))
+        {
+            return;
+        }
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"/api/library/items/{_item.Id}/remediation-jobs?take=15");
+        await AttachBearerAsync(request);
+        using var response = await Http.SendAsync(request);
+        if (!response.IsSuccessStatusCode)
+        {
+            return;
+        }
+
+        var payload = await response.Content.ReadFromJsonAsync<List<LibraryRemediationJobDto>>() ?? [];
+        _remediationJobs.AddRange(payload.OrderByDescending(x => x.RequestedAtUtc));
     }
 
     private async Task ProbeRuntimeNowAsync()
@@ -580,6 +843,8 @@ else
 
             Snackbar.Add(payload.Message, payload.Success ? Severity.Success : Severity.Warning);
             await LoadIssuesAsync();
+            await LoadSelectedManualIssueAsync();
+            await LoadManualIssueHistoryAsync();
         }
         catch
         {
@@ -649,6 +914,60 @@ else
         finally
         {
             _pullingPlaybackDiagnostics = false;
+        }
+    }
+
+    private async Task SearchReplacementAsync()
+    {
+        if (_item is null || IsSeries(_item)) return;
+
+        var remediationPlan = GetSelectedIssueRemediationPlan();
+        if (remediationPlan is null)
+        {
+            _searchReplacementStatus = "The selected issue is for review/fix work only and does not send a replacement search.";
+            Snackbar.Add(_searchReplacementStatus, Severity.Info);
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(_manualIssueNotes))
+        {
+            Snackbar.Add("Add notes describing why this episode should be replaced.", Severity.Warning);
+            return;
+        }
+
+        _searchingReplacement = true;
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, $"/api/library/items/{_item.Id}/remediation/search-replacement")
+            {
+                Content = JsonContent.Create(new SearchReplacementRequest(remediationPlan.ReasonKey, _manualIssueNotes.Trim(), _selectedManualIssueType))
+            };
+            await AttachBearerAsync(request);
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                var error = await response.Content.ReadFromJsonAsync<ApiErrorResponse>();
+                _searchReplacementStatus = string.IsNullOrWhiteSpace(error?.Message)
+                    ? $"Replacement search failed ({(int)response.StatusCode})."
+                    : error!.Message;
+                await LoadRemediationJobsAsync();
+                Snackbar.Add(_searchReplacementStatus, response.StatusCode == System.Net.HttpStatusCode.BadRequest ? Severity.Warning : Severity.Error);
+                return;
+            }
+
+            var payload = await response.Content.ReadFromJsonAsync<LibraryItemRemediationResponse>();
+            _searchReplacementStatus = payload?.Message ?? payload?.Intent?.ProfileSummary ?? "Replacement search queued.";
+            await LoadRemediationJobsAsync();
+            Snackbar.Add(_searchReplacementStatus, payload?.Success == true ? Severity.Success : Severity.Warning);
+        }
+        catch
+        {
+            _searchReplacementStatus = "Replacement search failed.";
+            Snackbar.Add(_searchReplacementStatus, Severity.Error);
+        }
+        finally
+        {
+            _searchingReplacement = false;
         }
     }
 
@@ -829,6 +1148,9 @@ else
     private static string FormatInt(int? value)
         => value.HasValue && value.Value > 0 ? value.Value.ToString() : "—";
 
+    private int GetLinkedSourceCoverageCount()
+        => _sourceStatuses.Count(x => x.HasSourceLink);
+
     private static string DisplayValue(string? value)
         => string.IsNullOrWhiteSpace(value) ? "—" : value;
 
@@ -902,6 +1224,263 @@ else
         };
     }
 
+    private async Task OnManualIssueTypeChangedAsync()
+    {
+        _searchReplacementStatus = string.Empty;
+        await LoadSelectedManualIssueAsync();
+    }
+
+    private async Task LoadSelectedManualIssueAsync()
+    {
+        _selectedManualIssue = null;
+
+        if (_item is null || IsSeries(_item))
+        {
+            return;
+        }
+
+        using var issueRequest = new HttpRequestMessage(HttpMethod.Get, $"/api/library/items/{_item.Id}/issues?issueType={_selectedManualIssueType}&take=1");
+        await AttachBearerAsync(issueRequest);
+        using var issueResponse = await Http.SendAsync(issueRequest);
+        if (!issueResponse.IsSuccessStatusCode)
+        {
+            return;
+        }
+
+        var payload = await issueResponse.Content.ReadFromJsonAsync<List<LibraryIssueDto>>() ?? [];
+        _selectedManualIssue = payload.FirstOrDefault();
+    }
+
+    private async Task LoadManualIssueHistoryAsync()
+    {
+        _manualIssueHistory.Clear();
+
+        if (_item is null || IsSeries(_item))
+        {
+            return;
+        }
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"/api/library/items/{_item.Id}/issues?take=100");
+        await AttachBearerAsync(request);
+        using var response = await Http.SendAsync(request);
+        if (!response.IsSuccessStatusCode)
+        {
+            return;
+        }
+
+        var payload = await response.Content.ReadFromJsonAsync<List<LibraryIssueDto>>() ?? [];
+        _manualIssueHistory.AddRange(payload.OrderByDescending(x => x.LastDetectedAtUtc));
+    }
+
+    private async Task SaveManualIssueAsync()
+    {
+        if (_item is null || IsSeries(_item)) return;
+
+        if (string.IsNullOrWhiteSpace(_manualIssueNotes))
+        {
+            Snackbar.Add("Add notes describing the issue before saving.", Severity.Warning);
+            return;
+        }
+
+        var option = GetSelectedManualIssueOption();
+        if (option is null)
+        {
+            Snackbar.Add("Select a valid issue type.", Severity.Warning);
+            return;
+        }
+
+        _savingManualIssue = true;
+        try
+        {
+            var details = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                issueType = option.Key,
+                notes = _manualIssueNotes,
+                availableAudioLanguages = _item.AudioLanguages,
+                availableSubtitleLanguages = _item.SubtitleLanguages,
+                flaggedAtUtc = DateTimeOffset.UtcNow,
+                origin = "manual"
+            });
+
+            var payload = new CreateLibraryIssueRequest(
+                option.Key,
+                option.Severity,
+                BuildManualIssueSummary(option, _manualIssueNotes),
+                option.SuggestedAction,
+                details,
+                "Open");
+
+            using var request = new HttpRequestMessage(HttpMethod.Post, $"/api/library/items/{_item.Id}/issues")
+            {
+                Content = JsonContent.Create(payload)
+            };
+            await AttachBearerAsync(request);
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add($"Failed to save issue ({(int)response.StatusCode}).", Severity.Error);
+                return;
+            }
+
+            Snackbar.Add($"Issue saved: {option.Label}.", Severity.Warning);
+            await LoadIssuesAsync();
+            await LoadSelectedManualIssueAsync();
+            await LoadManualIssueHistoryAsync();
+            _manualIssueNotes = string.Empty;
+        }
+        catch
+        {
+            Snackbar.Add("Failed to save manual issue.", Severity.Error);
+        }
+        finally
+        {
+            _savingManualIssue = false;
+        }
+    }
+
+    private async Task ResolveSelectedManualIssueAsync()
+    {
+        if (_selectedManualIssue is null) return;
+
+        _resolvingManualIssue = true;
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, $"/api/library/issues/{_selectedManualIssue.Id}/resolve");
+            await AttachBearerAsync(request);
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add($"Failed to resolve issue ({(int)response.StatusCode}).", Severity.Error);
+                return;
+            }
+
+            Snackbar.Add("Issue resolved.", Severity.Success);
+            await LoadIssuesAsync();
+            await LoadSelectedManualIssueAsync();
+            await LoadManualIssueHistoryAsync();
+        }
+        catch
+        {
+            Snackbar.Add("Failed to resolve issue.", Severity.Error);
+        }
+        finally
+        {
+            _resolvingManualIssue = false;
+        }
+    }
+
+    private ManualIssueOption? GetSelectedManualIssueOption()
+        => ManualIssueOptions.FirstOrDefault(x => x.Key == _selectedManualIssueType);
+
+    private ManualIssueRemediationPlan? GetSelectedIssueRemediationPlan()
+        => _selectedManualIssueType.Trim().ToLowerInvariant() switch
+        {
+            "audio_language_mismatch" => new ManualIssueRemediationPlan("wrong_language", "Search Sonarr for a replacement with the right audio/subtitle language."),
+            "subtitle_missing" => new ManualIssueRemediationPlan("wrong_language", "Search Sonarr for a replacement with the subtitle tracks you expect."),
+            "subtitle_language_mismatch" => new ManualIssueRemediationPlan("wrong_language", "Search Sonarr for a replacement with the correct subtitle language."),
+            "audio_out_of_sync" => new ManualIssueRemediationPlan("playback_failure", "Search Sonarr for a replacement when the episode plays but the audio timing is broken."),
+            "wrong_version" => new ManualIssueRemediationPlan("wrong_version", "Search Sonarr for the correct version/cut of this episode."),
+            "quality_issue" => new ManualIssueRemediationPlan("quality_issue", "Search Sonarr for a better-quality episode release."),
+            "corrupt_file" => new ManualIssueRemediationPlan("corrupt_file", "Search Sonarr for a replacement because this episode file looks corrupt or unplayable."),
+            _ => null
+        };
+
+    private bool CanSearchReplacementForSelectedIssue()
+        => GetSelectedIssueRemediationPlan() is not null;
+
+    private string GetSearchReplacementHelperText()
+    {
+        var remediationPlan = GetSelectedIssueRemediationPlan();
+        return remediationPlan?.HelperText
+            ?? "The selected issue is informational only. Save the issue, but do not trigger replacement search for metadata/mapping review.";
+    }
+
+    private string GetSearchReplacementNotesDisclaimer()
+        => "Issue type drives the remediation policy. Notes are stored for audit/history and operator context; they do not change the outbound Sonarr command yet.";
+
+    private IReadOnlyList<string> GetSearchReplacementRequestSteps()
+    {
+        var plan = GetSelectedIssueRemediationPlan();
+        return RemediationRequestSteps.Build(
+            providerName: "Sonarr",
+            itemLabel: "episode",
+            issueType: _selectedManualIssueType,
+            reasonKey: plan?.ReasonKey,
+            profileStep: GetSearchReplacementRequestProfileStep());
+    }
+
+    private string GetSearchReplacementRequestProfileStep()
+    {
+        if (_item is null)
+        {
+            return "re-check the current acquisition profile before queueing the request.";
+        }
+
+        var profile = string.IsNullOrWhiteSpace(_item.QualityProfile) ? "(unset)" : _item.QualityProfile.Trim();
+        var normalizedProfile = profile.ToLowerInvariant();
+        var issueType = (_selectedManualIssueType ?? string.Empty).Trim().ToLowerInvariant();
+
+        if (issueType is "audio_language_mismatch" or "subtitle_missing" or "subtitle_language_mismatch" or "wrong_language")
+        {
+            return LooksLikeGenericLanguageProfile(normalizedProfile)
+                ? $"likely stop and ask for profile review first because '{profile}' looks too generic for language-driven remediation"
+                : $"use the current '{profile}' profile because it already looks specific enough for language-driven remediation";
+        }
+
+        if (issueType == "quality_issue")
+        {
+            return LooksLikeLowCeilingQualityProfile(normalizedProfile)
+                ? $"likely stop and ask for profile review first because '{profile}' caps upgrades too low"
+                : $"use the current '{profile}' profile because it still allows higher-quality replacements";
+        }
+
+        return $"use the current '{profile}' profile because it does not block this remediation path";
+    }
+
+    private static bool LooksLikeGenericLanguageProfile(string normalizedProfile)
+        => string.IsNullOrWhiteSpace(normalizedProfile)
+           || normalizedProfile is "any" or "default"
+           || (!normalizedProfile.Contains("english")
+               && !normalizedProfile.Contains("eng")
+               && !normalizedProfile.Contains("multi")
+               && !normalizedProfile.Contains("dub")
+               && !normalizedProfile.Contains("sub")
+               && !normalizedProfile.Contains("dual")
+               && !normalizedProfile.Contains("original"));
+
+    private static bool LooksLikeLowCeilingQualityProfile(string normalizedProfile)
+        => normalizedProfile.Contains("sd")
+           || normalizedProfile.Contains("dvd")
+           || normalizedProfile.Contains("480")
+           || normalizedProfile.Contains("576")
+           || normalizedProfile.Contains("720")
+           || normalizedProfile.Contains("low")
+           || normalizedProfile.Contains("mobile");
+
+    private static string BuildManualIssueSummary(ManualIssueOption option, string notes)
+        => $"{option.DefaultSummary} Note: {notes.Trim()}";
+
+    private static string ExtractIssueNotes(string detailsJson)
+    {
+        if (string.IsNullOrWhiteSpace(detailsJson)) return "—";
+
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(detailsJson);
+            if (doc.RootElement.TryGetProperty("notes", out var notes) && notes.ValueKind == System.Text.Json.JsonValueKind.String)
+            {
+                var value = notes.GetString();
+                return string.IsNullOrWhiteSpace(value) ? "—" : value;
+            }
+        }
+        catch
+        {
+            // ignore malformed details
+        }
+
+        return "—";
+    }
+
     private static string GetIssueTypeLabel(string issueType)
     {
         var value = (issueType ?? string.Empty).Trim().ToLowerInvariant();
@@ -909,6 +1488,14 @@ else
         {
             "runtime_probe_failed" => "Runtime probe failed",
             "runtime_mismatch" => "Runtime mismatch",
+            "wrong_language" => "Wrong language",
+            "audio_language_mismatch" => "Incorrect/missing audio language",
+            "subtitle_missing" => "Missing subtitles",
+            "subtitle_language_mismatch" => "Incorrect subtitle language",
+            "wrong_version" => "Wrong version / cut",
+            "quality_issue" => "Poor quality",
+            "corrupt_file" => "Corrupt or unplayable",
+            "playback_failure" => "Playback failure",
             _ => string.IsNullOrWhiteSpace(issueType) ? "Unknown" : issueType
         };
     }
@@ -983,6 +1570,74 @@ else
         }
     }
 
+    private static string GetRemediationStatusLabel(string status)
+        => string.IsNullOrWhiteSpace(status)
+            ? "Unknown"
+            : status switch
+            {
+                "BlockedProfileReview" => "Blocked · profile review",
+                "BlockedManualReview" => "Blocked · manual review",
+                "BlacklistedAndQueued" => "Queued after blacklist",
+                "SearchQueued" => "Queued",
+                "Processing" => "Processing",
+                "ImportedReplacement" => "Imported replacement",
+                "Resolved" => "Resolved",
+                "VerificationFailed" => "Verification failed",
+                _ => status
+            };
+
+    private static string GetVerificationLabel(string status)
+        => status switch
+        {
+            "Resolved" => "Verified",
+            "VerificationFailed" => "Failed",
+            "ImportedReplacement" or "Processing" => "Waiting",
+            "BlockedProfileReview" or "BlockedManualReview" => "Not started",
+            _ => "Pending"
+        };
+
+    private static string GetVerificationHelperText(LibraryRemediationJobDto job)
+        => job.Status switch
+        {
+            "Resolved" => "Replacement evidence passed verification and the linked issue was auto-resolved.",
+            "VerificationFailed" => "Replacement imported, but the latest evidence still shows the issue. The linked issue stays open.",
+            "ImportedReplacement" => "A new release appears to be in place, but MediaCloud still needs fresher evidence before calling it fixed.",
+            "Processing" => "The source changed after remediation. MediaCloud is waiting for fresh metadata or probes.",
+            "BlockedProfileReview" => "Verification never started because the acquisition profile needs review first.",
+            "BlockedManualReview" => "Verification never started because this issue needs manual review instead of replacement.",
+            _ => "Verification is pending the next evidence refresh."
+        };
+
+    private static string GetRemediationStatusBadgeStyle(string status)
+        => BuildRemediationBadgeStyle(status switch
+        {
+            "Resolved" => "success",
+            "BlacklistedAndQueued" or "SearchQueued" or "Processing" or "ImportedReplacement" => "info",
+            "VerificationFailed" or "Failed" => "danger",
+            "BlockedProfileReview" or "BlockedManualReview" => "warning",
+            _ => "default"
+        });
+
+    private static string GetVerificationBadgeStyle(string status)
+        => BuildRemediationBadgeStyle(status switch
+        {
+            "Resolved" => "success",
+            "VerificationFailed" => "danger",
+            "ImportedReplacement" or "Processing" => "warning",
+            "BlockedProfileReview" or "BlockedManualReview" => "default",
+            _ => "info"
+        });
+
+    private static string BuildRemediationBadgeStyle(string tone)
+        => tone switch
+        {
+            "success" => "display:inline-flex; align-items:center; padding:0.18rem 0.5rem; border-radius:999px; background:rgba(34,197,94,0.18); color:#bbf7d0; font-size:0.78rem; font-weight:700;",
+            "info" => "display:inline-flex; align-items:center; padding:0.18rem 0.5rem; border-radius:999px; background:rgba(59,130,246,0.18); color:#bfdbfe; font-size:0.78rem; font-weight:700;",
+            "warning" => "display:inline-flex; align-items:center; padding:0.18rem 0.5rem; border-radius:999px; background:rgba(245,158,11,0.18); color:#fde68a; font-size:0.78rem; font-weight:700;",
+            "danger" => "display:inline-flex; align-items:center; padding:0.18rem 0.5rem; border-radius:999px; background:rgba(239,68,68,0.18); color:#fecaca; font-size:0.78rem; font-weight:700;",
+            _ => "display:inline-flex; align-items:center; padding:0.18rem 0.5rem; border-radius:999px; background:rgba(148,163,184,0.18); color:#e2e8f0; font-size:0.78rem; font-weight:700;"
+        };
+
     private async Task AttachBearerAsync(HttpRequestMessage request)
     {
         var token = await TokenStore.GetTokenAsync();
@@ -1039,6 +1694,22 @@ else
         DateTimeOffset LastSeenAtUtc,
         bool IsDeletedAtSource);
 
+    private record LibraryItemSourceStatusDto(
+        string ServiceKey,
+        string DisplayName,
+        long? IntegrationId,
+        string InstanceName,
+        bool HasSourceLink,
+        bool CanSync,
+        string Note,
+        bool? RadarrMonitored,
+        bool? DesiredMonitored,
+        bool? MonitoringDrift,
+        bool? OverseerrInMedia,
+        bool SupportsMonitoringSync,
+        bool? MonitoringSynced,
+        bool AutoSyncEnabled);
+
     private record LibraryIssueDto(
         long Id,
         long LibraryItemId,
@@ -1072,4 +1743,7 @@ else
     private record RuntimeMismatchDetails(double DiffMinutes, double DiffPercent, double ThresholdMinutes);
     private record RuntimeProbeFailureDetails(string FilePath, string ProbeError, int? ExitCode);
     private record TvDisplaySettingsResponse(bool HideSpecialsByDefault);
+    private record CreateLibraryIssueRequest(string IssueType, string Severity, string Summary, string SuggestedAction, string DetailsJson, string Status = "Open");
+    private record ManualIssueOption(string Key, string Label, string Severity, string DefaultSummary, string SuggestedAction);
+    private record ManualIssueRemediationPlan(string ReasonKey, string HelperText);
 }
