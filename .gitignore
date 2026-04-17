@@ -37,3 +37,6 @@ playwright-report/
 tmp-*
 tmp_*
 *.png
+!apps/web/wwwroot/favicon.png
+!apps/web/wwwroot/icons/favicon-16x16.png
+!apps/web/wwwroot/icons/favicon-32x32.png
