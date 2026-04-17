@@ -934,7 +934,7 @@ app.MapGet("/api/integrations", async (MediaCloudDbContext db, IHttpClientFactor
             ? await TryGetProwlarrSummaryAsync(row, httpClientFactory)
             : null;
 
-        if (row.Enabled && (string.IsNullOrWhiteSpace(row.CurrentVersion) || string.IsNullOrWhiteSpace(row.LatestReleaseVersion)))
+        if (row.Enabled && ShouldRefreshIntegrationVersionMetadata(row))
         {
             var versionMetadata = await IntegrationCatalog.RefreshIntegrationVersionMetadataAsync(row, httpClientFactory);
             if (!string.Equals(row.CurrentVersion, versionMetadata.CurrentVersion, StringComparison.Ordinal) || !string.Equals(row.LatestReleaseVersion, versionMetadata.LatestReleaseVersion, StringComparison.Ordinal))
@@ -1529,11 +1529,38 @@ app.MapPost("/api/integrations/{id:long}/test", async (long id, MediaCloudDbCont
     var config = await db.IntegrationConfigs.FirstOrDefaultAsync(x => x.Id == id);
     if (config is null) return Results.NotFound(new ErrorResponse("Integration instance not found."));
 
+    var now = DateTimeOffset.UtcNow;
+    var state = await db.IntegrationSyncStates.FirstOrDefaultAsync(x => x.IntegrationId == id);
+    if (state is null)
+    {
+        state = new IntegrationSyncState
+        {
+            IntegrationId = id,
+            LastCursor = string.Empty,
+            LastEtag = string.Empty,
+            ConsecutiveFailureCount = 0,
+            LastError = string.Empty,
+            UpdatedAtUtc = now
+        };
+        db.IntegrationSyncStates.Add(state);
+    }
+
+    state.LastAttemptedAtUtc = now;
+    state.UpdatedAtUtc = now;
+
     var result = await IntegrationCatalog.TestConnectionAsync(config.ServiceKey, config, httpClientFactory);
     var latestReleaseVersion = await IntegrationCatalog.FetchLatestReleaseVersionAsync(config.ServiceKey, httpClientFactory);
+
+    state.LastError = result.Success ? string.Empty : result.Message;
+    state.ConsecutiveFailureCount = result.Success ? 0 : state.ConsecutiveFailureCount + 1;
+    if (result.Success)
+    {
+        state.LastSuccessfulAtUtc = now;
+    }
+
     config.CurrentVersion = result.Version;
     config.LatestReleaseVersion = latestReleaseVersion;
-    config.UpdatedAtUtc = DateTimeOffset.UtcNow;
+    config.UpdatedAtUtc = now;
     await db.SaveChangesAsync();
     return Results.Ok(new IntegrationTestResponse(config.Id, config.ServiceKey, config.InstanceName, result.Success, result.StatusCode, result.Message, result.Version));
 }).RequireAuthorization("AdminOnly");
@@ -2773,6 +2800,17 @@ app.MapGet("/api/library/issues", async (MediaCloudDbContext db, string? status,
 }).RequireAuthorization();
 
 app.Run();
+
+static bool ShouldRefreshIntegrationVersionMetadata(IntegrationConfig config)
+{
+    if (string.IsNullOrWhiteSpace(config.CurrentVersion) || string.IsNullOrWhiteSpace(config.LatestReleaseVersion))
+    {
+        return true;
+    }
+
+    return string.Equals(config.ServiceKey, "plex", StringComparison.OrdinalIgnoreCase)
+        && string.Equals(config.CurrentVersion.Trim(), "1.0", StringComparison.OrdinalIgnoreCase);
+}
 
 static void EnsureSqliteColumn(MediaCloudDbContext db, string tableName, string columnName, string columnDefinition)
 {
@@ -7527,6 +7565,7 @@ public static class IntegrationCatalog
             "prowlarr" => "https://api.github.com/repos/Prowlarr/Prowlarr/releases/latest",
             "bazarr" => "https://api.github.com/repos/morpheus65535/bazarr/releases/latest",
             "tautulli" => "https://api.github.com/repos/Tautulli/Tautulli/releases/latest",
+            "overseerr" => "https://api.github.com/repos/sct/overseerr/releases/latest",
             "plex" => "https://plex.tv/api/downloads/5.json",
             _ => string.Empty
         };
@@ -7540,7 +7579,7 @@ public static class IntegrationCatalog
             var key = (serviceKey ?? string.Empty).Trim().ToLowerInvariant();
             if (key == "plex")
             {
-                var match = System.Text.RegularExpressions.Regex.Match(body, "version=\"([^\"]+)\"");
+                var match = System.Text.RegularExpressions.Regex.Match(body, "<MediaContainer[^>]*\\bversion=\"([^\"]+)\"", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
                 return match.Success ? match.Groups[1].Value : string.Empty;
             }
 
@@ -7640,7 +7679,7 @@ public static class IntegrationCatalog
             "prowlarr" => $"{baseUrl}/api/v1/system/status",
             "bazarr" => $"{baseUrl}/api/system/status",
             "plex" => $"{baseUrl}/identity",
-            "tautulli" => $"{baseUrl}/api/v2?apikey={Uri.EscapeDataString(config.ApiKey ?? string.Empty)}&cmd=get_activity",
+            "tautulli" => $"{baseUrl}/api/v2?apikey={Uri.EscapeDataString(config.ApiKey ?? string.Empty)}&cmd=get_tautulli_info",
             _ => baseUrl
         };
 

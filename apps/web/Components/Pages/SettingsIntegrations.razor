@@ -270,12 +270,6 @@
         }
     }
 
-    @if (!string.IsNullOrWhiteSpace(_testMessage))
-    {
-        <p class="@(_testSuccess ? "success-text" : "error-text")" style="margin-top:0.65rem;">
-            @_testMessage
-        </p>
-    }
 </div>
 
 @code {
@@ -486,6 +480,7 @@
             {
                 _testSuccess = false;
                 _testMessage = $"Connection test failed ({(int)response.StatusCode}).";
+                Snackbar.Add(_testMessage, _testSuccess ? Severity.Success : Severity.Error);
                 return;
             }
 
@@ -494,6 +489,7 @@
             {
                 _testSuccess = false;
                 _testMessage = "Connection test returned no data.";
+                Snackbar.Add(_testMessage, _testSuccess ? Severity.Success : Severity.Error);
                 return;
             }
 
@@ -501,11 +497,14 @@
             _testMessage = result.Success
                 ? $"{item.DisplayName} / {item.InstanceName}: connection successful ({result.StatusCode}){(string.IsNullOrWhiteSpace(result.Version) ? string.Empty : $" · version {result.Version}")}."
                 : $"{item.DisplayName} / {item.InstanceName}: connection failed ({result.StatusCode}) — {result.Message}";
+            Snackbar.Add(_testMessage, _testSuccess ? Severity.Success : Severity.Error);
+            await LoadInstancesAsync();
         }
         catch
         {
             _testSuccess = false;
             _testMessage = "Connection test failed.";
+            Snackbar.Add(_testMessage, _testSuccess ? Severity.Success : Severity.Error);
         }
         finally
         {
@@ -757,14 +756,14 @@
     private static string GetHealthLabel(IntegrationInstanceResponse item)
     {
         if (!item.Enabled) return "Disabled";
+        if (!string.IsNullOrWhiteSpace(item.LastError) || item.ConsecutiveFailureCount > 0) return "Attention needed";
+        if (item.LastSuccessfulAtUtc.HasValue) return "Healthy";
+        if (item.LastAttemptedAtUtc.HasValue) return "Awaiting success";
         if (!item.SupportsSync)
         {
             return item.ProwlarrSummary is not null ? "Operational" : "Ops-only";
         }
 
-        if (!string.IsNullOrWhiteSpace(item.LastError) || item.ConsecutiveFailureCount > 0) return "Attention needed";
-        if (item.LastSuccessfulAtUtc.HasValue) return "Healthy";
-        if (item.LastAttemptedAtUtc.HasValue) return "Awaiting success";
         return "Not checked";
     }
 
