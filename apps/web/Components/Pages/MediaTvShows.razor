@@ -1,7 +1,6 @@
 @page "/media/tv-shows"
 @attribute [Authorize]
 @inject HttpClient Http
-@inject AuthTokenStore TokenStore
 @inject ISnackbar Snackbar
 
 <PageTitle>TV Shows</PageTitle>
@@ -153,7 +152,6 @@
         try
         {
             using var listRequest = new HttpRequestMessage(HttpMethod.Get, "/api/integrations");
-            await AttachBearerAsync(listRequest);
             using var listResponse = await Http.SendAsync(listRequest);
             if (!listResponse.IsSuccessStatusCode)
             {
@@ -185,7 +183,6 @@
                 {
                     Content = JsonContent.Create(new TriggerIntegrationSyncRequest(false, "tv"))
                 };
-                await AttachBearerAsync(syncRequest);
                 using var syncResponse = await Http.SendAsync(syncRequest);
 
                 if (!syncResponse.IsSuccessStatusCode)
@@ -241,7 +238,6 @@
             {
                 Content = JsonContent.Create(new BatchRuntimeReprobeRequest("Episode", 5000, true))
             };
-            await AttachBearerAsync(startRequest);
             using var startResponse = await Http.SendAsync(startRequest);
             if (!startResponse.IsSuccessStatusCode)
             {
@@ -259,7 +255,6 @@
             while (true)
             {
                 using var statusRequest = new HttpRequestMessage(HttpMethod.Get, $"/api/library/items/reprobe-runtimes/jobs/{startPayload.JobId}");
-                await AttachBearerAsync(statusRequest);
                 using var statusResponse = await Http.SendAsync(statusRequest);
                 if (!statusResponse.IsSuccessStatusCode)
                 {
@@ -323,7 +318,6 @@
                 {
                     Content = JsonContent.Create(new PurgeLibraryRequest(mediaType, true, true))
                 };
-                await AttachBearerAsync(purgeRequest);
                 using var purgeResponse = await Http.SendAsync(purgeRequest);
                 if (!purgeResponse.IsSuccessStatusCode)
                 {
@@ -361,15 +355,6 @@
 
     private static string Capitalize(string value)
         => string.IsNullOrWhiteSpace(value) ? value : char.ToUpperInvariant(value[0]) + value[1..];
-
-    private async Task AttachBearerAsync(HttpRequestMessage request)
-    {
-        var token = await TokenStore.GetTokenAsync();
-        if (!string.IsNullOrWhiteSpace(token))
-        {
-            request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
-        }
-    }
 
     private async Task SetActionProgressAsync(string text, double percent, bool indeterminate)
     {

@@ -12,6 +12,8 @@ public class IntegrationConfig
     public string Password { get; set; } = string.Empty;
     public string RemoteRootPath { get; set; } = string.Empty;
     public string LocalRootPath { get; set; } = string.Empty;
+    public string CurrentVersion { get; set; } = string.Empty;
+    public string LatestReleaseVersion { get; set; } = string.Empty;
     public bool Enabled { get; set; }
     public DateTimeOffset UpdatedAtUtc { get; set; } = DateTimeOffset.UtcNow;
 }

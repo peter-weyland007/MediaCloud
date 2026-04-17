@@ -3,12 +3,25 @@ using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.AspNetCore.Components.Server.ProtectedBrowserStorage;
 using Microsoft.AspNetCore.DataProtection;
+using Microsoft.Extensions.Configuration;
 using MudBlazor;
 using MudBlazor.Services;
 using web.Components;
 using web.Services.Auth;
 
 var builder = WebApplication.CreateBuilder(args);
+
+var apiBaseUrl = builder.Configuration["ApiBaseUrl"];
+if (string.IsNullOrWhiteSpace(apiBaseUrl))
+{
+    var appBaseConfiguration = new ConfigurationBuilder()
+        .SetBasePath(AppContext.BaseDirectory)
+        .AddJsonFile("appsettings.json", optional: true)
+        .AddJsonFile($"appsettings.{builder.Environment.EnvironmentName}.json", optional: true)
+        .Build();
+
+    apiBaseUrl = appBaseConfiguration["ApiBaseUrl"];
+}
 
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
@@ -38,7 +51,6 @@ builder.Services
         options.AccessDeniedPath = "/login";
     });
 builder.Services.AddAuthorization();
-builder.Services.AddAuthorizationCore();
 builder.Services.AddCascadingAuthenticationState();
 
 builder.Services.AddScoped<ProtectedSessionStorage>();
@@ -46,11 +58,12 @@ builder.Services.AddScoped<AuthTokenStore>();
 builder.Services.AddScoped<ApiAuthenticationStateProvider>();
 builder.Services.AddScoped<AuthenticationStateProvider>(sp => sp.GetRequiredService<ApiAuthenticationStateProvider>());
 builder.Services.AddScoped<ApiAuthClient>();
+builder.Services.AddScoped<AuthorizedApiRequestFactory>();
 builder.Services.AddTransient<BearerTokenHandler>();
 
 builder.Services.AddHttpClient("MediaCloudApi", client =>
 {
-    client.BaseAddress = new Uri(builder.Configuration["ApiBaseUrl"] ?? "http://127.0.0.1:5199");
+    client.BaseAddress = new Uri(apiBaseUrl ?? "http://127.0.0.1:5199");
 }).AddHttpMessageHandler<BearerTokenHandler>();
 
 builder.Services.AddScoped(sp => sp.GetRequiredService<IHttpClientFactory>().CreateClient("MediaCloudApi"));

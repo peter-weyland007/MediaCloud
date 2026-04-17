@@ -407,7 +407,11 @@
     }
 
     private static string GetPlayabilityLabel(LibraryItemDto item)
-        => string.IsNullOrWhiteSpace(item.PlayabilityScore) ? "—" : item.PlayabilityScore;
+        => string.IsNullOrWhiteSpace(item.PlayabilityScore)
+            ? "—"
+            : item.PlayabilityNumericScore > 0
+                ? $"{item.PlayabilityScore} ({item.PlayabilityNumericScore})"
+                : item.PlayabilityScore;
 
     private static string GetPlayabilityBadgeStyle(LibraryItemDto item)
     {
@@ -416,7 +420,8 @@
         {
             "excellent" => baseStyle + "background:rgba(16,185,129,0.18); color:#6ee7b7; border:1px solid rgba(16,185,129,0.45);",
             "good" => baseStyle + "background:rgba(59,130,246,0.18); color:#bfdbfe; border:1px solid rgba(59,130,246,0.45);",
-            "transcode likely" => baseStyle + "background:rgba(234,179,8,0.22); color:#fde68a; border:1px solid rgba(234,179,8,0.65);",
+            "caution" => baseStyle + "background:rgba(234,179,8,0.22); color:#fde68a; border:1px solid rgba(234,179,8,0.65);",
+            "risky" => baseStyle + "background:rgba(249,115,22,0.22); color:#fdba74; border:1px solid rgba(249,115,22,0.65);",
             "problematic" => baseStyle + "background:rgba(239,68,68,0.22); color:#fecaca; border:1px solid rgba(239,68,68,0.65);",
             _ => baseStyle + "background:rgba(148,163,184,0.18); color:#cbd5e1; border:1px solid rgba(148,163,184,0.35);"
         };
@@ -555,7 +560,7 @@
 
     private record LibraryItemCountDto(int Total);
     private record LibraryJumpDto(bool Found, string Token, int PageIndex, long? TargetId);
-    private record LibraryItemDto(long Id, string CanonicalKey, string MediaType, string DisplayTitle, string Title, string SortTitle, int? Year, int? TmdbId, int? TvdbId, string ImdbId, string PlexRatingKey, string Description, string DescriptionSourceService, double? RuntimeMinutes, double? ActualRuntimeMinutes, IReadOnlyList<string> AudioLanguages, IReadOnlyList<string> SubtitleLanguages, string PlayabilityScore, string PlayabilitySummary, DateTimeOffset? PlayabilityCheckedAtUtc, IReadOnlyList<string> PlayabilityReasons, string PlayabilityVideoCodec, IReadOnlyList<string> PlayabilityAudioCodecs, IReadOnlyList<string> PlayabilitySubtitleCodecs, bool IsAvailable, string QualityProfile, DateTimeOffset? SourceUpdatedAtUtc, DateTimeOffset UpdatedAtUtc, string PrimaryFilePath, bool LocalFileExists, IReadOnlyList<string> SourceServices);
+    private record LibraryItemDto(long Id, string CanonicalKey, string MediaType, string DisplayTitle, string Title, string SortTitle, int? Year, int? TmdbId, int? TvdbId, string ImdbId, string PlexRatingKey, string Description, string DescriptionSourceService, double? RuntimeMinutes, double? ActualRuntimeMinutes, IReadOnlyList<string> AudioLanguages, IReadOnlyList<string> SubtitleLanguages, string PlayabilityScore, int PlayabilityNumericScore, string PlayabilitySummary, DateTimeOffset? PlayabilityCheckedAtUtc, IReadOnlyList<string> PlayabilityReasons, string PlayabilityVideoCodec, IReadOnlyList<string> PlayabilityAudioCodecs, IReadOnlyList<string> PlayabilitySubtitleCodecs, bool IsAvailable, string QualityProfile, DateTimeOffset? SourceUpdatedAtUtc, DateTimeOffset UpdatedAtUtc, string PrimaryFilePath, bool LocalFileExists, IReadOnlyList<string> SourceServices);
     private record RuntimePolicySettingsResponse(double ToleranceMinutesFloor, double TolerancePercent, double WarningPercent, double HighMinutes, double CriticalPercent, double CriticalMinutes);
     private record RuntimeMatchResult(string Label, string Kind);
 }

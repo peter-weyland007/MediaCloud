@@ -66,6 +66,9 @@
     [SupplyParameterFromQuery(Name = "username")]
     public string? RegisteredUsername { get; set; }
 
+    [SupplyParameterFromQuery(Name = "ReturnUrl")]
+    public string? ReturnUrl { get; set; }
+
     private readonly LoginModel _model = new();
     private string? _errorMessage;
     private string? _successMessage;
@@ -80,7 +83,7 @@
         var authState = await AuthStateProvider.GetAuthenticationStateAsync();
         if (authState.User.Identity?.IsAuthenticated == true)
         {
-            NavigationManager.NavigateTo("/");
+            NavigationManager.NavigateTo(GetPostLoginDestination());
         }
     }
 
@@ -132,12 +135,29 @@
                 return;
             }
 
-            NavigationManager.NavigateTo("/");
+            NavigationManager.NavigateTo(GetPostLoginDestination());
         }
         finally
         {
             _isSubmitting = false;
         }
+    }
+
+    private string GetPostLoginDestination()
+    {
+        if (string.IsNullOrWhiteSpace(ReturnUrl))
+        {
+            return "/";
+        }
+
+        if (!ReturnUrl.StartsWith("/", StringComparison.Ordinal)
+            || ReturnUrl.StartsWith("//", StringComparison.Ordinal)
+            || ReturnUrl.StartsWith("/login", StringComparison.OrdinalIgnoreCase))
+        {
+            return "/";
+        }
+
+        return ReturnUrl;
     }
 
     private class AuthSettingsResponse

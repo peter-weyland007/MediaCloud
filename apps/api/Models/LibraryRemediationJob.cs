@@ -29,7 +29,17 @@ public class LibraryRemediationJob
     public string BlacklistStatus { get; set; } = string.Empty;
     public string OutcomeSummary { get; set; } = string.Empty;
     public string ResultMessage { get; set; } = string.Empty;
+    public string VerificationStatus { get; set; } = string.Empty;
+    public string VerificationSummary { get; set; } = string.Empty;
+    public string VerificationDetailsJson { get; set; } = string.Empty;
+    public DateTimeOffset? VerificationCheckedAtUtc { get; set; }
+    public string LoopbackStatus { get; set; } = string.Empty;
+    public string LoopbackSummary { get; set; } = string.Empty;
     public string ReleaseSummary { get; set; } = string.Empty;
+    public string OperatorReviewStatus { get; set; } = string.Empty;
+    public string OperatorReviewSummary { get; set; } = string.Empty;
+    public string OperatorReviewedBy { get; set; } = string.Empty;
+    public DateTimeOffset? OperatorReviewedAtUtc { get; set; }
     public string ReleaseContextJson { get; set; } = string.Empty;
     public string RequestedBy { get; set; } = string.Empty;
     public DateTimeOffset RequestedAtUtc { get; set; } = DateTimeOffset.UtcNow;

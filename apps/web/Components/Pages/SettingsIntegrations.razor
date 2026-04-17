@@ -8,7 +8,29 @@
 
 <p class="subtitle"><a href="/settings">Settings</a> / Integrations</p>
 <h1>Integrations</h1>
-<p class="subtitle">Manage named service instances and authentication settings.</p>
+<p class="subtitle">Manage named service instances, health, and sync actions from one control plane.</p>
+
+<div class="card" style="margin-bottom: 1rem; display:grid; gap:0.85rem;">
+    <p class="card-label">CONTROL PLANE SUMMARY</p>
+    <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:0.85rem;">
+        <div>
+            <p class="card-label">Configured</p>
+            <p style="margin:0.35rem 0 0;">@_instances.Count</p>
+        </div>
+        <div>
+            <p class="card-label">Enabled</p>
+            <p style="margin:0.35rem 0 0;">@EnabledInstanceCount()</p>
+        </div>
+        <div>
+            <p class="card-label">Attention needed</p>
+            <p style="margin:0.35rem 0 0;">@AttentionNeededCount()</p>
+        </div>
+        <div>
+            <p class="card-label">Prowlarr</p>
+            <p style="margin:0.35rem 0 0;">@ProwlarrInstanceCount() instance(s)</p>
+        </div>
+    </div>
+</div>
 
 <div class="card" style="margin-bottom: 1rem;">
     <p class="card-label">@(_editingId is null ? "ADD INTEGRATION INSTANCE" : "EDIT INTEGRATION INSTANCE")</p>
@@ -47,7 +69,6 @@
                 <p class="error-text" style="margin-top:0.35rem;">Base URL must be a valid absolute URL (e.g. http://localhost:7878).</p>
             }
         </div>
-
 
         <div class="form-group">
             <label for="integration-auth-type">Authentication</label>
@@ -110,8 +131,8 @@
     </EditForm>
 </div>
 
-<div class="card" style="margin-bottom: 1rem;">
-    <p class="card-label">INSTANCES</p>
+<div class="card" style="margin-bottom: 1rem; display:grid; gap:0.85rem;">
+    <p class="card-label">INTEGRATION PANELS</p>
 
     @if (_loading)
     {
@@ -123,41 +144,130 @@
     }
     else
     {
-        <table style="width:100%; border-collapse: collapse;">
-            <thead>
-                <tr style="text-align:left; border-bottom:1px solid #1e293b;">
-                    <th style="padding:0.4rem 0;">Service</th>
-                    <th style="padding:0.4rem 0;">Instance</th>
-                    <th style="padding:0.4rem 0;">Base URL</th>
-                    <th style="padding:0.4rem 0;">Auth</th>
-                    <th style="padding:0.4rem 0;">Enabled</th>
-                    <th style="padding:0.4rem 0;">Updated</th>
-                    <th style="padding:0.4rem 0;">Actions</th>
-                </tr>
-            </thead>
-            <tbody>
-                @foreach (var item in _instances)
+        @foreach (var group in GroupInstancesByService())
+        {
+            <section class="integration-service-panel card">
+                <button type="button"
+                        class="integration-service-toggle"
+                        @onclick='() => ToggleServicePanel(group.ServiceKey)'
+                        aria-expanded="@IsServicePanelExpanded(group.ServiceKey)"
+                        aria-controls="@($"integration-panel-{group.ServiceKey}")">
+                    <span class="integration-service-summary-shell">
+                        <span class="integration-service-summary-grid">
+                            <span class="integration-service-identity-row">
+                                <span class="integration-service-monogram">@GetServiceMonogram(group.DisplayName)</span>
+                                <span class="integration-service-title-block">
+                                    <span class="card-label">SERVICE PANEL</span>
+                                    <span class="integration-service-title">@group.DisplayName</span>
+                                    <span class="integration-service-role">@DisplayRoleSummary(group.RoleSummary)</span>
+                                </span>
+                            </span>
+                            <span class="integration-service-status-cluster">
+                                <span class="integration-service-status" style="@BuildGroupHealthPillStyle(group)">@GetGroupHealthLabel(group)</span>
+                                <span class="integration-service-chevron">@(IsServicePanelExpanded(group.ServiceKey) ? "▾" : "▸")</span>
+                            </span>
+                        </span>
+                        <span class="integration-service-metrics">
+                            <span class="integration-service-metric-chip">@group.Items.Count instance(s)</span>
+                            <span class="integration-service-metric-chip">Healthy: @group.HealthyCount</span>
+                            <span class="integration-service-metric-chip">Attention needed: @group.AttentionNeededCount</span>
+                        </span>
+                    </span>
+                </button>
+
+                @if (IsServicePanelExpanded(group.ServiceKey))
                 {
-                    <tr style="border-bottom:1px solid #0f172a; vertical-align: top;">
-                        <td style="padding:0.45rem 0;">@item.DisplayName</td>
-                        <td style="padding:0.45rem 0;">@item.InstanceName</td>
-                        <td style="padding:0.45rem 0;">@item.BaseUrl</td>
-                        <td style="padding:0.45rem 0;">@item.AuthType</td>
-                        <td style="padding:0.45rem 0;">@(item.Enabled ? "Yes" : "No")</td>
-                        <td style="padding:0.45rem 0;">@item.UpdatedAtUtc?.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
-                        <td style="padding:0.45rem 0; display:flex; gap:0.45rem;">
-                            <button class="button-primary" style="padding: 0.45rem 0.7rem; font-size: 0.85rem;" @onclick="() => LoadForEdit(item)">Edit</button>
-                            <button class="button-primary" style="padding: 0.45rem 0.7rem; font-size: 0.85rem; background:#334155; border-color:#334155;" disabled="@(_testingId == item.Id)" @onclick="() => TestIntegrationAsync(item)">
-                                @(_testingId == item.Id ? "Testing..." : "Test")
-                            </button>
-                            <button class="button-danger" disabled="@(_deletingId == item.Id)" @onclick="() => DeleteIntegrationAsync(item)">
-                                @(_deletingId == item.Id ? "Deleting..." : "Delete")
-                            </button>
-                        </td>
-                    </tr>
+                    <div id="@($"integration-panel-{group.ServiceKey}")" class="integration-service-panel-body">
+                        @if (string.Equals(group.ServiceKey, "prowlarr", StringComparison.OrdinalIgnoreCase))
+                        {
+                            var prowlarrSummary = group.Items.Select(item => item.ProwlarrSummary).FirstOrDefault(item => item is not null);
+                            <div class="integration-prowlarr-summary-grid">
+                                <div>
+                                    <p class="card-label">PROWLARR DETAIL</p>
+                                    <p style="margin:0.35rem 0 0;">Indexer control plane + search source orchestration</p>
+                                </div>
+                                <div>
+                                    <p class="card-label">Configured indexers</p>
+                                    <p style="margin:0.35rem 0 0;">@(prowlarrSummary?.ConfiguredIndexers ?? 0)</p>
+                                </div>
+                                <div>
+                                    <p class="card-label">Unavailable indexers</p>
+                                    <p style="margin:0.35rem 0 0;">@(prowlarrSummary?.UnavailableIndexers ?? 0)</p>
+                                </div>
+                                <div>
+                                    <p class="card-label">Application links</p>
+                                    <p style="margin:0.35rem 0 0;">@(prowlarrSummary?.ApplicationLinks ?? 0)</p>
+                                </div>
+                                <div>
+                                    <p class="card-label">Health issues</p>
+                                    <p style="margin:0.35rem 0 0;">@(prowlarrSummary?.HealthIssues ?? 0)</p>
+                                    <p class="card-note" style="margin-top:0.25rem;">Warnings: @(prowlarrSummary?.WarningHealthIssues ?? 0) · Errors: @(prowlarrSummary?.ErrorHealthIssues ?? 0)</p>
+                                </div>
+                                <div>
+                                    <p class="card-label">Last success</p>
+                                    <p style="margin:0.35rem 0 0;">@FormatTimestamp(group.LastSuccessfulAtUtc)</p>
+                                </div>
+                            </div>
+                        }
+
+                        <div class="integration-instance-list">
+                            @foreach (var item in group.Items)
+                            {
+                                <div class="integration-instance-card">
+                                    <div class="integration-instance-heading">
+                                        <div class="integration-instance-title-block">
+                                            <strong>@item.InstanceName</strong>
+                                            <a href="@item.BaseUrl" target="_blank" rel="noopener noreferrer" class="integration-instance-link">@item.BaseUrl</a>
+                                            <span class="card-note">Auth: @item.AuthType · Enabled: @(item.Enabled ? "Yes" : "No") · Mode: @(item.SupportsSync ? "Sync-backed" : "Ops-only") · Updated: @FormatTimestamp(item.UpdatedAtUtc)</span>
+                                        </div>
+                                        <span class="integration-instance-health" style="@BuildHealthPillStyle(item)">@GetHealthLabel(item)</span>
+                                    </div>
+
+                                    <div class="integration-instance-detail-grid">
+                                        <div>
+                                            <p class="card-label">VERSION</p>
+                                            <div class="integration-instance-version-row">
+                                                <span>@DisplayVersionComparison(item.CurrentVersion, item.LatestReleaseVersion)</span>
+                                                <span style="@BuildVersionStatusPillStyle(item.CurrentVersion, item.LatestReleaseVersion)">@GetVersionStatusLabel(item.CurrentVersion, item.LatestReleaseVersion)</span>
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <p class="card-label">HEALTH</p>
+                                            <p style="margin:0.35rem 0 0;">Last success: @FormatTimestamp(item.LastSuccessfulAtUtc)</p>
+                                            <p class="card-note" style="margin-top:0.25rem;">Last attempt: @FormatTimestamp(item.LastAttemptedAtUtc)</p>
+                                            @if (!string.IsNullOrWhiteSpace(item.LastError) && item.SupportsSync)
+                                            {
+                                                <p class="card-note" style="margin-top:0.25rem;">Error: @item.LastError</p>
+                                            }
+                                        </div>
+                                    </div>
+
+                                    <div class="integration-instance-actions">
+                                        <button class="button-primary integration-action-button" @onclick="() => LoadForEdit(item)">Edit</button>
+                                        @if (item.SupportsSync)
+                                        {
+                                            <button class="button-primary integration-action-button integration-action-button-sync" disabled="@(_syncingId == item.Id)" @onclick="() => SyncIntegrationAsync(item)">
+                                                @(_syncingId == item.Id ? "Syncing..." : "Sync")
+                                            </button>
+                                        }
+                                        else
+                                        {
+                                            <span class="integration-ops-pill">Ops-only</span>
+                                        }
+                                        <button class="button-primary integration-action-button integration-action-button-secondary" disabled="@(_testingId == item.Id)" @onclick="() => TestIntegrationAsync(item)">
+                                            @(_testingId == item.Id ? "Testing..." : "Test")
+                                        </button>
+                                        <button class="button-danger" disabled="@(_deletingId == item.Id)" @onclick="() => DeleteIntegrationAsync(item)">
+                                            @(_deletingId == item.Id ? "Deleting..." : "Delete")
+                                        </button>
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    </div>
                 }
-            </tbody>
-        </table>
+            </section>
+        }
     }
 
     @if (!string.IsNullOrWhiteSpace(_testMessage))
@@ -172,9 +282,11 @@
     private readonly List<IntegrationServiceResponse> _services = [];
     private readonly List<IntegrationInstanceResponse> _instances = [];
     private readonly IntegrationFormModel _form = new();
+    private readonly HashSet<string> _expandedServicePanels = new(StringComparer.OrdinalIgnoreCase);
     private bool _loading = true;
     private bool _saving;
     private long? _editingId;
+    private long? _syncingId;
     private long? _testingId;
     private long? _deletingId;
     private bool _testSuccess;
@@ -387,7 +499,7 @@
 
             _testSuccess = result.Success;
             _testMessage = result.Success
-                ? $"{item.DisplayName} / {item.InstanceName}: connection successful ({result.StatusCode})."
+                ? $"{item.DisplayName} / {item.InstanceName}: connection successful ({result.StatusCode}){(string.IsNullOrWhiteSpace(result.Version) ? string.Empty : $" · version {result.Version}")}."
                 : $"{item.DisplayName} / {item.InstanceName}: connection failed ({result.StatusCode}) — {result.Message}";
         }
         catch
@@ -398,6 +510,37 @@
         finally
         {
             _testingId = null;
+        }
+    }
+
+    private async Task SyncIntegrationAsync(IntegrationInstanceResponse item)
+    {
+        _syncingId = item.Id;
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, $"/api/integrations/{item.Id}/sync")
+            {
+                Content = JsonContent.Create(new { ForceFullResync = false, MediaScope = (string?)null })
+            };
+            await AttachBearerAsync(request);
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add($"Failed to sync integration ({(int)response.StatusCode}).", Severity.Error);
+                return;
+            }
+
+            var result = await response.Content.ReadFromJsonAsync<TriggerIntegrationSyncResponse>();
+            Snackbar.Add(result?.Message ?? $"{item.DisplayName} sync completed.", result?.Accepted == true ? Severity.Success : Severity.Warning);
+            await LoadInstancesAsync();
+        }
+        catch
+        {
+            Snackbar.Add("Failed to sync integration.", Severity.Error);
+        }
+        finally
+        {
+            _syncingId = null;
         }
     }
 
@@ -547,6 +690,142 @@
         "Basic" => "Username + Password",
         _ => "None"
     };
+
+    private static string DisplayVersionComparison(string? currentVersion, string? latestReleaseVersion)
+    {
+        var current = string.IsNullOrWhiteSpace(currentVersion) ? "—" : currentVersion.Trim();
+        var latest = string.IsNullOrWhiteSpace(latestReleaseVersion) ? "—" : latestReleaseVersion.Trim();
+        return $"{current} / {latest}";
+    }
+
+    private static string GetVersionStatusLabel(string? currentVersion, string? latestReleaseVersion)
+    {
+        var current = (currentVersion ?? string.Empty).Trim();
+        var latest = (latestReleaseVersion ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(current) || string.IsNullOrWhiteSpace(latest))
+        {
+            return "Unknown";
+        }
+
+        return string.Equals(current, latest, StringComparison.OrdinalIgnoreCase)
+            ? "Up to date"
+            : "Out of date";
+    }
+
+    private static string BuildVersionStatusPillStyle(string? currentVersion, string? latestReleaseVersion)
+        => GetVersionStatusLabel(currentVersion, latestReleaseVersion) switch
+        {
+            "Up to date" => "display:inline-flex; align-items:center; gap:0.35rem; padding:0.22rem 0.62rem; border-radius:999px; background:rgba(21,128,61,0.3); color:#dcfce7; border:1px solid rgba(74,222,128,0.55); box-shadow:inset 0 0 0 1px rgba(34,197,94,0.12); font-size:0.78rem; font-weight:800; letter-spacing:0.01em; white-space:nowrap;",
+            "Out of date" => "display:inline-flex; align-items:center; gap:0.35rem; padding:0.22rem 0.62rem; border-radius:999px; background:rgba(180,83,9,0.34); color:#fef3c7; border:1px solid rgba(251,191,36,0.58); box-shadow:inset 0 0 0 1px rgba(245,158,11,0.14); font-size:0.78rem; font-weight:800; letter-spacing:0.01em; white-space:nowrap;",
+            _ => "display:inline-flex; align-items:center; gap:0.35rem; padding:0.22rem 0.62rem; border-radius:999px; background:rgba(71,85,105,0.34); color:#e2e8f0; border:1px solid rgba(148,163,184,0.45); box-shadow:inset 0 0 0 1px rgba(226,232,240,0.06); font-size:0.78rem; font-weight:800; letter-spacing:0.01em; white-space:nowrap;"
+        };
+
+    private int EnabledInstanceCount()
+        => _instances.Count(x => x.Enabled);
+
+    private int AttentionNeededCount()
+        => _instances.Count(x => x.Enabled && string.Equals(GetHealthLabel(x), "Attention needed", StringComparison.OrdinalIgnoreCase));
+
+    private int ProwlarrInstanceCount()
+        => _instances.Count(x => string.Equals(x.ServiceKey, "prowlarr", StringComparison.OrdinalIgnoreCase));
+
+    private static string GetServiceMonogram(string? displayName)
+    {
+        if (string.IsNullOrWhiteSpace(displayName)) return "??";
+        var parts = displayName
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(part => !string.IsNullOrWhiteSpace(part))
+            .ToArray();
+
+        if (parts.Length == 1)
+        {
+            var token = parts[0];
+            return token.Length >= 2
+                ? token[..2].ToUpperInvariant()
+                : token.ToUpperInvariant();
+        }
+
+        return string.Concat(parts.Take(2).Select(part => char.ToUpperInvariant(part[0])));
+    }
+
+    private static string DisplayRoleSummary(string? value)
+        => string.IsNullOrWhiteSpace(value) ? "—" : value;
+
+    private static string FormatTimestamp(DateTimeOffset? value)
+        => value?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "—";
+
+    private static string GetHealthLabel(IntegrationInstanceResponse item)
+    {
+        if (!item.Enabled) return "Disabled";
+        if (!item.SupportsSync)
+        {
+            return item.ProwlarrSummary is not null ? "Operational" : "Ops-only";
+        }
+
+        if (!string.IsNullOrWhiteSpace(item.LastError) || item.ConsecutiveFailureCount > 0) return "Attention needed";
+        if (item.LastSuccessfulAtUtc.HasValue) return "Healthy";
+        if (item.LastAttemptedAtUtc.HasValue) return "Awaiting success";
+        return "Not checked";
+    }
+
+    private static string BuildHealthPillStyle(IntegrationInstanceResponse item)
+        => GetHealthLabel(item) switch
+        {
+            "Healthy" => "display:inline-flex; align-items:center; gap:0.35rem; width:max-content; padding:0.22rem 0.62rem; border-radius:999px; background:rgba(21,128,61,0.3); color:#dcfce7; border:1px solid rgba(74,222,128,0.55); font-size:0.78rem; font-weight:800;",
+            "Operational" => "display:inline-flex; align-items:center; gap:0.35rem; width:max-content; padding:0.22rem 0.62rem; border-radius:999px; background:rgba(14,116,144,0.3); color:#cffafe; border:1px solid rgba(34,211,238,0.55); font-size:0.78rem; font-weight:800;",
+            "Attention needed" => "display:inline-flex; align-items:center; gap:0.35rem; width:max-content; padding:0.22rem 0.62rem; border-radius:999px; background:rgba(185,28,28,0.28); color:#fecaca; border:1px solid rgba(248,113,113,0.55); font-size:0.78rem; font-weight:800;",
+            "Awaiting success" => "display:inline-flex; align-items:center; gap:0.35rem; width:max-content; padding:0.22rem 0.62rem; border-radius:999px; background:rgba(180,83,9,0.34); color:#fef3c7; border:1px solid rgba(251,191,36,0.58); font-size:0.78rem; font-weight:800;",
+            "Disabled" => "display:inline-flex; align-items:center; gap:0.35rem; width:max-content; padding:0.22rem 0.62rem; border-radius:999px; background:rgba(71,85,105,0.34); color:#e2e8f0; border:1px solid rgba(148,163,184,0.45); font-size:0.78rem; font-weight:800;",
+            _ => "display:inline-flex; align-items:center; gap:0.35rem; width:max-content; padding:0.22rem 0.62rem; border-radius:999px; background:rgba(30,41,59,0.6); color:#cbd5e1; border:1px solid rgba(71,85,105,0.75); font-size:0.78rem; font-weight:800;"
+        };
+
+    private IReadOnlyList<ServiceIntegrationGroup> GroupInstancesByService()
+        => _instances
+            .GroupBy(x => new { x.ServiceKey, x.DisplayName })
+            .OrderBy(g => g.Key.DisplayName, StringComparer.OrdinalIgnoreCase)
+            .Select(g => new ServiceIntegrationGroup(
+                g.Key.ServiceKey,
+                g.Key.DisplayName,
+                g.FirstOrDefault()?.RoleSummary ?? string.Empty,
+                g.OrderBy(x => x.InstanceName, StringComparer.OrdinalIgnoreCase).ToList(),
+                g.Count(x => string.Equals(GetHealthLabel(x), "Healthy", StringComparison.OrdinalIgnoreCase)),
+                g.Count(x => string.Equals(GetHealthLabel(x), "Operational", StringComparison.OrdinalIgnoreCase)),
+                g.Count(x => string.Equals(GetHealthLabel(x), "Attention needed", StringComparison.OrdinalIgnoreCase)),
+                g.Where(x => x.LastSuccessfulAtUtc.HasValue).OrderByDescending(x => x.LastSuccessfulAtUtc).Select(x => x.LastSuccessfulAtUtc).FirstOrDefault()))
+            .ToList();
+
+    private void ToggleServicePanel(string serviceKey)
+    {
+        if (!_expandedServicePanels.Add(serviceKey))
+        {
+            _expandedServicePanels.Remove(serviceKey);
+        }
+    }
+
+    private bool IsServicePanelExpanded(string serviceKey)
+        => _expandedServicePanels.Contains(serviceKey);
+
+    private static string GetGroupHealthLabel(ServiceIntegrationGroup group)
+        => group.AttentionNeededCount > 0 ? "Attention needed" : group.HealthyCount > 0 ? "Healthy" : group.OperationalCount > 0 ? "Operational" : "Not checked";
+
+    private static string BuildGroupHealthPillStyle(ServiceIntegrationGroup group)
+        => GetGroupHealthLabel(group) switch
+        {
+            "Healthy" => "display:inline-flex; align-items:center; gap:0.35rem; width:max-content; padding:0.22rem 0.62rem; border-radius:999px; background:rgba(21,128,61,0.3); color:#dcfce7; border:1px solid rgba(74,222,128,0.55); font-size:0.78rem; font-weight:800;",
+            "Operational" => "display:inline-flex; align-items:center; gap:0.35rem; width:max-content; padding:0.22rem 0.62rem; border-radius:999px; background:rgba(14,116,144,0.3); color:#cffafe; border:1px solid rgba(34,211,238,0.55); font-size:0.78rem; font-weight:800;",
+            "Attention needed" => "display:inline-flex; align-items:center; gap:0.35rem; width:max-content; padding:0.22rem 0.62rem; border-radius:999px; background:rgba(185,28,28,0.28); color:#fecaca; border:1px solid rgba(248,113,113,0.55); font-size:0.78rem; font-weight:800;",
+            _ => "display:inline-flex; align-items:center; gap:0.35rem; width:max-content; padding:0.22rem 0.62rem; border-radius:999px; background:rgba(30,41,59,0.6); color:#cbd5e1; border:1px solid rgba(71,85,105,0.75); font-size:0.78rem; font-weight:800;"
+        };
+
+    private sealed record ServiceIntegrationGroup(
+        string ServiceKey,
+        string DisplayName,
+        string RoleSummary,
+        IReadOnlyList<IntegrationInstanceResponse> Items,
+        int HealthyCount,
+        int OperationalCount,
+        int AttentionNeededCount,
+        DateTimeOffset? LastSuccessfulAtUtc);
 
     private class IntegrationFormModel
     {

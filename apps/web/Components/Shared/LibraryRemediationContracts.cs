@@ -3,6 +3,7 @@ namespace web.Components.Shared;
 public record ApiErrorResponse(string Message);
 
 public record SearchReplacementRequest(string Reason, string Notes, string? IssueType = null);
+public record LibraryRemediationOperatorReviewRequest(string Outcome);
 
 public record LibraryRemediationIntentDto(
     string IssueType,
@@ -16,7 +17,9 @@ public record LibraryRemediationIntentDto(
     string PolicySummary,
     string NotesHandling,
     string ProfileDecision,
-    string ProfileSummary);
+    string ProfileSummary,
+    string PolicyState,
+    string NextActionSummary);
 
 public record LibraryItemRemediationResponse(
     long LibraryItemId,
@@ -29,7 +32,8 @@ public record LibraryItemRemediationResponse(
     string Reason,
     string Notes,
     string Message,
-    LibraryRemediationIntentDto? Intent = null);
+    LibraryRemediationIntentDto? Intent = null,
+    string SearchStatusHint = "");
 
 public record LibraryRemediationJobDto(
     long Id,
@@ -59,8 +63,19 @@ public record LibraryRemediationJobDto(
     string BlacklistStatus,
     string OutcomeSummary,
     string ResultMessage,
+    string VerificationStatus,
+    string VerificationSummary,
+    string VerificationDetailsJson,
+    DateTimeOffset? VerificationCheckedAtUtc,
+    string LoopbackStatus,
+    string LoopbackSummary,
     string ReleaseSummary,
+    string OperatorReviewStatus,
+    string OperatorReviewSummary,
+    string OperatorReviewedBy,
+    DateTimeOffset? OperatorReviewedAtUtc,
     string RequestedBy,
     DateTimeOffset RequestedAtUtc,
     DateTimeOffset? FinishedAtUtc,
-    DateTimeOffset? LastCheckedAtUtc);
+    DateTimeOffset? LastCheckedAtUtc,
+    DateTimeOffset UpdatedAtUtc);

@@ -8,11 +8,13 @@ public record UserAuditLogResponse(long Id, DateTimeOffset OccurredAtUtc, Guid? 
 public record IntegrationServiceResponse(string ServiceKey, string DisplayName, bool RequiresAuth, IReadOnlyList<string> AllowedAuthTypes);
 public record CreateIntegrationInstanceRequest(string ServiceKey, string InstanceName, string BaseUrl, string AuthType, string ApiKey, string Username, string Password, bool Enabled);
 public record UpdateIntegrationInstanceRequest(string InstanceName, string BaseUrl, string AuthType, string ApiKey, string Username, string Password, bool Enabled);
-public record IntegrationInstanceResponse(long Id, string ServiceKey, string DisplayName, string InstanceName, string BaseUrl, string AuthType, string ApiKey, string Username, string Password, bool Enabled, DateTimeOffset? UpdatedAtUtc);
+public record IntegrationInstanceResponse(long Id, string ServiceKey, string DisplayName, string InstanceName, string BaseUrl, string AuthType, string ApiKey, string Username, string Password, bool Enabled, DateTimeOffset? UpdatedAtUtc, string CurrentVersion, string LatestReleaseVersion, string RoleSummary, DateTimeOffset? LastAttemptedAtUtc, DateTimeOffset? LastSuccessfulAtUtc, string LastError, int ConsecutiveFailureCount, bool SupportsSync, ProwlarrSummaryResponse? ProwlarrSummary);
+public record ProwlarrSummaryResponse(int ConfiguredIndexers, int EnabledIndexers, int UnavailableIndexers, int ApplicationLinks, int HealthIssues, int WarningHealthIssues, int ErrorHealthIssues);
 public record CreateLibraryPathMappingRequest(long IntegrationId, string RemoteRootPath, string LocalRootPath);
 public record UpdateLibraryPathMappingRequest(string RemoteRootPath, string LocalRootPath);
 public record LibraryPathMappingResponse(long Id, long IntegrationId, string ServiceKey, string InstanceName, string DisplayName, string RemoteRootPath, string LocalRootPath, DateTimeOffset UpdatedAtUtc);
 public record LibraryPathMappingTestResponse(long MappingId, long IntegrationId, string ServiceKey, string RemoteRootPath, string LocalRootPath, bool LocalPathExists, bool RemotePathMatchesIntegration, bool DeepTestAttempted, string SourceFilePath, string ResolvedLocalFilePath, bool ResolvedLocalFileExists, IReadOnlyList<string> DiscoveredRemoteRoots, bool Success, string Message);
 public record IntegrationRemoteRootsResponse(long IntegrationId, string ServiceKey, IReadOnlyList<string> Paths, string Message);
 public record LocalDirectoryBrowseResponse(string Path, string ParentPath, IReadOnlyList<string> Directories);
-public record IntegrationTestResponse(long IntegrationId, string ServiceKey, string InstanceName, bool Success, int StatusCode, string Message);
+public record IntegrationTestResponse(long IntegrationId, string ServiceKey, string InstanceName, bool Success, int StatusCode, string Message, string Version);
+public record TriggerIntegrationSyncResponse(long IntegrationId, bool Accepted, string Message);

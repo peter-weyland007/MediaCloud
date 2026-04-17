@@ -7,7 +7,7 @@
 <PageTitle>App Behavior Settings</PageTitle>
 
 <h1>App Behavior</h1>
-<p class="subtitle">Global runtime policy, monitoring & request sync, and TV display defaults.</p>
+<p class="subtitle">Global runtime policy, integration pull behavior, monitoring & request sync, and TV display defaults.</p>
 
 <div class="settings-stack">
     <div class="card">
@@ -17,7 +17,7 @@
                 <h2>Mismatch tolerances</h2>
                 <p class="card-note">Set tolerance and severity thresholds for reported vs actual runtime differences.</p>
             </div>
-            <a class="button-secondary" href="/settings/runtime-policy" style="display:inline-block; text-decoration:none;">Open standalone page</a>
+            <a class="button-secondary settings-link-button" href="/settings/runtime-policy">Open standalone page</a>
         </div>
 
         @if (_loadingRuntimePolicy)
@@ -30,13 +30,13 @@
                 <div class="form-group">
                     <label>Tolerance floor (minutes)</label>
                     <InputNumber class="input" @bind-Value="_runtimePolicy.ToleranceMinutesFloor" />
-                    <p class="card-note" style="margin-top:0.35rem;">Minimum absolute difference allowed before mismatch.</p>
+                    <p class="card-note settings-note-tight">Minimum absolute difference allowed before mismatch.</p>
                 </div>
 
                 <div class="form-group">
                     <label>Tolerance percent (%)</label>
                     <InputNumber class="input" @bind-Value="_runtimePolicy.TolerancePercent" />
-                    <p class="card-note" style="margin-top:0.35rem;">Percent of reported runtime used as relative tolerance.</p>
+                    <p class="card-note settings-note-tight">Percent of reported runtime used as relative tolerance.</p>
                 </div>
 
                 <div class="form-group">
@@ -74,7 +74,7 @@
                 <h2>Global monitoring ownership + request sync</h2>
                 <p class="card-note">Configure app-wide monitoring behavior: Radarr and Sonarr are the actual monitor-state targets, while Overseerr contributes request and availability intent signals.</p>
             </div>
-            <a class="button-secondary" href="/settings/monitoring" style="display:inline-block; text-decoration:none;">Open standalone page</a>
+            <a class="button-secondary settings-link-button" href="/settings/monitoring">Open standalone page</a>
         </div>
 
         @if (_loadingMonitoring)
@@ -83,8 +83,8 @@
         }
         else
         {
-            <div style="display:grid; gap:0.9rem;">
-                <label style="display:flex; gap:0.6rem; align-items:flex-start;">
+            <div class="settings-toggle-stack">
+                <label class="settings-toggle-row">
                     <input type="checkbox" @bind="_monitoring.ManagedByMediaCloud" />
                     <span>
                         <strong>Monitor in MediaCloud</strong><br />
@@ -92,7 +92,7 @@
                     </span>
                 </label>
 
-                <label style="display:flex; gap:0.6rem; align-items:flex-start;">
+                <label class="settings-toggle-row">
                     <input type="checkbox" @bind="_monitoring.AutoSyncEnabled" disabled="@(!_monitoring.ManagedByMediaCloud)" />
                     <span>
                         <strong>Auto sync</strong><br />
@@ -110,11 +110,197 @@
     <div class="card">
         <div class="settings-section-header">
             <div>
+                <p class="card-label">INTEGRATION PULLS</p>
+                <h2>Automatic vs manual integration refresh</h2>
+                <p class="card-note">Choose whether MediaCloud should periodically pull fresh data from enabled integrations or wait for manual sync actions only.</p>
+            </div>
+        </div>
+
+        @if (_loadingIntegrationPulls)
+        {
+            <p class="card-note">Loading integration pull settings…</p>
+        }
+        else
+        {
+            <div class="settings-toggle-stack">
+                <label class="settings-toggle-row">
+                    <input type="checkbox" @bind="_integrationPulls.AutoPullEnabled" />
+                    <span>
+                        <strong>Automatically pull data from integrations</strong><br />
+                        <span class="card-note">When enabled, MediaCloud periodically syncs enabled integrations in the background. When disabled, integration data only changes when an admin manually runs sync actions.</span>
+                    </span>
+                </label>
+
+                <div class="form-group">
+                    <label>Automatic pull interval (minutes)</label>
+                    <InputNumber class="input" @bind-Value="_integrationPulls.IntervalMinutes" disabled="@(!_integrationPulls.AutoPullEnabled)" />
+                    <p class="card-note settings-note-tight">Valid range: 5 to 1440 minutes. Current mode: @(_integrationPulls.AutoPullEnabled ? "Automatic background pulls" : "Manual-only pulls")</p>
+                    <p class="card-note settings-note-micro">Last automatic pull: @FormatBehaviorDate(_integrationPulls.LastAutoPullAtUtc)</p>
+                </div>
+            </div>
+
+            <div class="settings-actions">
+                <button class="button-primary" @onclick="SaveIntegrationPullsAsync" disabled="@_savingIntegrationPulls">@(_savingIntegrationPulls ? "Saving..." : "Save integration pull settings")</button>
+            </div>
+        }
+    </div>
+
+    <div class="card">
+        <div class="settings-section-header">
+            <div>
+                <p class="card-label">PREFERRED MEDIA PROFILE</p>
+                <h2>Compatibility target for playback remediation</h2>
+                <p class="card-note">Define the house-standard container, codec, subtitle, and bitrate target MediaCloud should use when judging whether a movie needs a compatibility-focused ffmpeg pass.</p>
+            </div>
+        </div>
+
+        @if (_loadingMediaProfile)
+        {
+            <p class="card-note">Loading media profile settings…</p>
+        }
+        else
+        {
+            <div class="settings-two-col-grid">
+                <div class="form-group">
+                    <label>Preset</label>
+                    <InputSelect class="input" @bind-Value="_selectedMediaProfilePreset">
+                        @foreach (var preset in _mediaProfilePresetOptions)
+                        {
+                            <option value="@preset.Key">@preset.Label</option>
+                        }
+                    </InputSelect>
+                    <p class="card-note settings-note-tight">Use one of the built-in compatibility targets or switch to one of your saved named presets.</p>
+                </div>
+
+                <div class="form-group settings-align-end">
+                    <button class="button-secondary" @onclick="ApplySelectedMediaProfilePreset" type="button">Apply preset</button>
+                </div>
+
+                <div class="form-group">
+                    <label>Preferred container</label>
+                    <InputSelect class="input" @bind-Value="_mediaProfile.PreferredContainer">
+                        <option value="mp4">MP4</option>
+                        <option value="mkv">MKV</option>
+                    </InputSelect>
+                </div>
+
+                <div class="form-group">
+                    <label>Preferred video codec</label>
+                    <InputSelect class="input" @bind-Value="_mediaProfile.PreferredVideoCodec">
+                        <option value="h264">H.264</option>
+                        <option value="hevc">HEVC</option>
+                    </InputSelect>
+                </div>
+
+                <div class="form-group">
+                    <label>Max preferred resolution</label>
+                    <InputSelect class="input" @bind-Value="_mediaProfile.MaxPreferredResolution">
+                        <option value="1080p">1080p</option>
+                        <option value="4k">4K</option>
+                    </InputSelect>
+                </div>
+
+                <div class="form-group">
+                    <label>Preferred audio codec</label>
+                    <InputSelect class="input" @bind-Value="_mediaProfile.PreferredAudioCodec">
+                        <option value="aac">AAC</option>
+                        <option value="ac3">AC3</option>
+                        <option value="eac3">EAC3</option>
+                    </InputSelect>
+                </div>
+
+                <div class="form-group">
+                    <label>Maximum preferred bitrate (Mbps)</label>
+                    <InputNumber class="input" @bind-Value="_mediaProfile.MaxPreferredBitrateMbps" />
+                </div>
+            </div>
+
+            <div class="settings-toggle-stack settings-section-gap-top">
+                <label class="settings-toggle-row">
+                    <input type="checkbox" @bind="_mediaProfile.AllowHevc" />
+                    <span>
+                        <strong>Allow HEVC</strong><br />
+                        <span class="card-note">When off, MediaCloud treats HEVC/H.265 as a manual-review target instead of a safe compatibility remux candidate.</span>
+                    </span>
+                </label>
+
+                <label class="settings-toggle-row">
+                    <input type="checkbox" @bind="_mediaProfile.Allow10BitVideo" />
+                    <span>
+                        <strong>Allow 10-bit video</strong><br />
+                        <span class="card-note">When off, 10-bit sources are treated as manual-review items because they usually require a full video transcode.</span>
+                    </span>
+                </label>
+
+                <label class="settings-toggle-row">
+                    <input type="checkbox" @bind="_mediaProfile.AllowImageBasedSubtitles" />
+                    <span>
+                        <strong>Allow image-based subtitles</strong><br />
+                        <span class="card-note">Controls whether PGS/VobSub-style subtitles are acceptable in the preferred profile.</span>
+                    </span>
+                </label>
+
+                <label class="settings-toggle-row">
+                    <input type="checkbox" @bind="_mediaProfile.PreferTextSubtitlesOnly" />
+                    <span>
+                        <strong>Prefer text subtitles only</strong><br />
+                        <span class="card-note">When enabled, MediaCloud avoids auto-queueing safe ffmpeg previews for files that still depend on image-based subtitle tracks.</span>
+                    </span>
+                </label>
+            </div>
+
+            <p class="card-note settings-summary-note">Current target: @_mediaProfile.BuildSummary()</p>
+
+            <div class="settings-two-col-grid settings-summary-note">
+                <div class="form-group">
+                    <label>Save as named preset</label>
+                    <InputText class="input" @bind-Value="_newMediaProfilePresetName" placeholder="Living Room 4K" />
+                    <p class="card-note settings-note-tight">Store the current settings under a reusable custom preset name.</p>
+                </div>
+
+                <div class="form-group settings-align-end">
+                    <button class="button-secondary" type="button" @onclick="SaveMediaProfilePresetAsync" disabled="@_savingMediaProfilePreset">@(_savingMediaProfilePreset ? "Saving preset..." : "Save as named preset")</button>
+                </div>
+            </div>
+
+            <div class="settings-presets-stack">
+                <p class="card-label settings-zero-margin">Saved presets</p>
+                <p class="card-note settings-zero-margin">Each saved custom preset has actions on the right: <strong>Rename</strong> or <strong>Delete</strong>.</p>
+                @foreach (var preset in _mediaProfilePresetOptions.Where(x => !x.IsBuiltIn && x.Key != "custom-unsaved"))
+                {
+                    <div class="settings-preset-card">
+                        <div class="settings-preset-header">
+                            <div>
+                                <strong>@preset.Name</strong>
+                                <div class="card-note">Custom preset actions</div>
+                            </div>
+                            <div class="settings-button-row-tight">
+                                <button class="button-secondary" type="button" @onclick="() => RenameMediaProfilePresetAsync(preset.Key)">Rename</button>
+                                <button class="button-secondary" type="button" @onclick="() => DeleteMediaProfilePresetAsync(preset.Key)">Delete</button>
+                            </div>
+                        </div>
+                        <div class="form-group settings-zero-margin">
+                            <label>Preset name</label>
+                            <InputText class="input" Value="@preset.Name" ValueChanged="@(value => UpdatePresetDraftName(preset.Key, value))" />
+                        </div>
+                    </div>
+                }
+            </div>
+
+            <div class="settings-actions">
+                <button class="button-primary" @onclick="SaveMediaProfileAsync" disabled="@_savingMediaProfile">@(_savingMediaProfile ? "Saving..." : "Save media profile")</button>
+            </div>
+        }
+    </div>
+
+    <div class="card">
+        <div class="settings-section-header">
+            <div>
                 <p class="card-label">TV DISPLAY</p>
                 <h2>Series season display defaults</h2>
                 <p class="card-note">Configure global TV-series detail defaults like hiding Specials by default.</p>
             </div>
-            <a class="button-secondary" href="/settings/tv-display" style="display:inline-block; text-decoration:none;">Open standalone page</a>
+            <a class="button-secondary settings-link-button" href="/settings/tv-display">Open standalone page</a>
         </div>
 
         @if (_loadingTvDisplay)
@@ -123,8 +309,8 @@
         }
         else
         {
-            <div style="display:grid; gap:0.9rem;">
-                <label style="display:flex; gap:0.6rem; align-items:flex-start;">
+            <div class="settings-toggle-stack">
+                <label class="settings-toggle-row">
                     <input type="checkbox" @bind="_tvDisplay.HideSpecialsByDefault" />
                     <span>
                         <strong>Hide Specials by default</strong><br />
@@ -168,6 +354,73 @@
         flex-wrap: wrap;
     }
 
+    .settings-link-button {
+        display: inline-block;
+        text-decoration: none;
+    }
+
+    .settings-toggle-stack {
+        display: grid;
+        gap: 0.9rem;
+    }
+
+    .settings-toggle-row {
+        display: flex;
+        gap: 0.6rem;
+        align-items: flex-start;
+    }
+
+    .settings-note-tight {
+        margin-top: 0.35rem;
+    }
+
+    .settings-note-micro {
+        margin-top: 0.2rem;
+    }
+
+    .settings-align-end {
+        display: flex;
+        align-items: end;
+    }
+
+    .settings-section-gap-top,
+    .settings-summary-note,
+    .settings-presets-stack {
+        margin-top: 0.85rem;
+    }
+
+    .settings-presets-stack {
+        display: grid;
+        gap: 0.75rem;
+    }
+
+    .settings-zero-margin {
+        margin: 0;
+    }
+
+    .settings-preset-card {
+        border: 1px solid rgba(51,65,85,0.85);
+        border-radius: 0.8rem;
+        padding: 0.9rem;
+        background: rgba(15,23,42,0.5);
+        display: grid;
+        gap: 0.6rem;
+    }
+
+    .settings-preset-header {
+        display: flex;
+        justify-content: space-between;
+        gap: 0.75rem;
+        align-items: center;
+        flex-wrap: wrap;
+    }
+
+    .settings-button-row-tight {
+        display: flex;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+    }
+
     @@media (max-width: 1100px) {
         .settings-two-col-grid {
             grid-template-columns: 1fr;
@@ -181,17 +434,30 @@
     private bool _resettingRuntimePolicy;
     private bool _loadingMonitoring = true;
     private bool _savingMonitoring;
+    private bool _loadingIntegrationPulls = true;
+    private bool _savingIntegrationPulls;
     private bool _loadingTvDisplay = true;
     private bool _savingTvDisplay;
+    private bool _loadingMediaProfile = true;
+    private bool _savingMediaProfile;
+    private bool _savingMediaProfilePreset;
 
     private RuntimePolicySettingsModel _runtimePolicy = new();
     private MonitoringSettingsModel _monitoring = new();
+    private IntegrationPullSettingsModel _integrationPulls = new();
     private TvDisplaySettingsModel _tvDisplay = new();
+    private MediaProfileSettingsModel _mediaProfile = new();
+    private string _selectedMediaProfilePreset = "custom-unsaved";
+    private string _newMediaProfilePresetName = string.Empty;
+    private Dictionary<string, string> _mediaProfilePresetDraftNames = new(StringComparer.OrdinalIgnoreCase);
+    private List<MediaProfilePresetOption> _mediaProfilePresetOptions = BuildDefaultMediaProfilePresetOptions();
 
     protected override async Task OnInitializedAsync()
     {
         await LoadRuntimePolicyAsync();
         await LoadMonitoringAsync();
+        await LoadIntegrationPullsAsync();
+        await LoadMediaProfileAsync();
         await LoadTvDisplayAsync();
     }
 
@@ -365,6 +631,344 @@
         }
     }
 
+    private async Task LoadIntegrationPullsAsync()
+    {
+        _loadingIntegrationPulls = true;
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, "/api/settings/integration-pulls");
+            await AttachBearerAsync(request);
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add($"Failed to load integration pull settings ({(int)response.StatusCode}).", Severity.Error);
+                return;
+            }
+
+            var payload = await response.Content.ReadFromJsonAsync<IntegrationPullSettingsResponse>();
+            if (payload is not null)
+            {
+                _integrationPulls = IntegrationPullSettingsModel.FromResponse(payload);
+            }
+        }
+        catch
+        {
+            Snackbar.Add("Failed to load integration pull settings.", Severity.Error);
+        }
+        finally
+        {
+            _loadingIntegrationPulls = false;
+        }
+    }
+
+    private async Task SaveIntegrationPullsAsync()
+    {
+        _savingIntegrationPulls = true;
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Put, "/api/settings/integration-pulls")
+            {
+                Content = JsonContent.Create(new UpdateIntegrationPullSettingsRequest(_integrationPulls.AutoPullEnabled, _integrationPulls.IntervalMinutes))
+            };
+            await AttachBearerAsync(request);
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                var error = await response.Content.ReadFromJsonAsync<ErrorResponse>();
+                Snackbar.Add(error?.Error ?? $"Failed to save integration pull settings ({(int)response.StatusCode}).", Severity.Error);
+                return;
+            }
+
+            var payload = await response.Content.ReadFromJsonAsync<IntegrationPullSettingsResponse>();
+            if (payload is not null)
+            {
+                _integrationPulls = IntegrationPullSettingsModel.FromResponse(payload);
+            }
+
+            Snackbar.Add("Integration pull settings saved.", Severity.Success);
+        }
+        catch
+        {
+            Snackbar.Add("Failed to save integration pull settings.", Severity.Error);
+        }
+        finally
+        {
+            _savingIntegrationPulls = false;
+        }
+    }
+
+    private async Task LoadMediaProfileAsync()
+    {
+        _loadingMediaProfile = true;
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, "/api/settings/media-profile");
+            await AttachBearerAsync(request);
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add($"Failed to load media profile settings ({(int)response.StatusCode}).", Severity.Error);
+                return;
+            }
+
+            var payload = await response.Content.ReadFromJsonAsync<MediaProfileSettingsResponse>();
+            if (payload is not null)
+            {
+                _mediaProfile = MediaProfileSettingsModel.FromResponse(payload);
+                await LoadMediaProfilePresetOptionsAsync();
+                _selectedMediaProfilePreset = ResolveMediaProfilePreset(payload);
+            }
+        }
+        catch
+        {
+            Snackbar.Add("Failed to load media profile settings.", Severity.Error);
+        }
+        finally
+        {
+            _loadingMediaProfile = false;
+        }
+    }
+
+    private async Task LoadMediaProfilePresetOptionsAsync()
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, "/api/settings/media-profile/presets");
+        await AttachBearerAsync(request);
+        using var response = await Http.SendAsync(request);
+        if (!response.IsSuccessStatusCode)
+        {
+            _mediaProfilePresetOptions = BuildDefaultMediaProfilePresetOptions();
+            return;
+        }
+
+        var payload = await response.Content.ReadFromJsonAsync<List<MediaProfilePresetDto>>() ?? [];
+        var options = BuildDefaultMediaProfilePresetOptions();
+        foreach (var preset in payload.Where(x => !x.IsBuiltIn))
+        {
+            options.Add(new MediaProfilePresetOption(preset.Key, preset.Name, preset.Name, preset.IsBuiltIn, MediaProfileSettingsModel.FromResponse(preset.Settings)));
+        }
+
+        _mediaProfilePresetOptions = options;
+        _mediaProfilePresetDraftNames = options
+            .Where(x => !x.IsBuiltIn && x.Key != "custom-unsaved")
+            .ToDictionary(x => x.Key, x => x.Name, StringComparer.OrdinalIgnoreCase);
+    }
+
+    private async Task SaveMediaProfileAsync()
+    {
+        _savingMediaProfile = true;
+        try
+        {
+            var selectedPreset = GetSelectedMediaProfilePreset();
+            using var request = new HttpRequestMessage(HttpMethod.Put, "/api/settings/media-profile")
+            {
+                Content = JsonContent.Create(new UpdateMediaProfileSettingsRequest(
+                    _mediaProfile.PreferredContainer,
+                    _mediaProfile.PreferredVideoCodec,
+                    _mediaProfile.MaxPreferredResolution,
+                    _mediaProfile.AllowHevc,
+                    _mediaProfile.Allow10BitVideo,
+                    _mediaProfile.PreferredAudioCodec,
+                    _mediaProfile.AllowImageBasedSubtitles,
+                    _mediaProfile.PreferTextSubtitlesOnly,
+                    _mediaProfile.MaxPreferredBitrateMbps,
+                    selectedPreset?.Key ?? string.Empty,
+                    selectedPreset?.Name ?? string.Empty))
+            };
+            await AttachBearerAsync(request);
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                var error = await response.Content.ReadFromJsonAsync<ErrorResponse>();
+                Snackbar.Add(error?.Error ?? $"Failed to save media profile settings ({(int)response.StatusCode}).", Severity.Error);
+                return;
+            }
+
+            var payload = await response.Content.ReadFromJsonAsync<MediaProfileSettingsResponse>();
+            if (payload is not null)
+            {
+                _mediaProfile = MediaProfileSettingsModel.FromResponse(payload);
+                await LoadMediaProfilePresetOptionsAsync();
+                _selectedMediaProfilePreset = ResolveMediaProfilePreset(payload);
+            }
+
+            Snackbar.Add("Media profile settings saved.", Severity.Success);
+        }
+        catch
+        {
+            Snackbar.Add("Failed to save media profile settings.", Severity.Error);
+        }
+        finally
+        {
+            _savingMediaProfile = false;
+        }
+    }
+
+    private async Task SaveMediaProfilePresetAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_newMediaProfilePresetName))
+        {
+            Snackbar.Add("Enter a preset name first.", Severity.Warning);
+            return;
+        }
+
+        if (_mediaProfilePresetOptions.Any(x => !x.IsBuiltIn && !string.Equals(x.Key, _selectedMediaProfilePreset, StringComparison.OrdinalIgnoreCase) && string.Equals(x.Name, _newMediaProfilePresetName.Trim(), StringComparison.OrdinalIgnoreCase)))
+        {
+            Snackbar.Add("A custom media profile preset with that name already exists.", Severity.Warning);
+            return;
+        }
+
+        _savingMediaProfilePreset = true;
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, "/api/settings/media-profile/presets")
+            {
+                Content = JsonContent.Create(new SaveMediaProfilePresetRequest(
+                    _newMediaProfilePresetName.Trim(),
+                    new UpdateMediaProfileSettingsRequest(
+                        _mediaProfile.PreferredContainer,
+                        _mediaProfile.PreferredVideoCodec,
+                        _mediaProfile.MaxPreferredResolution,
+                        _mediaProfile.AllowHevc,
+                        _mediaProfile.Allow10BitVideo,
+                        _mediaProfile.PreferredAudioCodec,
+                        _mediaProfile.AllowImageBasedSubtitles,
+                        _mediaProfile.PreferTextSubtitlesOnly,
+                        _mediaProfile.MaxPreferredBitrateMbps,
+                        string.Empty,
+                        string.Empty)))
+            };
+            await AttachBearerAsync(request);
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                var error = await response.Content.ReadFromJsonAsync<ErrorResponse>();
+                Snackbar.Add(error?.Error ?? $"Failed to save media profile preset ({(int)response.StatusCode}).", Severity.Error);
+                return;
+            }
+
+            var payload = await response.Content.ReadFromJsonAsync<MediaProfilePresetDto>();
+            await LoadMediaProfilePresetOptionsAsync();
+            if (payload is not null)
+            {
+                _selectedMediaProfilePreset = payload.Key;
+            }
+            _newMediaProfilePresetName = string.Empty;
+            Snackbar.Add("Media profile preset saved.", Severity.Success);
+        }
+        catch
+        {
+            Snackbar.Add("Failed to save media profile preset.", Severity.Error);
+        }
+        finally
+        {
+            _savingMediaProfilePreset = false;
+        }
+    }
+
+    private async Task RenameMediaProfilePresetAsync(string presetKey)
+    {
+        if (!_mediaProfilePresetDraftNames.TryGetValue(presetKey, out var name) || string.IsNullOrWhiteSpace(name))
+        {
+            Snackbar.Add("Enter a preset name first.", Severity.Warning);
+            return;
+        }
+
+        if (_mediaProfilePresetOptions.Any(x => !x.IsBuiltIn && !string.Equals(x.Key, presetKey, StringComparison.OrdinalIgnoreCase) && string.Equals(x.Name, name.Trim(), StringComparison.OrdinalIgnoreCase)))
+        {
+            Snackbar.Add("A custom media profile preset with that name already exists.", Severity.Warning);
+            return;
+        }
+
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Put, $"/api/settings/media-profile/presets/{Uri.EscapeDataString(presetKey)}")
+            {
+                Content = JsonContent.Create(new RenameMediaProfilePresetRequest(name.Trim()))
+            };
+            await AttachBearerAsync(request);
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                var error = await response.Content.ReadFromJsonAsync<ErrorResponse>();
+                Snackbar.Add(error?.Error ?? $"Failed to rename media profile preset ({(int)response.StatusCode}).", Severity.Error);
+                return;
+            }
+
+            var payload = await response.Content.ReadFromJsonAsync<MediaProfilePresetDto>();
+            await LoadMediaProfilePresetOptionsAsync();
+            if (payload is not null && string.Equals(_selectedMediaProfilePreset, presetKey, StringComparison.OrdinalIgnoreCase))
+            {
+                _selectedMediaProfilePreset = payload.Key;
+                _mediaProfile.ActivePresetName = payload.Name;
+            }
+
+            Snackbar.Add("Media profile preset renamed.", Severity.Success);
+        }
+        catch
+        {
+            Snackbar.Add("Failed to rename media profile preset.", Severity.Error);
+        }
+    }
+
+    private async Task DeleteMediaProfilePresetAsync(string presetKey)
+    {
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Delete, $"/api/settings/media-profile/presets/{Uri.EscapeDataString(presetKey)}");
+            await AttachBearerAsync(request);
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                var error = await response.Content.ReadFromJsonAsync<ErrorResponse>();
+                Snackbar.Add(error?.Error ?? $"Failed to delete media profile preset ({(int)response.StatusCode}).", Severity.Error);
+                return;
+            }
+
+            await LoadMediaProfilePresetOptionsAsync();
+            if (string.Equals(_selectedMediaProfilePreset, presetKey, StringComparison.OrdinalIgnoreCase))
+            {
+                _selectedMediaProfilePreset = "custom-unsaved";
+                _mediaProfile.ActivePresetKey = string.Empty;
+                _mediaProfile.ActivePresetName = string.Empty;
+            }
+
+            Snackbar.Add("Media profile preset deleted.", Severity.Success);
+        }
+        catch
+        {
+            Snackbar.Add("Failed to delete media profile preset.", Severity.Error);
+        }
+    }
+
+    private void UpdatePresetDraftName(string presetKey, string? value)
+        => _mediaProfilePresetDraftNames[presetKey] = value ?? string.Empty;
+
+    private void ApplySelectedMediaProfilePreset()
+    {
+        var selected = GetSelectedMediaProfilePreset();
+        if (selected?.Settings is not null)
+        {
+            _mediaProfile = selected.Settings.Clone();
+            _mediaProfile.ActivePresetKey = selected.Key;
+            _mediaProfile.ActivePresetName = selected.Name;
+        }
+    }
+
+    private MediaProfilePresetOption? GetSelectedMediaProfilePreset()
+        => _mediaProfilePresetOptions.FirstOrDefault(x => string.Equals(x.Key, _selectedMediaProfilePreset, StringComparison.OrdinalIgnoreCase));
+
+    private string ResolveMediaProfilePreset(MediaProfileSettingsResponse payload)
+    {
+        if (!string.IsNullOrWhiteSpace(payload.ActivePresetKey) && _mediaProfilePresetOptions.Any(x => string.Equals(x.Key, payload.ActivePresetKey, StringComparison.OrdinalIgnoreCase)))
+        {
+            return payload.ActivePresetKey;
+        }
+
+        if (_mediaProfile.Matches(MediaProfileSettingsModel.BroadPlexCompatibility())) return "broad-plex-compatibility";
+        if (_mediaProfile.Matches(MediaProfileSettingsModel.ModernQualityEfficiency())) return "modern-quality-efficiency";
+        return "custom-unsaved";
+    }
+
     private async Task LoadTvDisplayAsync()
     {
         _loadingTvDisplay = true;
@@ -472,6 +1076,20 @@
         };
     }
 
+    private sealed class IntegrationPullSettingsModel
+    {
+        public bool AutoPullEnabled { get; set; }
+        public int IntervalMinutes { get; set; } = 60;
+        public DateTimeOffset? LastAutoPullAtUtc { get; set; }
+
+        public static IntegrationPullSettingsModel FromResponse(IntegrationPullSettingsResponse value) => new()
+        {
+            AutoPullEnabled = value.AutoPullEnabled,
+            IntervalMinutes = value.IntervalMinutes,
+            LastAutoPullAtUtc = value.LastAutoPullAtUtc
+        };
+    }
+
     private sealed class TvDisplaySettingsModel
     {
         public bool HideSpecialsByDefault { get; set; }
@@ -482,10 +1100,119 @@
         };
     }
 
+    private sealed record MediaProfilePresetOption(string Key, string Label, string Name, bool IsBuiltIn, MediaProfileSettingsModel? Settings);
+
+    private static List<MediaProfilePresetOption> BuildDefaultMediaProfilePresetOptions()
+        =>
+        [
+            new("custom-unsaved", "Custom / Unsaved", "Custom / Unsaved", false, null),
+            new("broad-plex-compatibility", "Stable / Broad Compatibility", "Stable / Broad Compatibility", true, MediaProfileSettingsModel.BroadPlexCompatibility()),
+            new("modern-quality-efficiency", "Modern / Quality Efficiency", "Modern / Quality Efficiency", true, MediaProfileSettingsModel.ModernQualityEfficiency())
+        ];
+
+    private sealed class MediaProfileSettingsModel
+    {
+        public string PreferredContainer { get; set; } = "mp4";
+        public string PreferredVideoCodec { get; set; } = "h264";
+        public string MaxPreferredResolution { get; set; } = "1080p";
+        public bool AllowHevc { get; set; }
+        public bool Allow10BitVideo { get; set; }
+        public string PreferredAudioCodec { get; set; } = "aac";
+        public bool AllowImageBasedSubtitles { get; set; }
+        public bool PreferTextSubtitlesOnly { get; set; } = true;
+        public int MaxPreferredBitrateMbps { get; set; } = 20;
+        public string ActivePresetKey { get; set; } = string.Empty;
+        public string ActivePresetName { get; set; } = string.Empty;
+
+        public static MediaProfileSettingsModel FromResponse(MediaProfileSettingsResponse value) => new()
+        {
+            PreferredContainer = value.PreferredContainer,
+            PreferredVideoCodec = value.PreferredVideoCodec,
+            MaxPreferredResolution = value.MaxPreferredResolution,
+            AllowHevc = value.AllowHevc,
+            Allow10BitVideo = value.Allow10BitVideo,
+            PreferredAudioCodec = value.PreferredAudioCodec,
+            AllowImageBasedSubtitles = value.AllowImageBasedSubtitles,
+            PreferTextSubtitlesOnly = value.PreferTextSubtitlesOnly,
+            MaxPreferredBitrateMbps = value.MaxPreferredBitrateMbps,
+            ActivePresetKey = value.ActivePresetKey,
+            ActivePresetName = value.ActivePresetName
+        };
+
+        public static MediaProfileSettingsModel BroadPlexCompatibility() => new()
+        {
+            PreferredContainer = "mp4",
+            PreferredVideoCodec = "h264",
+            MaxPreferredResolution = "1080p",
+            AllowHevc = false,
+            Allow10BitVideo = false,
+            PreferredAudioCodec = "aac",
+            AllowImageBasedSubtitles = false,
+            PreferTextSubtitlesOnly = true,
+            MaxPreferredBitrateMbps = 20,
+            ActivePresetKey = "broad-plex-compatibility",
+            ActivePresetName = "Stable / Broad Compatibility"
+        };
+
+        public static MediaProfileSettingsModel ModernQualityEfficiency() => new()
+        {
+            PreferredContainer = "mkv",
+            PreferredVideoCodec = "hevc",
+            MaxPreferredResolution = "4k",
+            AllowHevc = true,
+            Allow10BitVideo = true,
+            PreferredAudioCodec = "eac3",
+            AllowImageBasedSubtitles = true,
+            PreferTextSubtitlesOnly = false,
+            MaxPreferredBitrateMbps = 40,
+            ActivePresetKey = "modern-quality-efficiency",
+            ActivePresetName = "Modern / Quality Efficiency"
+        };
+
+        public MediaProfileSettingsModel Clone() => new()
+        {
+            PreferredContainer = PreferredContainer,
+            PreferredVideoCodec = PreferredVideoCodec,
+            MaxPreferredResolution = MaxPreferredResolution,
+            AllowHevc = AllowHevc,
+            Allow10BitVideo = Allow10BitVideo,
+            PreferredAudioCodec = PreferredAudioCodec,
+            AllowImageBasedSubtitles = AllowImageBasedSubtitles,
+            PreferTextSubtitlesOnly = PreferTextSubtitlesOnly,
+            MaxPreferredBitrateMbps = MaxPreferredBitrateMbps,
+            ActivePresetKey = ActivePresetKey,
+            ActivePresetName = ActivePresetName
+        };
+
+        public bool Matches(MediaProfileSettingsModel other)
+            => string.Equals(PreferredContainer, other.PreferredContainer, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(PreferredVideoCodec, other.PreferredVideoCodec, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(MaxPreferredResolution, other.MaxPreferredResolution, StringComparison.OrdinalIgnoreCase)
+                && AllowHevc == other.AllowHevc
+                && Allow10BitVideo == other.Allow10BitVideo
+                && string.Equals(PreferredAudioCodec, other.PreferredAudioCodec, StringComparison.OrdinalIgnoreCase)
+                && AllowImageBasedSubtitles == other.AllowImageBasedSubtitles
+                && PreferTextSubtitlesOnly == other.PreferTextSubtitlesOnly
+                && MaxPreferredBitrateMbps == other.MaxPreferredBitrateMbps;
+
+        public string BuildSummary()
+            => $"{PreferredContainer.ToUpperInvariant()} · {PreferredVideoCodec.ToUpperInvariant()} preferred · {PreferredAudioCodec.ToUpperInvariant()} audio · max {MaxPreferredResolution.ToUpperInvariant()} · HEVC {(AllowHevc ? "allowed" : "off")} · 10-bit {(Allow10BitVideo ? "allowed" : "off")} · {(PreferTextSubtitlesOnly ? "text subtitles preferred" : AllowImageBasedSubtitles ? "image subtitles allowed" : "image subtitles discouraged")}";
+    }
+
     private record UpdateRuntimePolicySettingsRequest(double ToleranceMinutesFloor, double TolerancePercent, double WarningPercent, double HighMinutes, double CriticalPercent, double CriticalMinutes);
     private record RuntimePolicySettingsResponse(double ToleranceMinutesFloor, double TolerancePercent, double WarningPercent, double HighMinutes, double CriticalPercent, double CriticalMinutes);
+    private static string FormatBehaviorDate(DateTimeOffset? value)
+        => value.HasValue ? value.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm") : "Never";
+
     private record UpdateMonitoringSettingsRequest(bool ManagedByMediaCloud, bool AutoSyncEnabled);
     private record MonitoringSettingsResponse(bool ManagedByMediaCloud, bool AutoSyncEnabled);
+    private record UpdateIntegrationPullSettingsRequest(bool AutoPullEnabled, int IntervalMinutes);
+    private record IntegrationPullSettingsResponse(bool AutoPullEnabled, int IntervalMinutes, DateTimeOffset? LastAutoPullAtUtc);
+    private record UpdateMediaProfileSettingsRequest(string PreferredContainer, string PreferredVideoCodec, string MaxPreferredResolution, bool AllowHevc, bool Allow10BitVideo, string PreferredAudioCodec, bool AllowImageBasedSubtitles, bool PreferTextSubtitlesOnly, int MaxPreferredBitrateMbps, string ActivePresetKey, string ActivePresetName);
+    private record MediaProfileSettingsResponse(string PreferredContainer, string PreferredVideoCodec, string MaxPreferredResolution, bool AllowHevc, bool Allow10BitVideo, string PreferredAudioCodec, bool AllowImageBasedSubtitles, bool PreferTextSubtitlesOnly, int MaxPreferredBitrateMbps, string ActivePresetKey, string ActivePresetName);
+    private record MediaProfilePresetDto(string Key, string Name, bool IsBuiltIn, MediaProfileSettingsResponse Settings);
+    private record SaveMediaProfilePresetRequest(string Name, UpdateMediaProfileSettingsRequest Settings);
+    private record RenameMediaProfilePresetRequest(string Name);
     private record UpdateTvDisplaySettingsRequest(bool HideSpecialsByDefault);
     private record TvDisplaySettingsResponse(bool HideSpecialsByDefault);
     private record ErrorResponse(string Error);

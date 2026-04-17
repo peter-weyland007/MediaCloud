@@ -1,0 +1,21 @@
+<a href="@BackHref" style="color:#93c5fd; text-decoration:none;">← @BackLabel</a>
+
+<section style="margin-top:0.6rem;">
+    <h1 style="margin:0;">@Title</h1>
+    @if (!string.IsNullOrWhiteSpace(Subtitle))
+    {
+        <p class="subtitle" style="margin:0.25rem 0 0;">@Subtitle</p>
+    }
+    @if (!string.IsNullOrWhiteSpace(Note))
+    {
+        <p class="card-note" style="margin-top:0.35rem;">@Note</p>
+    }
+</section>
+
+@code {
+    [Parameter, EditorRequired] public string BackHref { get; set; } = string.Empty;
+    [Parameter, EditorRequired] public string BackLabel { get; set; } = string.Empty;
+    [Parameter, EditorRequired] public string Title { get; set; } = string.Empty;
+    [Parameter] public string? Subtitle { get; set; }
+    [Parameter] public string? Note { get; set; }
+}

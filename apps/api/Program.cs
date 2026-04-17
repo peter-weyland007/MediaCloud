@@ -44,6 +44,9 @@ const string runtimeCriticalPercentKey = "runtime_policy.critical_percent";
 const string runtimeCriticalMinutesKey = "runtime_policy.critical_minutes";
 const string monitoringManagedByMediaCloudKey = "monitoring.managed_by_mediacloud";
 const string monitoringAutoSyncEnabledKey = "monitoring.auto_sync_enabled";
+const string integrationPullAutoEnabledKey = "integration_pulls.auto_enabled";
+const string integrationPullIntervalMinutesKey = "integration_pulls.interval_minutes";
+const string integrationPullLastAutoPullAtUtcKey = "integration_pulls.last_auto_pull_at_utc";
 const string tvHideSpecialsByDefaultKey = "tv.hide_specials_by_default";
 const string runtimeMismatchIssueType = "runtime_mismatch";
 const string runtimeProbeFailureIssueType = "runtime_probe_failed";
@@ -75,7 +78,8 @@ builder.Services
     });
 
 builder.Services.AddAuthorizationBuilder()
-    .AddPolicy("AdminOnly", p => p.RequireRole("Admin"));
+    .AddPolicy("AdminOnly", p => p.RequireRole("Admin"))
+    .AddPolicy("OperatorOnly", p => p.RequireRole("Admin", "User"));
 
 var app = builder.Build();
 
@@ -120,6 +124,8 @@ CREATE TABLE IF NOT EXISTS IntegrationConfigs (
     Password TEXT NOT NULL,
     RemoteRootPath TEXT NOT NULL DEFAULT '',
     LocalRootPath TEXT NOT NULL DEFAULT '',
+    CurrentVersion TEXT NOT NULL DEFAULT '',
+    LatestReleaseVersion TEXT NOT NULL DEFAULT '',
     Enabled INTEGER NOT NULL,
     UpdatedAtUtc TEXT NOT NULL
 );
@@ -290,6 +296,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS IX_PlaybackDiagnosticEntries_Item_Source_Exter
     EnsureSqliteColumn(db, "IntegrationConfigs", "Password", "TEXT NOT NULL DEFAULT ''");
     EnsureSqliteColumn(db, "IntegrationConfigs", "RemoteRootPath", "TEXT NOT NULL DEFAULT ''");
     EnsureSqliteColumn(db, "IntegrationConfigs", "LocalRootPath", "TEXT NOT NULL DEFAULT ''");
+    EnsureSqliteColumn(db, "IntegrationConfigs", "CurrentVersion", "TEXT NOT NULL DEFAULT ''");
+    EnsureSqliteColumn(db, "IntegrationConfigs", "LatestReleaseVersion", "TEXT NOT NULL DEFAULT ''");
     EnsureSqliteColumn(db, "LibraryItems", "Description", "TEXT NOT NULL DEFAULT ''");
     EnsureSqliteColumn(db, "LibraryItems", "DescriptionSourceService", "TEXT NOT NULL DEFAULT ''");
     EnsureSqliteColumn(db, "LibraryItems", "ActualRuntimeMinutes", "REAL NULL");
@@ -540,6 +548,8 @@ app.MapGet("/api/public/auth-status", async (MediaCloudDbContext db) =>
     return Results.Ok(new AuthSettingsResponse(enabled));
 }).AllowAnonymous();
 
+app.MapPost("/api/auth/logout", () => Results.Ok()).RequireAuthorization();
+
 app.MapGet("/api/settings/auth", async (MediaCloudDbContext db) =>
 {
     var enabled = await AppAuthSettings.IsSelfRegistrationAllowedAsync(db, allowSelfRegistrationDefault, allowSelfRegistrationKey);
@@ -662,6 +672,112 @@ app.MapPut("/api/settings/monitoring", async (UpdateMonitoringSettingsRequest re
     await db.SaveChangesAsync();
 
     return Results.Ok(new MonitoringSettingsResponse(request.ManagedByMediaCloud, request.AutoSyncEnabled));
+}).RequireAuthorization("AdminOnly");
+
+app.MapGet("/api/settings/integration-pulls", async (MediaCloudDbContext db) =>
+{
+    var autoPullEnabled = await GetIntegrationPullAutoEnabledAsync(db);
+    var intervalMinutes = await GetIntegrationPullIntervalMinutesAsync(db);
+    var lastAutoPullAtUtc = await GetIntegrationPullLastAutoPullAtUtcAsync(db);
+    return Results.Ok(new IntegrationPullSettingsResponse(autoPullEnabled, intervalMinutes, lastAutoPullAtUtc));
+}).RequireAuthorization("AdminOnly");
+
+app.MapPut("/api/settings/integration-pulls", async (UpdateIntegrationPullSettingsRequest request, MediaCloudDbContext db, ClaimsPrincipal principal) =>
+{
+    if (request.IntervalMinutes < 5 || request.IntervalMinutes > 1440)
+    {
+        return Results.BadRequest(new ErrorResponse("Automatic pull interval must be between 5 and 1440 minutes."));
+    }
+
+    var now = DateTimeOffset.UtcNow;
+    await SetIntegrationPullAutoEnabledAsync(db, request.AutoPullEnabled, now);
+    await SetIntegrationPullIntervalMinutesAsync(db, request.IntervalMinutes, now);
+    await WriteAuditAsync(db, principal, "integration_pull_settings", principal.Identity?.Name ?? "admin", $"Set auto_pull_enabled={request.AutoPullEnabled}, interval_minutes={request.IntervalMinutes}");
+    await db.SaveChangesAsync();
+
+    return Results.Ok(new IntegrationPullSettingsResponse(request.AutoPullEnabled, request.IntervalMinutes, await GetIntegrationPullLastAutoPullAtUtcAsync(db)));
+}).RequireAuthorization("AdminOnly");
+
+app.MapGet("/api/settings/media-profile", async (MediaCloudDbContext db) =>
+{
+    var settings = await MediaProfileSettings.LoadCurrentAsync(db, MediaProfilePresetCatalog.BroadPlexCompatibility.Settings);
+    return Results.Ok(settings);
+}).RequireAuthorization("AdminOnly");
+
+app.MapPut("/api/settings/media-profile", async (UpdateMediaProfileSettingsRequest request, MediaCloudDbContext db, ClaimsPrincipal principal) =>
+{
+    var normalized = MediaProfileSettings.NormalizeForSave(request);
+    var now = DateTimeOffset.UtcNow;
+    await MediaProfileSettings.SaveCurrentAsync(db, normalized, now);
+    await WriteAuditAsync(db, principal, "media_profile_settings", principal.Identity?.Name ?? "admin", $"Updated media profile: {MediaProfileSettings.BuildSummary(normalized)}");
+    await db.SaveChangesAsync();
+    return Results.Ok(normalized);
+}).RequireAuthorization("AdminOnly");
+
+app.MapGet("/api/settings/media-profile/presets", async (MediaCloudDbContext db) =>
+{
+    var presets = await MediaProfilePresetCatalog.ListAsync(db);
+    return Results.Ok(presets);
+}).RequireAuthorization("AdminOnly");
+
+app.MapPost("/api/settings/media-profile/presets", async (SaveMediaProfilePresetRequest request, MediaCloudDbContext db, ClaimsPrincipal principal) =>
+{
+    if (string.IsNullOrWhiteSpace(request.Name))
+    {
+        return Results.BadRequest(new ErrorResponse("Preset name is required."));
+    }
+
+    try
+    {
+        var now = DateTimeOffset.UtcNow;
+        var normalized = MediaProfileSettings.NormalizeForSave(request.Settings);
+        var preset = await MediaProfilePresetCatalog.SaveCustomAsync(db, request.Name, normalized, now);
+        await WriteAuditAsync(db, principal, "media_profile_preset", principal.Identity?.Name ?? "admin", $"Saved media profile preset '{preset.Name}' ({preset.Key})");
+        await db.SaveChangesAsync();
+        return Results.Ok(preset);
+    }
+    catch (InvalidOperationException ex)
+    {
+        return Results.BadRequest(new ErrorResponse(ex.Message));
+    }
+}).RequireAuthorization("AdminOnly");
+
+app.MapPut("/api/settings/media-profile/presets/{presetKey}", async (string presetKey, RenameMediaProfilePresetRequest request, MediaCloudDbContext db, ClaimsPrincipal principal) =>
+{
+    if (string.IsNullOrWhiteSpace(request.Name))
+    {
+        return Results.BadRequest(new ErrorResponse("Preset name is required."));
+    }
+
+    try
+    {
+        var preset = await MediaProfilePresetCatalog.RenameCustomAsync(db, presetKey, request.Name, DateTimeOffset.UtcNow);
+        if (preset is null)
+        {
+            return Results.NotFound(new ErrorResponse("Media profile preset not found."));
+        }
+
+        await WriteAuditAsync(db, principal, "media_profile_preset", principal.Identity?.Name ?? "admin", $"Renamed media profile preset '{preset.Key}' to '{preset.Name}'");
+        await db.SaveChangesAsync();
+        return Results.Ok(preset);
+    }
+    catch (InvalidOperationException ex)
+    {
+        return Results.BadRequest(new ErrorResponse(ex.Message));
+    }
+}).RequireAuthorization("AdminOnly");
+
+app.MapDelete("/api/settings/media-profile/presets/{presetKey}", async (string presetKey, MediaCloudDbContext db, ClaimsPrincipal principal) =>
+{
+    var removed = await MediaProfilePresetCatalog.DeleteCustomAsync(db, presetKey, DateTimeOffset.UtcNow);
+    if (!removed)
+    {
+        return Results.NotFound(new ErrorResponse("Media profile preset not found."));
+    }
+
+    await WriteAuditAsync(db, principal, "media_profile_preset", principal.Identity?.Name ?? "admin", $"Deleted media profile preset '{presetKey}'");
+    await db.SaveChangesAsync();
+    return Results.Ok();
 }).RequireAuthorization("AdminOnly");
 
 app.MapGet("/api/settings/tv-display", async (MediaCloudDbContext db) =>
@@ -793,10 +909,55 @@ app.MapGet("/api/integration-services", () =>
     return Results.Ok(services);
 }).RequireAuthorization("AdminOnly");
 
-app.MapGet("/api/integrations", async (MediaCloudDbContext db) =>
+app.MapGet("/api/integrations", async (MediaCloudDbContext db, IHttpClientFactory httpClientFactory) =>
 {
     var rows = await db.IntegrationConfigs.OrderBy(x => x.ServiceKey).ThenBy(x => x.InstanceName).ToListAsync();
-    var items = rows.Select(x => new IntegrationInstanceResponse(x.Id, x.ServiceKey, IntegrationCatalog.GetName(x.ServiceKey), x.InstanceName, x.BaseUrl, x.AuthType, x.ApiKey, x.Username, x.Password, x.Enabled, x.UpdatedAtUtc)).ToList();
+    var syncStates = await db.IntegrationSyncStates.ToListAsync();
+    var syncStateMap = syncStates.ToDictionary(x => x.IntegrationId);
+    var items = new List<IntegrationInstanceResponse>(rows.Count);
+
+    foreach (var row in rows)
+    {
+        syncStateMap.TryGetValue(row.Id, out var syncState);
+        var prowlarrSummary = string.Equals(row.ServiceKey, "prowlarr", StringComparison.OrdinalIgnoreCase)
+            ? await TryGetProwlarrSummaryAsync(row, httpClientFactory)
+            : null;
+
+        if (row.Enabled && (string.IsNullOrWhiteSpace(row.CurrentVersion) || string.IsNullOrWhiteSpace(row.LatestReleaseVersion)))
+        {
+            var versionMetadata = await IntegrationCatalog.RefreshIntegrationVersionMetadataAsync(row, httpClientFactory);
+            if (!string.Equals(row.CurrentVersion, versionMetadata.CurrentVersion, StringComparison.Ordinal) || !string.Equals(row.LatestReleaseVersion, versionMetadata.LatestReleaseVersion, StringComparison.Ordinal))
+            {
+                row.CurrentVersion = versionMetadata.CurrentVersion;
+                row.LatestReleaseVersion = versionMetadata.LatestReleaseVersion;
+                row.UpdatedAtUtc = DateTimeOffset.UtcNow;
+            }
+        }
+
+        items.Add(new IntegrationInstanceResponse(
+            row.Id,
+            row.ServiceKey,
+            IntegrationCatalog.GetName(row.ServiceKey),
+            row.InstanceName,
+            row.BaseUrl,
+            row.AuthType,
+            row.ApiKey,
+            row.Username,
+            row.Password,
+            row.Enabled,
+            row.UpdatedAtUtc,
+            row.CurrentVersion,
+            row.LatestReleaseVersion,
+            GetServiceRoleSummary(row.ServiceKey),
+            syncState?.LastAttemptedAtUtc,
+            syncState?.LastSuccessfulAtUtc,
+            syncState?.LastError ?? string.Empty,
+            syncState?.ConsecutiveFailureCount ?? 0,
+            IntegrationCatalog.SupportsSync(row.ServiceKey),
+            prowlarrSummary));
+    }
+
+    await db.SaveChangesAsync();
     return Results.Ok(items);
 }).RequireAuthorization("AdminOnly");
 
@@ -841,7 +1002,7 @@ app.MapPost("/api/integrations", async (CreateIntegrationInstanceRequest request
     await WriteAuditAsync(db, principal, "integration_config", principal.Identity?.Name ?? "admin", $"Created integration instance '{entity.ServiceKey}:{entity.InstanceName}' (enabled={entity.Enabled}, auth={entity.AuthType})");
     await db.SaveChangesAsync();
 
-    return Results.Ok(new IntegrationInstanceResponse(entity.Id, entity.ServiceKey, IntegrationCatalog.GetName(entity.ServiceKey), entity.InstanceName, entity.BaseUrl, entity.AuthType, entity.ApiKey, entity.Username, entity.Password, entity.Enabled, entity.UpdatedAtUtc));
+    return Results.Ok(new IntegrationInstanceResponse(entity.Id, entity.ServiceKey, IntegrationCatalog.GetName(entity.ServiceKey), entity.InstanceName, entity.BaseUrl, entity.AuthType, entity.ApiKey, entity.Username, entity.Password, entity.Enabled, entity.UpdatedAtUtc, string.Empty, string.Empty, GetServiceRoleSummary(entity.ServiceKey), null, null, string.Empty, 0, IntegrationCatalog.SupportsSync(entity.ServiceKey), null));
 }).RequireAuthorization("AdminOnly");
 
 app.MapPut("/api/integrations/{id:long}", async (long id, UpdateIntegrationInstanceRequest request, MediaCloudDbContext db, ClaimsPrincipal principal) =>
@@ -880,7 +1041,7 @@ app.MapPut("/api/integrations/{id:long}", async (long id, UpdateIntegrationInsta
     await WriteAuditAsync(db, principal, "integration_config", principal.Identity?.Name ?? "admin", $"Updated integration instance '{entity.ServiceKey}:{entity.InstanceName}' (enabled={entity.Enabled}, auth={entity.AuthType})");
     await db.SaveChangesAsync();
 
-    return Results.Ok(new IntegrationInstanceResponse(entity.Id, entity.ServiceKey, IntegrationCatalog.GetName(entity.ServiceKey), entity.InstanceName, entity.BaseUrl, entity.AuthType, entity.ApiKey, entity.Username, entity.Password, entity.Enabled, entity.UpdatedAtUtc));
+    return Results.Ok(new IntegrationInstanceResponse(entity.Id, entity.ServiceKey, IntegrationCatalog.GetName(entity.ServiceKey), entity.InstanceName, entity.BaseUrl, entity.AuthType, entity.ApiKey, entity.Username, entity.Password, entity.Enabled, entity.UpdatedAtUtc, string.Empty, string.Empty, GetServiceRoleSummary(entity.ServiceKey), null, null, string.Empty, 0, IntegrationCatalog.SupportsSync(entity.ServiceKey), null));
 }).RequireAuthorization("AdminOnly");
 
 app.MapDelete("/api/integrations/{id:long}", async (long id, MediaCloudDbContext db, ClaimsPrincipal principal) =>
@@ -1358,7 +1519,12 @@ app.MapPost("/api/integrations/{id:long}/test", async (long id, MediaCloudDbCont
     if (config is null) return Results.NotFound(new ErrorResponse("Integration instance not found."));
 
     var result = await IntegrationCatalog.TestConnectionAsync(config.ServiceKey, config, httpClientFactory);
-    return Results.Ok(new IntegrationTestResponse(config.Id, config.ServiceKey, config.InstanceName, result.Success, result.StatusCode, result.Message));
+    var latestReleaseVersion = await IntegrationCatalog.FetchLatestReleaseVersionAsync(config.ServiceKey, httpClientFactory);
+    config.CurrentVersion = result.Version;
+    config.LatestReleaseVersion = latestReleaseVersion;
+    config.UpdatedAtUtc = DateTimeOffset.UtcNow;
+    await db.SaveChangesAsync();
+    return Results.Ok(new IntegrationTestResponse(config.Id, config.ServiceKey, config.InstanceName, result.Success, result.StatusCode, result.Message, result.Version));
 }).RequireAuthorization("AdminOnly");
 
 app.MapPost("/api/integrations/{id:long}/sync", async (long id, TriggerIntegrationSyncRequest request, MediaCloudDbContext db, IHttpClientFactory httpClientFactory, IServiceScopeFactory scopeFactory) =>
@@ -1367,6 +1533,11 @@ app.MapPost("/api/integrations/{id:long}/sync", async (long id, TriggerIntegrati
     if (integration is null)
     {
         return Results.NotFound(new ErrorResponse("Integration instance not found."));
+    }
+
+    if (!IntegrationCatalog.SupportsSync(integration.ServiceKey))
+    {
+        return Results.Ok(new TriggerIntegrationSyncResponse(id, false, $"{IntegrationCatalog.GetName(integration.ServiceKey)} is an ops/health integration only. Catalog sync is not applicable."));
     }
 
     var now = DateTimeOffset.UtcNow;
@@ -1455,6 +1626,15 @@ app.MapPost("/api/integrations/{id:long}/sync", async (long id, TriggerIntegrati
                 "Queued TV runtime probe after Sonarr sync...");
             responseMessage = $"{responseMessage} Background runtime probe queued ({jobId}).";
         }
+        else if (string.Equals(integration.ServiceKey, "radarr", StringComparison.OrdinalIgnoreCase))
+        {
+            var jobId = StartRuntimeReprobeJob(
+                runtimeReprobeJobs,
+                scopeFactory,
+                new BatchRuntimeReprobeRequest("Movie", 5000, false),
+                "Queued movie runtime probe after Radarr sync...");
+            responseMessage = $"{responseMessage} Background runtime probe queued ({jobId}).";
+        }
 
         return Results.Ok(new TriggerIntegrationSyncResponse(id, true, responseMessage));
     }
@@ -1507,12 +1687,23 @@ app.MapGet("/api/library/items", async (MediaCloudDbContext db, string? mediaTyp
     var skip = Math.Max(offset ?? 0, 0);
 
     var query = ApplyLibraryItemFilters(db, db.LibraryItems.AsQueryable(), mediaType, q, available);
-    query = ApplyLibraryItemSort(query, sortBy, sortDir);
 
-    var rows = await query
-        .Skip(skip)
-        .Take(limit)
-        .ToListAsync();
+    List<LibraryItem> rows;
+    if (RequiresClientSideLibraryItemSort(sortBy))
+    {
+        rows = ApplyLibraryItemSortInMemory(await query.ToListAsync(), sortBy, sortDir)
+            .Skip(skip)
+            .Take(limit)
+            .ToList();
+    }
+    else
+    {
+        query = ApplyLibraryItemSort(query, sortBy, sortDir);
+        rows = await query
+            .Skip(skip)
+            .Take(limit)
+            .ToListAsync();
+    }
 
     var rowIds = rows.Select(x => x.Id).ToList();
     var sourceServiceMap = new Dictionary<long, IReadOnlyList<string>>();
@@ -1629,9 +1820,20 @@ app.MapGet("/api/library/items/jump", async (MediaCloudDbContext db, string toke
     var size = Math.Clamp(pageSize ?? 100, 1, 500);
 
     var query = ApplyLibraryItemFilters(db, db.LibraryItems.AsQueryable(), mediaType, q, available);
-    query = ApplyLibraryItemSort(query, sortBy, sortDir);
 
-    var rows = await query.Select(x => new { x.Id, x.Title }).ToListAsync();
+    List<(long Id, string Title)> rows;
+    if (RequiresClientSideLibraryItemSort(sortBy))
+    {
+        rows = ApplyLibraryItemSortInMemory(await query.ToListAsync(), sortBy, sortDir)
+            .Select(x => (x.Id, x.Title))
+            .ToList();
+    }
+    else
+    {
+        rows = await ApplyLibraryItemSort(query, sortBy, sortDir)
+            .Select(x => new ValueTuple<long, string>(x.Id, x.Title))
+            .ToListAsync();
+    }
     var index = rows.FindIndex(x => TitleMatchesJumpToken(x.Title, normalizedToken));
     if (index < 0)
     {
@@ -1654,6 +1856,11 @@ app.MapGet("/api/library/items/{id:long}", async (long id, MediaCloudDbContext d
     if (string.Equals(row.MediaType, "Series", StringComparison.OrdinalIgnoreCase))
     {
         await TryEnrichSeriesIdentifiersFromSourceAsync(row, db, httpClientFactory, persistChanges: false);
+    }
+    else if (string.Equals(row.MediaType, "Movie", StringComparison.OrdinalIgnoreCase)
+        && string.IsNullOrWhiteSpace(row.PrimaryFilePath))
+    {
+        await TryRefreshPrimaryFilePathFromSourceAsync(row, db, httpClientFactory);
     }
 
     var sourceServices = await (
@@ -1678,6 +1885,96 @@ app.MapGet("/api/library/items/{id:long}", async (long id, MediaCloudDbContext d
         .ToListAsync();
 
     return Results.Ok(MapLibraryItemDto(row, sourceServices, sourceTitles));
+}).RequireAuthorization();
+
+app.MapGet("/api/library/items/{id:long}/media-compatibility-recommendation", async (long id, MediaCloudDbContext db) =>
+{
+    var item = await db.LibraryItems.FirstOrDefaultAsync(x => x.Id == id);
+    if (item is null)
+    {
+        return Results.NotFound(new ErrorResponse("Library item not found."));
+    }
+
+    var settings = await MediaProfileSettings.LoadCurrentAsync(db, MediaProfilePresetCatalog.BroadPlexCompatibility.Settings);
+    var details = DeserializePlayabilityDetails(item.PlayabilityDetailsJson);
+    var latestDiagnostic = await LatestPlaybackDiagnostic.LoadLatestAsync(db, item.Id);
+    var recommendation = MediaCompatibilityRecommendationEngine.Build(item, details, latestDiagnostic, settings);
+    return Results.Ok(recommendation);
+}).RequireAuthorization();
+
+app.MapGet("/api/library/items/{id:long}/bazarr-subtitles", async (long id, MediaCloudDbContext db, IHttpClientFactory httpClientFactory) =>
+{
+    var item = await db.LibraryItems.FirstOrDefaultAsync(x => x.Id == id);
+    if (item is null)
+    {
+        return Results.NotFound(new ErrorResponse("Library item not found."));
+    }
+
+    var bazarr = await db.IntegrationConfigs
+        .Where(x => x.Enabled && x.ServiceKey.ToLower() == "bazarr")
+        .OrderBy(x => x.Id)
+        .FirstOrDefaultAsync();
+    if (bazarr is null)
+    {
+        return Results.Ok(BazarrSubtitleStatusResolver.BuildUnavailable(id, false, "Bazarr integration is not configured."));
+    }
+
+    var sourceLinks = await (
+        from link in db.LibraryItemSourceLinks
+        join integration in db.IntegrationConfigs on link.IntegrationId equals integration.Id
+        where link.LibraryItemId == id
+        select new BazarrSourceLinkCandidate(integration.ServiceKey, link.ExternalType, link.ExternalId))
+        .ToListAsync();
+
+    var target = BazarrSubtitleStatusResolver.ResolveTarget(item, sourceLinks);
+    if (target is null)
+    {
+        return Results.Ok(BazarrSubtitleStatusResolver.BuildUnavailable(id, true, "MediaCloud could not map this item to a Bazarr-backed Radarr or Sonarr item."));
+    }
+
+    var path = target.TargetKind switch
+    {
+        "movie" => "movies",
+        "episode" => "episodes",
+        "series" => "series",
+        _ => string.Empty
+    };
+
+    if (string.IsNullOrWhiteSpace(path))
+    {
+        return Results.Ok(BazarrSubtitleStatusResolver.BuildUnavailable(id, true, "Unsupported Bazarr subtitle target type."));
+    }
+
+    try
+    {
+        var client = httpClientFactory.CreateClient();
+        client.Timeout = TimeSpan.FromSeconds(20);
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"{bazarr.BaseUrl.TrimEnd('/')}/api/{path}");
+        if (!string.IsNullOrWhiteSpace(bazarr.ApiKey))
+        {
+            request.Headers.Add("X-API-KEY", bazarr.ApiKey);
+        }
+
+        using var response = await client.SendAsync(request);
+        if (!response.IsSuccessStatusCode)
+        {
+            return Results.Ok(BazarrSubtitleStatusResolver.BuildUnavailable(id, true, $"Bazarr request failed (HTTP {(int)response.StatusCode})."));
+        }
+
+        var payload = await response.Content.ReadAsStringAsync();
+        var status = target.TargetKind switch
+        {
+            "movie" => BazarrSubtitleStatusResolver.BuildMovieStatus(id, IntegrationCatalog.GetName(bazarr.ServiceKey), bazarr.InstanceName, target.ExternalId, payload),
+            "episode" => BazarrSubtitleStatusResolver.BuildEpisodeStatus(id, IntegrationCatalog.GetName(bazarr.ServiceKey), bazarr.InstanceName, target.ExternalId, payload),
+            _ => BazarrSubtitleStatusResolver.BuildSeriesStatus(id, IntegrationCatalog.GetName(bazarr.ServiceKey), bazarr.InstanceName, target.ExternalId, payload)
+        };
+
+        return Results.Ok(status);
+    }
+    catch
+    {
+        return Results.Ok(BazarrSubtitleStatusResolver.BuildUnavailable(id, true, "Failed to query Bazarr subtitle status."));
+    }
 }).RequireAuthorization();
 
 app.MapGet("/api/library/items/{id:long}/series-parent", async (long id, MediaCloudDbContext db) =>
@@ -1834,6 +2131,7 @@ app.MapPost("/api/library/items/{id:long}/reprobe-runtime", async (long id, Medi
     var runtimeMinutes = probe.RuntimeMinutes;
     row.PrimaryFilePath = filePath;
     row.ActualRuntimeMinutes = runtimeMinutes;
+    row.IsAvailable = true;
     ApplyPlayabilityProbe(row, probe, DateTimeOffset.UtcNow);
     row.UpdatedAtUtc = DateTimeOffset.UtcNow;
     await UpsertRuntimeProbeFailureIssueAsync(db, row, filePath, probe.Error, probe.ExitCode, row.UpdatedAtUtc, runtimeProbeFailureIssueType);
@@ -2311,7 +2609,7 @@ app.MapPost("/api/library/items/{id:long}/issues", async (long id, CreateLibrary
 
     await db.SaveChangesAsync();
     return Results.Ok(MapLibraryIssueDto(issue));
-}).RequireAuthorization("AdminOnly");
+}).RequireAuthorization("OperatorOnly");
 
 app.MapPost("/api/library/issues/{issueId:long}/resolve", async (long issueId, MediaCloudDbContext db) =>
 {
@@ -2328,7 +2626,7 @@ app.MapPost("/api/library/issues/{issueId:long}/resolve", async (long issueId, M
     await db.SaveChangesAsync();
 
     return Results.Ok(MapLibraryIssueDto(issue));
-}).RequireAuthorization("AdminOnly");
+}).RequireAuthorization("OperatorOnly");
 
 app.MapPost("/api/library/items/reprobe-missing-runtimes", async (BatchRuntimeReprobeRequest request, MediaCloudDbContext db) =>
 {
@@ -2378,44 +2676,89 @@ app.MapGet("/api/library/items/reprobe-runtimes/jobs/{jobId:guid}", (Guid jobId)
     return Results.Ok(status);
 }).RequireAuthorization("AdminOnly");
 
-app.MapGet("/api/library/issues", async (MediaCloudDbContext db, string? status, string? issueType, int? take) =>
+app.MapGet("/api/library/issues", async (MediaCloudDbContext db, string? status, string? issueType, string? mediaType, string? sortBy, string? sortDir, int? pageIndex, int? pageSize) =>
 {
-    var limit = Math.Clamp(take ?? 100, 1, 500);
-    var query = db.LibraryIssues.AsQueryable();
+    var normalizedStatus = string.IsNullOrWhiteSpace(status) ? string.Empty : status.Trim();
+    var normalizedIssueType = string.IsNullOrWhiteSpace(issueType) ? string.Empty : issueType.Trim();
+    var normalizedMediaType = string.IsNullOrWhiteSpace(mediaType) ? string.Empty : mediaType.Trim();
+    var normalizedSortBy = string.IsNullOrWhiteSpace(sortBy) ? "detected" : sortBy.Trim().ToLowerInvariant();
+    var descending = !string.Equals(sortDir, "asc", StringComparison.OrdinalIgnoreCase);
+    var normalizedPageIndex = Math.Max(pageIndex ?? 0, 0);
+    var normalizedPageSize = Math.Clamp(pageSize ?? 50, 1, 100);
 
-    if (!string.IsNullOrWhiteSpace(status))
-    {
-        query = query.Where(x => x.Status == status);
-    }
-
-    if (!string.IsNullOrWhiteSpace(issueType))
-    {
-        query = query.Where(x => x.IssueType == issueType);
-    }
-
-    var rows = await (
-        from issue in query
+    var query =
+        from issue in db.LibraryIssues
         join item in db.LibraryItems on issue.LibraryItemId equals item.Id into itemJoin
         from item in itemJoin.DefaultIfEmpty()
-        orderby issue.Id descending
-        select new LibraryIssueDto(
-            issue.Id,
-            issue.LibraryItemId,
-            issue.IssueType,
-            issue.Severity,
-            issue.Status,
-            issue.Summary,
-            issue.SuggestedAction,
-            issue.DetailsJson,
-            issue.FirstDetectedAtUtc,
-            issue.LastDetectedAtUtc,
-            issue.ResolvedAtUtc,
-            item != null ? item.Title : string.Empty,
-            item != null ? item.MediaType : string.Empty))
-        .Take(limit)
+        select new { issue, item };
+
+    if (!string.IsNullOrWhiteSpace(normalizedStatus))
+    {
+        query = query.Where(x => x.issue.Status == normalizedStatus);
+    }
+
+    if (!string.IsNullOrWhiteSpace(normalizedMediaType))
+    {
+        query = query.Where(x => x.item != null && x.item.MediaType == normalizedMediaType);
+    }
+
+    var availableIssueTypes = await query
+        .Select(x => x.issue.IssueType)
+        .Distinct()
+        .OrderBy(x => x)
         .ToListAsync();
 
-    return Results.Ok(rows);
+    if (!string.IsNullOrWhiteSpace(normalizedIssueType))
+    {
+        query = query.Where(x => x.issue.IssueType == normalizedIssueType);
+    }
+
+    query = normalizedSortBy switch
+    {
+        "item" or "title" => descending
+            ? query.OrderByDescending(x => x.item != null ? x.item.Title : string.Empty).ThenByDescending(x => x.issue.Id)
+            : query.OrderBy(x => x.item != null ? x.item.Title : string.Empty).ThenBy(x => x.issue.Id),
+        "type" => descending
+            ? query.OrderByDescending(x => x.issue.IssueType).ThenByDescending(x => x.issue.Id)
+            : query.OrderBy(x => x.issue.IssueType).ThenBy(x => x.issue.Id),
+        "media" => descending
+            ? query.OrderByDescending(x => x.item != null ? x.item.MediaType : string.Empty).ThenByDescending(x => x.issue.Id)
+            : query.OrderBy(x => x.item != null ? x.item.MediaType : string.Empty).ThenBy(x => x.issue.Id),
+        "severity" => descending
+            ? query.OrderByDescending(x => x.issue.Severity).ThenByDescending(x => x.issue.Id)
+            : query.OrderBy(x => x.issue.Severity).ThenBy(x => x.issue.Id),
+        "status" => descending
+            ? query.OrderByDescending(x => x.issue.Status).ThenByDescending(x => x.issue.Id)
+            : query.OrderBy(x => x.issue.Status).ThenBy(x => x.issue.Id),
+        "difference" => descending
+            ? query.OrderByDescending(x => x.issue.DetailsJson).ThenByDescending(x => x.issue.Id)
+            : query.OrderBy(x => x.issue.DetailsJson).ThenBy(x => x.issue.Id),
+        _ => descending
+            ? query.OrderByDescending(x => x.issue.Id)
+            : query.OrderBy(x => x.issue.Id)
+    };
+
+    var totalCount = await query.CountAsync();
+    var rows = await query
+        .Skip(normalizedPageIndex * normalizedPageSize)
+        .Take(normalizedPageSize)
+        .Select(x => new LibraryIssueDto(
+            x.issue.Id,
+            x.issue.LibraryItemId,
+            x.issue.IssueType,
+            x.issue.Severity,
+            x.issue.Status,
+            x.issue.Summary,
+            x.issue.SuggestedAction,
+            x.issue.DetailsJson,
+            x.issue.FirstDetectedAtUtc,
+            x.issue.LastDetectedAtUtc,
+            x.issue.ResolvedAtUtc,
+            x.item != null ? x.item.Title : string.Empty,
+            x.item != null ? x.item.MediaType : string.Empty))
+        .ToListAsync();
+
+    return Results.Ok(new LibraryIssuePageResponse(rows, totalCount, normalizedPageIndex, normalizedPageSize, availableIssueTypes));
 }).RequireAuthorization();
 
 app.Run();
@@ -2473,6 +2816,7 @@ static LibraryItemDto MapLibraryItemDto(
     var playabilityDetails = DeserializePlayabilityDetails(item.PlayabilityDetailsJson);
     var displayTitle = BuildLibraryDisplayTitle(item, sourceTitles);
     var localFileExists = !string.IsNullOrWhiteSpace(item.PrimaryFilePath) && File.Exists(item.PrimaryFilePath);
+    var effectiveAvailability = item.IsAvailable || localFileExists;
 
     return new LibraryItemDto(
         item.Id,
@@ -2499,7 +2843,7 @@ static LibraryItemDto MapLibraryItemDto(
         playabilityDetails.VideoCodec,
         playabilityDetails.AudioCodecs,
         playabilityDetails.SubtitleCodecs,
-        item.IsAvailable,
+        effectiveAvailability,
         item.QualityProfile,
         item.SourceUpdatedAtUtc,
         item.UpdatedAtUtc,
@@ -2711,6 +3055,23 @@ static IQueryable<LibraryItem> ApplyLibraryItemSort(IQueryable<LibraryItem> quer
         "updated" => descending ? query.OrderByDescending(x => x.UpdatedAtUtc).ThenBy(x => x.SortTitle) : query.OrderBy(x => x.UpdatedAtUtc).ThenBy(x => x.SortTitle),
         "runtime" => descending ? query.OrderByDescending(x => x.RuntimeMinutes).ThenBy(x => x.SortTitle) : query.OrderBy(x => x.RuntimeMinutes).ThenBy(x => x.SortTitle),
         _ => descending ? query.OrderByDescending(x => x.SortTitle) : query.OrderBy(x => x.SortTitle)
+    };
+}
+
+static bool RequiresClientSideLibraryItemSort(string? sortBy)
+    => string.Equals((sortBy ?? string.Empty).Trim(), "updated", StringComparison.OrdinalIgnoreCase);
+
+static IEnumerable<LibraryItem> ApplyLibraryItemSortInMemory(IEnumerable<LibraryItem> rows, string? sortBy, string? sortDir)
+{
+    var descending = string.Equals(sortDir, "desc", StringComparison.OrdinalIgnoreCase);
+    var normalizedSortBy = (sortBy ?? "title").Trim().ToLowerInvariant();
+
+    return normalizedSortBy switch
+    {
+        "year" => descending ? rows.OrderByDescending(x => x.Year).ThenBy(x => x.SortTitle) : rows.OrderBy(x => x.Year).ThenBy(x => x.SortTitle),
+        "updated" => descending ? rows.OrderByDescending(x => x.UpdatedAtUtc).ThenBy(x => x.SortTitle) : rows.OrderBy(x => x.UpdatedAtUtc).ThenBy(x => x.SortTitle),
+        "runtime" => descending ? rows.OrderByDescending(x => x.RuntimeMinutes).ThenBy(x => x.SortTitle) : rows.OrderBy(x => x.RuntimeMinutes).ThenBy(x => x.SortTitle),
+        _ => descending ? rows.OrderByDescending(x => x.SortTitle) : rows.OrderBy(x => x.SortTitle)
     };
 }
 
@@ -3738,7 +4099,31 @@ static async Task UpsertLibrarySourceLinkAsync(
     link.LastSeenAtUtc = seenAtUtc;
     link.IsDeletedAtSource = false;
     link.SourcePayloadHash = payloadHash;
+    await UpsertLibraryItemSourceSyncStateAsync(db, libraryItemId, integrationId, seenAtUtc);
 }
+
+// DateTimeOffset? LastSyncedAtUtc is persisted per library item source sync state.
+static async Task UpsertLibraryItemSourceSyncStateAsync(MediaCloudDbContext db, long libraryItemId, long integrationId, DateTimeOffset seenAtUtc)
+{
+    var state = await db.LibraryItemSourceSyncStates.FirstOrDefaultAsync(x => x.LibraryItemId == libraryItemId && x.IntegrationId == integrationId);
+    if (state is null)
+    {
+        state = new LibraryItemSourceSyncState
+        {
+            LibraryItemId = libraryItemId,
+            IntegrationId = integrationId
+        };
+        db.LibraryItemSourceSyncStates.Add(state);
+    }
+
+    state.LastSyncedAtUtc = seenAtUtc;
+    state.UpdatedAtUtc = seenAtUtc;
+}
+
+static async Task<Dictionary<long, DateTimeOffset?>> GetLibraryItemSourceSyncStateMapAsync(MediaCloudDbContext db, long libraryItemId)
+    => await db.LibraryItemSourceSyncStates
+        .Where(x => x.LibraryItemId == libraryItemId)
+        .ToDictionaryAsync(x => x.IntegrationId, x => (DateTimeOffset?)x.LastSyncedAtUtc);
 
 static string? GetXmlAttr(XElement element, string name)
     => element.Attribute(name)?.Value;
@@ -4260,6 +4645,50 @@ static async Task<bool> GetMonitoringAutoSyncEnabledAsync(MediaCloudDbContext db
     return ParseBoolOrDefault(raw, false);
 }
 
+static async Task<bool> GetIntegrationPullAutoEnabledAsync(MediaCloudDbContext db)
+{
+    var raw = await db.AppConfigEntries.Where(x => x.Key == integrationPullAutoEnabledKey).Select(x => x.Value).FirstOrDefaultAsync();
+    return ParseBoolOrDefault(raw, false);
+}
+
+static async Task<int> GetIntegrationPullIntervalMinutesAsync(MediaCloudDbContext db)
+{
+    var raw = await db.AppConfigEntries.Where(x => x.Key == integrationPullIntervalMinutesKey).Select(x => x.Value).FirstOrDefaultAsync();
+    return int.TryParse(raw, out var parsed) && parsed >= 5 && parsed <= 1440 ? parsed : 60;
+}
+
+static async Task<DateTimeOffset?> GetIntegrationPullLastAutoPullAtUtcAsync(MediaCloudDbContext db)
+{
+    var raw = await db.AppConfigEntries.Where(x => x.Key == integrationPullLastAutoPullAtUtcKey).Select(x => x.Value).FirstOrDefaultAsync();
+    return DateTimeOffset.TryParse(raw, out var parsed) ? parsed : null;
+}
+
+static async Task SetIntegrationPullAutoEnabledAsync(MediaCloudDbContext db, bool enabled, DateTimeOffset now)
+{
+    var setting = await db.AppConfigEntries.FirstOrDefaultAsync(x => x.Key == integrationPullAutoEnabledKey);
+    if (setting is null)
+    {
+        setting = new AppConfigEntry { Key = integrationPullAutoEnabledKey };
+        db.AppConfigEntries.Add(setting);
+    }
+
+    setting.Value = enabled ? "true" : "false";
+    setting.UpdatedAtUtc = now;
+}
+
+static async Task SetIntegrationPullIntervalMinutesAsync(MediaCloudDbContext db, int intervalMinutes, DateTimeOffset now)
+{
+    var setting = await db.AppConfigEntries.FirstOrDefaultAsync(x => x.Key == integrationPullIntervalMinutesKey);
+    if (setting is null)
+    {
+        setting = new AppConfigEntry { Key = integrationPullIntervalMinutesKey };
+        db.AppConfigEntries.Add(setting);
+    }
+
+    setting.Value = intervalMinutes.ToString(System.Globalization.CultureInfo.InvariantCulture);
+    setting.UpdatedAtUtc = now;
+}
+
 static async Task SetMonitoringAutoSyncEnabledAsync(MediaCloudDbContext db, bool enabled, DateTimeOffset now)
 {
     var setting = await db.AppConfigEntries.FirstOrDefaultAsync(x => x.Key == monitoringAutoSyncEnabledKey);
@@ -4608,8 +5037,75 @@ static string GetServiceRoleSummary(string serviceKey)
         "overseerr" => "Request intent and request workflow truth",
         "sonarr" => "Series catalog ingestion",
         "lidarr" => "Music catalog ingestion",
+        "prowlarr" => "Indexer control plane + search source orchestration",
         _ => "Auxiliary integration source"
     };
+}
+
+static async Task<ProwlarrSummaryResponse?> TryGetProwlarrSummaryAsync(IntegrationConfig integration, IHttpClientFactory httpClientFactory)
+{
+    if (!string.Equals(integration.ServiceKey, "prowlarr", StringComparison.OrdinalIgnoreCase))
+    {
+        return null;
+    }
+
+    var client = httpClientFactory.CreateClient();
+    client.Timeout = TimeSpan.FromSeconds(15);
+    var baseUrl = integration.BaseUrl.TrimEnd('/');
+
+    async Task<JsonElement?> GetArrayAsync(string requestPath)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"{baseUrl}{requestPath}");
+        ApplyIntegrationAuthHeaders(integration, request);
+        request.Headers.UserAgent.ParseAdd("MediaCloud/1.0");
+        using var response = await client.SendAsync(request);
+        if (!response.IsSuccessStatusCode)
+        {
+            return null;
+        }
+
+        var body = await response.Content.ReadAsStringAsync();
+        using var doc = JsonDocument.Parse(body);
+        if (doc.RootElement.ValueKind != JsonValueKind.Array)
+        {
+            return null;
+        }
+
+        return doc.RootElement.Clone();
+    }
+
+    try
+    {
+        var indexers = await GetArrayAsync("/api/v1/indexer");
+        var statuses = await GetArrayAsync("/api/v1/indexerstatus");
+        var applications = await GetArrayAsync("/api/v1/applications");
+        var health = await GetArrayAsync("/api/v1/health");
+
+        var configuredIndexers = indexers?.EnumerateArray().Count() ?? 0;
+        var enabledIndexers = indexers?.EnumerateArray().Count(x => GetJsonBool(x, "enable") == true) ?? 0;
+        var unavailableIndexers = statuses?.EnumerateArray().Count(x =>
+        {
+            var disabledTill = GetJsonString(x, "disabledTill");
+            return DateTimeOffset.TryParse(disabledTill, out var parsed) && parsed > DateTimeOffset.UtcNow;
+        }) ?? 0;
+        var applicationLinks = applications?.EnumerateArray().Count(x => GetJsonBool(x, "enable") == true) ?? 0;
+        var healthIssues = health?.EnumerateArray().Count() ?? 0;
+        var warningHealthIssues = health?.EnumerateArray().Count(x => string.Equals(GetJsonString(x, "type"), "warning", StringComparison.OrdinalIgnoreCase)) ?? 0;
+        var errorHealthIssues = health?.EnumerateArray().Count(x => string.Equals(GetJsonString(x, "type"), "error", StringComparison.OrdinalIgnoreCase)) ?? 0;
+
+        return new ProwlarrSummaryResponse(
+            configuredIndexers,
+            enabledIndexers,
+            unavailableIndexers,
+            applicationLinks,
+            healthIssues,
+            warningHealthIssues,
+            errorHealthIssues);
+    }
+    catch
+    {
+        return null;
+    }
 }
 
 static async Task<PlexBackfillPreviewResponse> BuildPlexBackfillPlanAsync(MediaCloudDbContext db, IHttpClientFactory httpClientFactory, int take, bool includeItemsAlreadyRequested)
@@ -4734,7 +5230,7 @@ static async Task<List<LibraryRemediationSourceLink>> GetLibraryRemediationSourc
 }
 
 static LibraryRemediationIntentDto ToIntentDto(LibraryRemediationIntent intent)
-    => new(intent.IssueType, intent.RequestedAction, intent.ReasonCategory, intent.Confidence, intent.ShouldSearchNow, intent.ShouldBlacklistCurrentRelease, intent.NeedsManualReview, intent.NotesRecordedOnly, intent.PolicySummary, intent.NotesHandling, intent.ProfileDecision, intent.ProfileSummary);
+    => new(intent.IssueType, intent.RequestedAction, intent.ReasonCategory, intent.Confidence, intent.ShouldSearchNow, intent.ShouldBlacklistCurrentRelease, intent.NeedsManualReview, intent.NotesRecordedOnly, intent.ApprovalRequired, intent.ApprovalReason, intent.PolicySummary, intent.NotesHandling, intent.ProfileDecision, intent.ProfileSummary, intent.PolicyState, intent.NextActionSummary);
 
 static async Task<LibraryRemediationReleaseContext> BuildRemediationReleaseContextAsync(
     LibraryItem item,
@@ -5629,7 +6125,12 @@ async Task<List<TautulliHistoryItem>> FetchTautulliHistoryRowsAsync(IntegrationC
             GetJsonString(row, "platform") ?? string.Empty,
             GetJsonString(row, "transcode_decision") ?? string.Empty,
             string.Empty,
-            GetJsonString(row, "full_title") ?? GetJsonString(row, "title") ?? string.Empty));
+            GetJsonString(row, "full_title") ?? GetJsonString(row, "title") ?? string.Empty,
+            GetJsonString(row, "parent_title") ?? string.Empty,
+            GetJsonString(row, "grandparent_title") ?? string.Empty,
+            GetJsonInt(row, "media_index"),
+            GetJsonInt(row, "parent_media_index"),
+            GetJsonString(row, "originally_available_at") ?? string.Empty));
     }
 
     return rows;
@@ -6537,7 +7038,10 @@ static async Task<BatchRuntimeReprobeResponse> ExecuteBatchRuntimeReprobeAsync(
 
     if (!request.ForceAll)
     {
-        query = query.Where(x => x.ActualRuntimeMinutes == null);
+        query = query.Where(x => x.ActualRuntimeMinutes == null
+            || x.PlayabilityCheckedAtUtc == null
+            || x.AudioLanguagesJson == "[]"
+            || x.SubtitleLanguagesJson == "[]" && x.PlayabilityCheckedAtUtc < x.UpdatedAtUtc);
     }
 
     query = query.Where(x => x.PrimaryFilePath != "");
@@ -6629,13 +7133,13 @@ static MediaProbeResult ProbeMediaFile(string filePath)
     {
         if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath))
         {
-            return new MediaProbeResult(null, null, "File not found.", null);
+            return new MediaProbeResult(null, null, "File not found.", null, [], []);
         }
 
         var psi = new ProcessStartInfo
         {
             FileName = "ffprobe",
-            Arguments = $"-v error -show_entries format=duration,format_name,bit_rate:stream=codec_type,codec_name,profile,width,height,pix_fmt -of json \"{filePath}\"",
+            Arguments = $"-v error -show_entries format=duration,format_name,bit_rate:stream=codec_type,codec_name,profile,width,height,pix_fmt:stream_tags=language -of json \"{filePath}\"",
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
@@ -6645,13 +7149,13 @@ static MediaProbeResult ProbeMediaFile(string filePath)
         using var proc = Process.Start(psi);
         if (proc is null)
         {
-            return new MediaProbeResult(null, null, "Failed to start ffprobe process.", null);
+            return new MediaProbeResult(null, null, "Failed to start ffprobe process.", null, [], []);
         }
 
         if (!proc.WaitForExit(5000))
         {
             try { proc.Kill(entireProcessTree: true); } catch { }
-            return new MediaProbeResult(null, null, "ffprobe timed out after 5s.", null);
+            return new MediaProbeResult(null, null, "ffprobe timed out after 5s.", null, [], []);
         }
 
         var stdout = proc.StandardOutput.ReadToEnd().Trim();
@@ -6662,7 +7166,7 @@ static MediaProbeResult ProbeMediaFile(string filePath)
             var emptyError = !string.IsNullOrWhiteSpace(stderr)
                 ? stderr[..Math.Min(300, stderr.Length)]
                 : (exitCode != 0 ? $"ffprobe exited with code {exitCode}." : "ffprobe returned no output.");
-            return new MediaProbeResult(null, exitCode, emptyError, null);
+            return new MediaProbeResult(null, exitCode, emptyError, null, [], []);
         }
 
         using var document = JsonDocument.Parse(stdout);
@@ -6693,6 +7197,8 @@ static MediaProbeResult ProbeMediaFile(string filePath)
             .Where(codec => !string.IsNullOrWhiteSpace(codec))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
+        var audioLanguages = CollectProbeStreamLanguages(streams, "audio");
+        var subtitleLanguages = CollectProbeStreamLanguages(streams, "subtitle");
 
         var runtimeMinutes = durationSeconds.HasValue && durationSeconds.Value > 0
             ? Math.Round(durationSeconds.Value / 60d, 2)
@@ -6720,7 +7226,7 @@ static MediaProbeResult ProbeMediaFile(string filePath)
             probeInfo.SubtitleCodecs,
             assessment.Reasons);
 
-        return new MediaProbeResult(runtimeMinutes, exitCode, string.Empty, new MediaPlayabilitySnapshot(assessment.Label, assessment.Summary, details));
+        return new MediaProbeResult(runtimeMinutes, exitCode, string.Empty, new MediaPlayabilitySnapshot(assessment.Label, assessment.Summary, details), audioLanguages, subtitleLanguages);
     }
     catch (Exception ex)
     {
@@ -6733,7 +7239,7 @@ static MediaProbeResult ProbeMediaFile(string filePath)
         }
 
         if (error.Length > 300) error = error[..300];
-        return new MediaProbeResult(null, null, error, null);
+        return new MediaProbeResult(null, null, error, null, [], []);
     }
 }
 
@@ -6749,7 +7255,18 @@ static void ApplyPlayabilityProbe(LibraryItem item, MediaProbeResult probe, Date
     item.PlayabilitySummary = probe.Playability.Summary;
     item.PlayabilityDetailsJson = JsonSerializer.Serialize(probe.Playability.Details);
     item.PlayabilityCheckedAtUtc = checkedAtUtc;
+    item.AudioLanguagesJson = JsonSerializer.Serialize(probe.AudioLanguages);
+    item.SubtitleLanguagesJson = JsonSerializer.Serialize(probe.SubtitleLanguages);
 }
+
+static IReadOnlyList<string> CollectProbeStreamLanguages(IEnumerable<JsonElement> streams, string streamType)
+    => streams
+        .Where(stream => string.Equals(GetJsonString(stream, "codec_type"), streamType, StringComparison.OrdinalIgnoreCase))
+        .Select(stream => stream.TryGetProperty("tags", out var tags) ? GetJsonString(tags, "language") ?? string.Empty : string.Empty)
+        .Where(language => !string.IsNullOrWhiteSpace(language))
+        .Select(language => language.Trim().ToLowerInvariant())
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToArray();
 
 static void ClearPlayability(LibraryItem item)
 {
@@ -6762,7 +7279,7 @@ static void ClearPlayability(LibraryItem item)
 file sealed record RuntimePolicyValues(double ToleranceMinutesFloor, double TolerancePercent, double WarningPercent, double HighMinutes, double CriticalPercent, double CriticalMinutes);
 file sealed record RuntimeMismatchEvaluation(bool IsMismatch, double DiffMinutes, double DiffPercent, double ThresholdMinutes, string Severity);
 file sealed record MediaPlayabilitySnapshot(string Label, string Summary, MediaPlayabilityStoredDetails Details);
-file sealed record MediaProbeResult(double? RuntimeMinutes, int? ExitCode, string Error, MediaPlayabilitySnapshot? Playability);
+file sealed record MediaProbeResult(double? RuntimeMinutes, int? ExitCode, string Error, MediaPlayabilitySnapshot? Playability, IReadOnlyList<string> AudioLanguages, IReadOnlyList<string> SubtitleLanguages);
 file sealed record IntegrationSyncOutcome(bool Success, DateTimeOffset SyncSeenAtUtc, string Message, int Processed = 0);
 file sealed record ExternalBackfillActionResult(bool Success, bool PerformedAction, string Message);
 file sealed record RadarrMovieState(bool Exists, long? RadarrMovieId, bool? Monitored);
@@ -6778,19 +7295,23 @@ public record UpdateAuthSettingsRequest(bool AllowSelfRegistration);
 public record AuthSettingsResponse(bool AllowSelfRegistration);
 public record UpdateRuntimePolicySettingsRequest(double ToleranceMinutesFloor, double TolerancePercent, double WarningPercent, double HighMinutes, double CriticalPercent, double CriticalMinutes);
 public record RuntimePolicySettingsResponse(double ToleranceMinutesFloor, double TolerancePercent, double WarningPercent, double HighMinutes, double CriticalPercent, double CriticalMinutes);
+public record UpdateIntegrationPullSettingsRequest(bool AutoPullEnabled, int IntervalMinutes);
+public record IntegrationPullSettingsResponse(bool AutoPullEnabled, int IntervalMinutes, DateTimeOffset? LastAutoPullAtUtc);
+public record LibraryIssuePageResponse(IReadOnlyList<LibraryIssueDto> Items, int TotalCount, int PageIndex, int PageSize, IReadOnlyList<string> AvailableIssueTypes);
 public record IntegrationServiceResponse(string ServiceKey, string DisplayName, bool RequiresAuth, IReadOnlyList<string> AllowedAuthTypes);
 public record CreateIntegrationInstanceRequest(string ServiceKey, string InstanceName, string BaseUrl, string AuthType, string ApiKey, string Username, string Password, bool Enabled);
 public record UpdateIntegrationInstanceRequest(string InstanceName, string BaseUrl, string AuthType, string ApiKey, string Username, string Password, bool Enabled);
-public record IntegrationInstanceResponse(long Id, string ServiceKey, string DisplayName, string InstanceName, string BaseUrl, string AuthType, string ApiKey, string Username, string Password, bool Enabled, DateTimeOffset? UpdatedAtUtc);
+public record IntegrationInstanceResponse(long Id, string ServiceKey, string DisplayName, string InstanceName, string BaseUrl, string AuthType, string ApiKey, string Username, string Password, bool Enabled, DateTimeOffset? UpdatedAtUtc, string CurrentVersion, string LatestReleaseVersion, string RoleSummary, DateTimeOffset? LastAttemptedAtUtc, DateTimeOffset? LastSuccessfulAtUtc, string LastError, int ConsecutiveFailureCount, bool SupportsSync, ProwlarrSummaryResponse? ProwlarrSummary);
 public record CreateLibraryPathMappingRequest(long IntegrationId, string RemoteRootPath, string LocalRootPath);
 public record UpdateLibraryPathMappingRequest(string RemoteRootPath, string LocalRootPath);
 public record LibraryPathMappingResponse(long Id, long IntegrationId, string ServiceKey, string InstanceName, string DisplayName, string RemoteRootPath, string LocalRootPath, DateTimeOffset UpdatedAtUtc);
 public record LibraryPathMappingTestResponse(long MappingId, long IntegrationId, string ServiceKey, string RemoteRootPath, string LocalRootPath, bool LocalPathExists, bool RemotePathMatchesIntegration, bool DeepTestAttempted, string SourceFilePath, string ResolvedLocalFilePath, bool ResolvedLocalFileExists, IReadOnlyList<string> DiscoveredRemoteRoots, bool Success, string Message);
 public record IntegrationRemoteRootsResponse(long IntegrationId, string ServiceKey, IReadOnlyList<string> Paths, string Message);
 public record LocalDirectoryBrowseResponse(string Path, string ParentPath, IReadOnlyList<string> Directories);
-public record IntegrationTestResponse(long IntegrationId, string ServiceKey, string InstanceName, bool Success, int StatusCode, string Message);
+public record IntegrationTestResponse(long IntegrationId, string ServiceKey, string InstanceName, bool Success, int StatusCode, string Message, string Version);
 public record TriggerIntegrationSyncRequest(bool ForceFullResync = false, string? MediaScope = null);
 public record TriggerIntegrationSyncResponse(long IntegrationId, bool Accepted, string Message);
+public record ProwlarrSummaryResponse(int ConfiguredIndexers, int EnabledIndexers, int UnavailableIndexers, int ApplicationLinks, int HealthIssues, int WarningHealthIssues, int ErrorHealthIssues);
 public record PlexBackfillPreviewRequest(int Take = 100, bool IncludeItemsAlreadyRequested = false);
 public record PlexBackfillEnrichRequest(int Take = 200);
 public record PlexBackfillApplyRequest(int Take = 200, bool CreateOverseerrRequests = false, bool IncludeItemsAlreadyRequested = false, IReadOnlyList<long>? SelectedLibraryItemIds = null);
@@ -6806,7 +7327,7 @@ public record LibraryItemRuntimeProbeResponse(long Id, string MediaType, string 
 public record PlaybackDiagnosticDto(long Id, long LibraryItemId, string SourceService, string SourceDisplayName, string ExternalId, DateTimeOffset OccurredAtUtc, DateTimeOffset ImportedAtUtc, DateTimeOffset? StartedAtUtc, DateTimeOffset? StoppedAtUtc, string UserName, string ClientName, string Player, string Product, string Platform, string Decision, string TranscodeDecision, string VideoDecision, string AudioDecision, string SubtitleDecision, string Container, string VideoCodec, string AudioCodec, string SubtitleCodec, string QualityProfile, string HealthLabel, string Summary, string SuspectedCause, string ErrorMessage, string LogSnippet);
 public record PullPlaybackDiagnosticsRequest(int HoursBack = 48, int MaxItems = 10, bool IncludeServerLogs = true);
 public record PullPlaybackDiagnosticsResponse(long LibraryItemId, int ImportedCount, int UpdatedCount, int TotalCount, bool UsedTautulli, bool UsedPlex, string Message);
-public record TautulliHistoryItem(string ExternalId, string RatingKey, DateTimeOffset OccurredAtUtc, DateTimeOffset? StartedAtUtc, DateTimeOffset? StoppedAtUtc, string UserName, string ClientName, string Player, string Product, string Platform, string Decision, string ErrorMessage, string DisplayTitle);
+public record TautulliHistoryItem(string ExternalId, string RatingKey, DateTimeOffset OccurredAtUtc, DateTimeOffset? StartedAtUtc, DateTimeOffset? StoppedAtUtc, string UserName, string ClientName, string Player, string Product, string Platform, string Decision, string ErrorMessage, string DisplayTitle, string ParentTitle, string GrandparentTitle, int? MediaIndex, int? ParentMediaIndex, string OriginallyAvailableAt);
 public record TautulliStreamDetails(string Decision, string TranscodeDecision, string VideoDecision, string AudioDecision, string SubtitleDecision, string Container, string VideoCodec, string AudioCodec, string SubtitleCodec, string QualityProfile, string ErrorMessage, string RawJson);
 public record PlexLiveSessionDetails(string ExternalId, DateTimeOffset OccurredAtUtc, string UserName, string ClientName, string Player, string Product, string Platform, string Decision, string TranscodeDecision, string VideoDecision, string AudioDecision, string SubtitleDecision, string Container, string VideoCodec, string AudioCodec, string SubtitleCodec, string QualityProfile, string RawPayload);
 public record BatchRuntimeReprobeRequest(string? MediaType, int Take = 200, bool ForceAll = false);
@@ -6822,8 +7343,8 @@ public record LibraryItemSourceLinkDto(long Id, long LibraryItemId, long Integra
 public record LibraryItemSourceStatusDto(string ServiceKey, string DisplayName, long? IntegrationId, string InstanceName, bool HasSourceLink, bool CanSync, string Note, bool? RadarrMonitored, bool? DesiredMonitored, bool? MonitoringDrift, bool? OverseerrInMedia, bool SupportsMonitoringSync, bool? MonitoringSynced, bool AutoSyncEnabled);
 public record LibraryItemSourceSyncResponse(long LibraryItemId, string ServiceKey, bool Success, bool HadSourceLinkBefore, bool HasSourceLinkAfter, bool AttemptedCreateAction, string Message);
 public record SearchReplacementRequest(string Reason, string Notes, string? IssueType = null);
-public record LibraryRemediationIntentDto(string IssueType, string RequestedAction, string ReasonCategory, string Confidence, bool ShouldSearchNow, bool ShouldBlacklistCurrentRelease, bool NeedsManualReview, bool NotesRecordedOnly, string PolicySummary, string NotesHandling, string ProfileDecision, string ProfileSummary);
-public record LibraryItemRemediationResponse(long LibraryItemId, bool Success, string ServiceKey, string ServiceDisplayName, string CommandName, int? ExternalItemId, bool LookedUpRemotely, string Reason, string Notes, string Message, LibraryRemediationIntentDto? Intent = null);
+public record LibraryRemediationIntentDto(string IssueType, string RequestedAction, string ReasonCategory, string Confidence, bool ShouldSearchNow, bool ShouldBlacklistCurrentRelease, bool NeedsManualReview, bool NotesRecordedOnly, bool ApprovalRequired = false, string ApprovalReason = "", string PolicySummary = "", string NotesHandling = "", string ProfileDecision = "", string ProfileSummary = "", string PolicyState = "", string NextActionSummary = "");
+public record LibraryItemRemediationResponse(long LibraryItemId, bool Success, string ServiceKey, string ServiceDisplayName, string CommandName, int? ExternalItemId, bool LookedUpRemotely, string Reason, string Notes, string Message, LibraryRemediationIntentDto? Intent = null, string SearchStatusHint = "");
 public record LibraryRemediationJobDto(long Id, long LibraryItemId, long? LibraryIssueId, string ServiceKey, string ServiceDisplayName, string RequestedAction, string CommandName, int? ExternalItemId, string IssueType, string Reason, string Notes, string ReasonCategory, string Confidence, bool ShouldSearchNow, bool ShouldBlacklistCurrentRelease, bool NeedsManualReview, bool NotesRecordedOnly, bool LookedUpRemotely, string PolicySummary, string NotesHandling, string ProfileDecision, string ProfileSummary, string Status, string SearchStatus, string BlacklistStatus, string OutcomeSummary, string ResultMessage, string ReleaseSummary, string RequestedBy, DateTimeOffset RequestedAtUtc, DateTimeOffset? FinishedAtUtc, DateTimeOffset? LastCheckedAtUtc);
 public record SetDesiredMonitoringRequest(bool DesiredMonitored);
 public record UpdateMonitoringSettingsRequest(bool ManagedByMediaCloud, bool AutoSyncEnabled);
@@ -6953,6 +7474,7 @@ public static class IntegrationCatalog
         ("sonarr", "Sonarr"),
         ("lidarr", "Lidarr"),
         ("prowlarr", "Prowlarr"),
+        ("bazarr", "Bazarr"),
         ("plex", "Plex"),
         ("tautulli", "Tautulli")
     ];
@@ -6963,8 +7485,13 @@ public static class IntegrationCatalog
     public static string GetName(string key) => SupportedServices.FirstOrDefault(x => x.Key.Equals(key, StringComparison.OrdinalIgnoreCase)).Name ?? key;
 
     public static bool ServiceRequiresCredentials(string key) => IsSupported(key);
+    public static bool SupportsSync(string key)
+        => key.Equals("overseerr", StringComparison.OrdinalIgnoreCase)
+            || key.Equals("radarr", StringComparison.OrdinalIgnoreCase)
+            || key.Equals("sonarr", StringComparison.OrdinalIgnoreCase)
+            || key.Equals("plex", StringComparison.OrdinalIgnoreCase);
     public static IReadOnlyList<string> GetAllowedAuthTypesForService(string key)
-        => key.Equals("tautulli", StringComparison.OrdinalIgnoreCase)
+        => key.Equals("tautulli", StringComparison.OrdinalIgnoreCase) || key.Equals("bazarr", StringComparison.OrdinalIgnoreCase)
             ? ["ApiKey"]
             : ServiceRequiresCredentials(key) ? ["ApiKey", "Basic"] : ["None", "ApiKey", "Basic"];
 
@@ -6980,7 +7507,114 @@ public static class IntegrationCatalog
         return GetAllowedAuthTypesForService(key).Any(x => x.Equals(normalized, StringComparison.OrdinalIgnoreCase));
     }
 
-    public static async Task<(bool Success, int StatusCode, string Message)> TestConnectionAsync(string serviceKey, IntegrationConfig config, IHttpClientFactory httpClientFactory)
+    public static string GetLatestReleaseRequestUri(string serviceKey)
+        => (serviceKey ?? string.Empty).Trim().ToLowerInvariant() switch
+        {
+            "radarr" => "https://api.github.com/repos/Radarr/Radarr/releases/latest",
+            "sonarr" => "https://api.github.com/repos/Sonarr/Sonarr/releases/latest",
+            "lidarr" => "https://api.github.com/repos/Lidarr/Lidarr/releases/latest",
+            "prowlarr" => "https://api.github.com/repos/Prowlarr/Prowlarr/releases/latest",
+            "bazarr" => "https://api.github.com/repos/morpheus65535/bazarr/releases/latest",
+            "tautulli" => "https://api.github.com/repos/Tautulli/Tautulli/releases/latest",
+            "plex" => "https://plex.tv/api/downloads/5.json",
+            _ => string.Empty
+        };
+
+    public static string TryExtractVersion(string serviceKey, string body)
+    {
+        if (string.IsNullOrWhiteSpace(body)) return string.Empty;
+
+        try
+        {
+            var key = (serviceKey ?? string.Empty).Trim().ToLowerInvariant();
+            if (key == "plex")
+            {
+                var match = System.Text.RegularExpressions.Regex.Match(body, "version=\"([^\"]+)\"");
+                return match.Success ? match.Groups[1].Value : string.Empty;
+            }
+
+            using var doc = JsonDocument.Parse(body);
+            return key switch
+            {
+                "tautulli" => doc.RootElement.TryGetProperty("response", out var response) && response.TryGetProperty("data", out var data) && data.TryGetProperty("tautulli_version", out var tautulliVersion) ? tautulliVersion.GetString() ?? string.Empty : string.Empty,
+                "bazarr" => doc.RootElement.TryGetProperty("data", out var bazarrData) && bazarrData.TryGetProperty("bazarr_version", out var bazarrVersion) ? bazarrVersion.GetString() ?? string.Empty : string.Empty,
+                _ => doc.RootElement.TryGetProperty("version", out var version) ? version.GetString() ?? string.Empty : string.Empty
+            };
+        }
+        catch
+        {
+            return string.Empty;
+        }
+    }
+
+    public static string TryExtractLatestReleaseVersion(string serviceKey, string body)
+    {
+        if (string.IsNullOrWhiteSpace(body)) return string.Empty;
+
+        try
+        {
+            var key = (serviceKey ?? string.Empty).Trim().ToLowerInvariant();
+            using var doc = JsonDocument.Parse(body);
+            if (key == "plex")
+            {
+                return doc.RootElement.TryGetProperty("computer", out var computer)
+                    && computer.TryGetProperty("Linux", out var linux)
+                    && linux.TryGetProperty("version", out var plexVersion)
+                    ? plexVersion.GetString() ?? string.Empty
+                    : string.Empty;
+            }
+
+            if (doc.RootElement.TryGetProperty("tag_name", out var tag))
+            {
+                return (tag.GetString() ?? string.Empty).Trim().TrimStart('v');
+            }
+
+            return string.Empty;
+        }
+        catch
+        {
+            return string.Empty;
+        }
+    }
+
+    public static async Task<(string CurrentVersion, string LatestReleaseVersion)> RefreshIntegrationVersionMetadataAsync(IntegrationConfig config, IHttpClientFactory httpClientFactory)
+    {
+        var currentVersion = string.Empty;
+        if (!string.IsNullOrWhiteSpace(config.BaseUrl))
+        {
+            var current = await TestConnectionAsync(config.ServiceKey, config, httpClientFactory);
+            currentVersion = current.Success ? current.Version : string.Empty;
+        }
+
+        var latestReleaseVersion = await FetchLatestReleaseVersionAsync(config.ServiceKey, httpClientFactory);
+        return (currentVersion, latestReleaseVersion);
+    }
+
+    public static async Task<string> FetchLatestReleaseVersionAsync(string serviceKey, IHttpClientFactory httpClientFactory)
+    {
+        var requestUri = GetLatestReleaseRequestUri(serviceKey);
+        if (string.IsNullOrWhiteSpace(requestUri)) return string.Empty;
+
+        var client = httpClientFactory.CreateClient();
+        client.Timeout = TimeSpan.FromSeconds(10);
+
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, requestUri);
+            request.Headers.UserAgent.ParseAdd("MediaCloud/1.0");
+            request.Headers.Accept.ParseAdd("application/json");
+            using var response = await client.SendAsync(request);
+            if (!response.IsSuccessStatusCode) return string.Empty;
+            var body = await response.Content.ReadAsStringAsync();
+            return TryExtractLatestReleaseVersion(serviceKey, body);
+        }
+        catch
+        {
+            return string.Empty;
+        }
+    }
+
+    public static async Task<(bool Success, int StatusCode, string Message, string Version)> TestConnectionAsync(string serviceKey, IntegrationConfig config, IHttpClientFactory httpClientFactory)
     {
         var client = httpClientFactory.CreateClient();
         client.Timeout = TimeSpan.FromSeconds(10);
@@ -6993,6 +7627,7 @@ public static class IntegrationCatalog
             "sonarr" => $"{baseUrl}/api/v3/system/status",
             "lidarr" => $"{baseUrl}/api/v1/system/status",
             "prowlarr" => $"{baseUrl}/api/v1/system/status",
+            "bazarr" => $"{baseUrl}/api/system/status",
             "plex" => $"{baseUrl}/identity",
             "tautulli" => $"{baseUrl}/api/v2?apikey={Uri.EscapeDataString(config.ApiKey ?? string.Empty)}&cmd=get_activity",
             _ => baseUrl
@@ -7006,7 +7641,8 @@ public static class IntegrationCatalog
             if (authType == "ApiKey")
             {
                 if (serviceKey == "plex") request.Headers.Add("X-Plex-Token", config.ApiKey);
-                else request.Headers.Add("X-Api-Key", config.ApiKey);
+                else if (serviceKey == "bazarr") request.Headers.Add("X-API-KEY", config.ApiKey);
+                else if (serviceKey != "tautulli") request.Headers.Add("X-Api-Key", config.ApiKey);
             }
             else if (authType == "Basic")
             {
@@ -7019,14 +7655,15 @@ public static class IntegrationCatalog
             if (!response.IsSuccessStatusCode)
             {
                 var message = string.IsNullOrWhiteSpace(body) ? $"HTTP {(int)response.StatusCode}" : body[..Math.Min(160, body.Length)];
-                return (false, (int)response.StatusCode, message);
+                return (false, (int)response.StatusCode, message, string.Empty);
             }
 
-            return (true, (int)response.StatusCode, "Connection successful");
+            var version = TryExtractVersion(serviceKey, body);
+            return (true, (int)response.StatusCode, "Connection successful", version);
         }
         catch (Exception ex)
         {
-            return (false, 0, ex.Message);
+            return (false, 0, ex.Message, string.Empty);
         }
     }
 }

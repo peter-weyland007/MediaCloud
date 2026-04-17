@@ -29,14 +29,18 @@ public static class LibraryRemediationProfileDecisioning
                     NeedsManualReview = true,
                     ProfileDecision = "review_language_profile",
                     ProfileSummary = $"Current quality profile '{DisplayProfile(item.QualityProfile)}' does not look language-specific. Review the acquisition profile/language setup before asking {GetServiceName(item.MediaType)} to search again.",
-                    PolicySummary = $"This looks like a language-policy problem, not just a one-off bad file. Review the acquisition profile before queueing another search for {item.Title}."
+                    PolicySummary = $"This looks like a language-policy problem, not just a one-off bad file. Review the acquisition profile before queueing another search for {item.Title}.",
+                    PolicyState = "profile_policy_block",
+                    NextActionSummary = $"Review the acquisition profile and language expectations first, then retry remediation for {item.Title} if the policy is corrected."
                 };
             }
 
             return intent with
             {
                 ProfileDecision = "current_profile_ok",
-                ProfileSummary = "Current acquisition profile already looks language-aware enough for a replacement search."
+                ProfileSummary = "Current acquisition profile already looks language-aware enough for a replacement search.",
+                PolicyState = "replacement_recommended",
+                NextActionSummary = "The acquisition profile already looks compatible, so MediaCloud can proceed with replacement remediation."
             };
         }
 
@@ -52,14 +56,18 @@ public static class LibraryRemediationProfileDecisioning
                     NeedsManualReview = true,
                     ProfileDecision = "review_language_profile",
                     ProfileSummary = $"Current quality profile '{DisplayProfile(item.QualityProfile)}' does not advertise subtitle/language intent. Review profile expectations before searching again.",
-                    PolicySummary = $"Missing subtitles are more likely to repeat until the acquisition profile is clarified. Review the profile before queueing another search for {item.Title}."
+                    PolicySummary = $"Missing subtitles are more likely to repeat until the acquisition profile is clarified. Review the profile before queueing another search for {item.Title}.",
+                    PolicyState = "profile_policy_block",
+                    NextActionSummary = $"Review the acquisition profile and subtitle expectations first, then retry remediation for {item.Title}."
                 };
             }
 
             return intent with
             {
                 ProfileDecision = "current_profile_ok",
-                ProfileSummary = "Current acquisition profile does not block subtitle remediation, so a replacement search can proceed."
+                ProfileSummary = "Current acquisition profile does not block subtitle remediation, so a replacement search can proceed.",
+                PolicyState = "replacement_recommended",
+                NextActionSummary = "The acquisition profile does not block subtitle remediation, so MediaCloud can proceed with replacement remediation."
             };
         }
 
@@ -75,14 +83,18 @@ public static class LibraryRemediationProfileDecisioning
                     NeedsManualReview = true,
                     ProfileDecision = "review_quality_profile",
                     ProfileSummary = $"Current quality profile '{DisplayProfile(item.QualityProfile)}' caps upgrades too low. Raise the acquisition profile ceiling before asking {GetServiceName(item.MediaType)} to search again.",
-                    PolicySummary = $"This quality issue is likely constrained by the current acquisition profile. Review the quality profile before queueing another search for {item.Title}."
+                    PolicySummary = $"This quality issue is likely constrained by the current acquisition profile. Review the quality profile before queueing another search for {item.Title}.",
+                    PolicyState = "profile_policy_block",
+                    NextActionSummary = $"Raise the acquisition profile ceiling first, then retry remediation for {item.Title}."
                 };
             }
 
             return intent with
             {
                 ProfileDecision = "current_profile_ok",
-                ProfileSummary = "Current acquisition profile allows higher-quality replacements, so MediaCloud can queue a search."
+                ProfileSummary = "Current acquisition profile allows higher-quality replacements, so MediaCloud can queue a search.",
+                PolicyState = "replacement_recommended",
+                NextActionSummary = "The acquisition profile allows higher-quality replacements, so MediaCloud can proceed with replacement remediation."
             };
         }
 
@@ -91,7 +103,11 @@ public static class LibraryRemediationProfileDecisioning
             ProfileDecision = string.IsNullOrWhiteSpace(intent.ProfileDecision) ? "current_profile_ok" : intent.ProfileDecision,
             ProfileSummary = string.IsNullOrWhiteSpace(intent.ProfileSummary)
                 ? "Current acquisition profile does not block replacement for this issue type."
-                : intent.ProfileSummary
+                : intent.ProfileSummary,
+            PolicyState = string.IsNullOrWhiteSpace(intent.PolicyState) ? "replacement_recommended" : intent.PolicyState,
+            NextActionSummary = string.IsNullOrWhiteSpace(intent.NextActionSummary)
+                ? "Current evidence and acquisition policy do not block remediation, so MediaCloud can proceed."
+                : intent.NextActionSummary
         };
     }
 

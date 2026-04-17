@@ -1,0 +1,178 @@
+@page "/definitions"
+@attribute [Authorize]
+
+<PageTitle>Media Definitions</PageTitle>
+
+<section class="definitions-page">
+    <header class="definitions-hero card">
+        <p class="card-label">MEDIA REFERENCE</p>
+        <h1>Media Definitions</h1>
+        <p class="subtitle">A quieter, glossary-style guide to the format terms MediaCloud uses in playback diagnostics, remediation, and media profile settings.</p>
+    </header>
+
+    @foreach (var section in Sections)
+    {
+        var expanded = IsExpanded(section.Key);
+        <section class="definition-section card">
+            <button type="button"
+                    class="definition-section-toggle"
+                    @onclick="() => ToggleSection(section.Key)"
+                    aria-expanded="@expanded"
+                    aria-controls="@($"definition-panel-{section.Key}")">
+                <span class="definition-section-heading">
+                    <span class="card-label">@section.Label</span>
+                    <span class="definition-section-title-row">
+                        <span class="definition-section-title">@section.Title</span>
+                        <span class="definition-section-blurb">@section.ShortDescription</span>
+                    </span>
+                </span>
+                <span class="definition-section-chevron">@(expanded ? "▾" : "▸")</span>
+            </button>
+
+            @if (expanded)
+            {
+                <div id="@($"definition-panel-{section.Key}")" class="definition-panel">
+                    <div class="definition-topic">
+                        <p class="card-note">@section.Description</p>
+                    </div>
+
+                    <div class="definition-listing">
+                        @foreach (var item in section.Items)
+                        {
+                            <div class="definition-row @(item.HasTooltip ? "definition-row-with-tooltip" : string.Empty)">
+                                <div class="definition-row-main">
+                                    @if (item.ShowBullet)
+                                    {
+                                        <span class="definition-bullet">•</span>
+                                    }
+                                    <span class="definition-term">@item.Term</span>
+                                    @if (!string.IsNullOrWhiteSpace(item.BadgeText))
+                                    {
+                                        <span class="definition-row-badge @item.BadgeClass">@item.BadgeText</span>
+                                    }
+                                    <span class="definition-separator">—</span>
+                                    <span class="definition-summary">@item.Summary</span>
+                                </div>
+
+                                @if (item.HasTooltip)
+                                {
+                                    <MudTooltip Arrow="true" Placement="Placement.Right">
+                                        <TooltipContent>
+                                            <div class="definition-tooltip-shell">
+                                                <p class="definition-tooltip-title">@item.Term</p>
+                                                <ul class="definition-tooltip-list">
+                                                    @foreach (var detail in item.TooltipDetails ?? [])
+                                                    {
+                                                        <li>@detail</li>
+                                                    }
+                                                </ul>
+                                            </div>
+                                        </TooltipContent>
+                                        <ChildContent>
+                                            <span class="definition-info-badge" tabindex="0">ⓘ</span>
+                                        </ChildContent>
+                                    </MudTooltip>
+                                }
+                            </div>
+                        }
+                    </div>
+                </div>
+            }
+        </section>
+    }
+</section>
+
+@code {
+    private readonly HashSet<string> _expandedSections = [];
+
+    private bool IsExpanded(string key) => _expandedSections.Contains(key);
+
+    private void ToggleSection(string key)
+    {
+        if (!_expandedSections.Add(key))
+        {
+            _expandedSections.Remove(key);
+        }
+    }
+
+    private static readonly IReadOnlyList<DefinitionSectionModel> Sections =
+    [
+        new(
+            "media-profile",
+            "MEDIA PROFILE",
+            "Media profile",
+            "Playback target rules",
+            "A media profile is the playback target you want MediaCloud to optimize for. It describes the formats, limits, and subtitle behavior that are safest or most desirable for your devices.",
+            [
+                new("Preferred container", "Which file wrapper MediaCloud should favor.", BadgeText: "Core", BadgeClass: "definition-row-badge-core"),
+                new("Preferred video codec", "Which picture compression format is safest for your devices.", BadgeText: "Core", BadgeClass: "definition-row-badge-core"),
+                new("Max preferred resolution", "The highest resolution you want before a file is considered heavier than necessary.", BadgeText: "Limit", BadgeClass: "definition-row-badge-limit"),
+                new("Allow HEVC", "Whether H.265 / HEVC is acceptable in your playback target.", BadgeText: "Compatibility", BadgeClass: "definition-row-badge-safe"),
+                new("Allow 10-bit video", "Whether higher color-depth video is allowed.", BadgeText: "Compatibility", BadgeClass: "definition-row-badge-safe"),
+                new("Preferred audio codec", "Which audio format you want MediaCloud to prefer.", BadgeText: "Core", BadgeClass: "definition-row-badge-core"),
+                new("Allow image-based subtitles", "Whether subtitle formats like PGS or VobSub are acceptable.", BadgeText: "Caution", BadgeClass: "definition-row-badge-caution"),
+                new("Prefer text subtitles only", "Whether text subtitles should be favored for easier direct play.", BadgeText: "Recommended", BadgeClass: "definition-row-badge-recommended"),
+                new("Max preferred bitrate", "The practical bandwidth ceiling for a file.", BadgeText: "Limit", BadgeClass: "definition-row-badge-limit")
+            ]),
+        new(
+            "containers",
+            "CONTAINER BASICS",
+            "Containers",
+            "File wrappers and packaging",
+            "A container is the file shell around the streams inside it. The container decides how video, audio, subtitle tracks, chapters, and metadata are packaged together. A container is not the same thing as a codec. For example, an MP4 file might contain H.264 video with AAC audio, while an MKV file could contain HEVC video with EAC3 audio and PGS subtitles.",
+            [
+                new("MP4", "Best for: broad compatibility, mobile devices, browsers, and most Plex direct-play targets.", true, ["Usually the safest container for H.264 + AAC media.", "Great default when you want fewer surprises.", "Less flexible than MKV for unusual subtitle or audio combinations."], "Recommended", "definition-row-badge-recommended"),
+                new("MKV", "Best for: archival libraries, mixed subtitle formats, and modern home theater clients.", true, ["Very flexible with multiple audio and subtitle tracks.", "Excellent when you want to preserve the original release structure.", "Some web and mobile clients still prefer MP4 instead."], "Acceptable", "definition-row-badge-acceptable"),
+                new("AVI", "Best for: older legacy files and almost nothing new.", true, ["Common in older SD-era libraries.", "Weak subtitle and metadata support by modern standards.", "Usually a candidate for replacement or re-containering."], "Legacy", "definition-row-badge-legacy"),
+                new("MOV", "Best for: Apple and editing workflows.", true, ["Often seen in camera exports or editing pipelines.", "Fine for production work, not usually ideal as a final server library target.", "Less useful than MP4 or MKV for mixed-device streaming libraries."], "Caution", "definition-row-badge-caution"),
+                new("WebM", "Best for: browser delivery and web-native video.", true, ["Usually paired with VP9 or AV1 plus Opus audio.", "Efficient for browser playback and web publishing.", "Less common in traditional TV and Plex-focused libraries."], "Acceptable", "definition-row-badge-acceptable"),
+                new("TS / M2TS", "Best for: broadcast capture and Blu-ray style transport streams.", true, ["Useful for source preservation and broadcast-native material.", "Can be bulky and awkward for everyday streaming libraries.", "Often repackaged into MKV for cleaner server playback."], "Acceptable", "definition-row-badge-acceptable")
+            ]),
+        new(
+            "video-codecs",
+            "CODECS & STREAMS",
+            "Video codecs",
+            "Compression and device support",
+            "A codec is the compression method used for a stream inside the container. The codec affects file size, playback support, and whether a device can direct play the file or has to transcode it.",
+            [
+                new("H.264 / AVC", "Safest mainstream choice for mixed-device playback.", true, ["Excellent compatibility across TVs, phones, browsers, tablets, and remote clients.", "Pairs well with MP4 for broad direct-play support."], "Recommended", "definition-row-badge-recommended"),
+                new("HEVC / H.265", "Better efficiency, especially for 4K, but less dependable on older clients.", true, ["Great for modern devices and lower bandwidth use.", "More likely to trigger compatibility issues on older TVs or browsers."], "Acceptable", "definition-row-badge-acceptable"),
+                new("AV1", "Very efficient and increasingly important, but hardware decode support is still uneven.", true, ["Excellent long-term direction for efficient streaming.", "Not yet as universally safe as H.264."], "Acceptable", "definition-row-badge-acceptable"),
+                new("VP9", "Strong web-focused codec with less mixed-library device support than H.264.", true, ["Frequently used in web delivery pipelines.", "Less common than H.264 in general-purpose home libraries."], "Acceptable", "definition-row-badge-acceptable"),
+                new("MPEG-2", "Legacy DVD and broadcast-era codec that is large by modern standards.", true, ["Common in disc and broadcast source material.", "Usually a candidate for modernization when compatibility or size matters."], "Legacy", "definition-row-badge-legacy")
+            ]),
+        new(
+            "audio-subtitles",
+            "AUDIO & SUBTITLES",
+            "Audio and subtitle terms",
+            "Sound tracks and caption behavior",
+            "Audio and subtitle tracks can be just as important as the video stream when MediaCloud is judging compatibility and troubleshooting playback failures.",
+            [
+                new("AAC", "High-compatibility audio for phones, browsers, tablets, and mixed-device Plex use.", true, ["Usually the safest audio default for wide device support.", "Commonly paired with MP4 and H.264."], "Recommended", "definition-row-badge-recommended"),
+                new("AC3 / Dolby Digital", "Widely supported surround format for TVs and home theater gear.", true, ["Good fit for living-room playback setups.", "More device-friendly than many lossless formats."], "Acceptable", "definition-row-badge-acceptable"),
+                new("EAC3 / Dolby Digital Plus", "Modern surround format with better efficiency, but less universal than AAC.", true, ["Useful for modern streaming-style surround audio.", "Can be less predictable on older devices."], "Acceptable", "definition-row-badge-acceptable"),
+                new("FLAC / lossless audio", "Best for preservation and critical listening, but often unnecessary for routine remote streaming.", true, ["Excellent for archival quality and music-focused libraries.", "Adds size without always improving real-world streaming outcomes."], "Acceptable", "definition-row-badge-acceptable"),
+                new("Text subtitles: SRT / ASS", "Lightweight subtitle formats that are easier to direct play and edit.", true, ["Usually the safest subtitle target for compatibility.", "Preferred when you want fewer transcode surprises."], "Recommended", "definition-row-badge-recommended"),
+                new("Image-based subtitles: PGS / VobSub", "Picture-based subtitle tracks that preserve styling, but often force transcoding.", true, ["Commonly found in disc-based releases.", "Useful visually, but heavier operationally."], "Caution", "definition-row-badge-caution")
+            ])
+    ];
+
+    private sealed record DefinitionSectionModel(
+        string Key,
+        string Label,
+        string Title,
+        string ShortDescription,
+        string Description,
+        IReadOnlyList<DefinitionItemModel> Items);
+
+    private sealed record DefinitionItemModel(
+        string Term,
+        string Summary,
+        bool ShowBullet = false,
+        IReadOnlyList<string>? TooltipDetails = null,
+        string? BadgeText = null,
+        string BadgeClass = "")
+    {
+        public bool HasTooltip => TooltipDetails is { Count: > 0 };
+    }
+}

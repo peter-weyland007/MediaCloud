@@ -17,11 +17,15 @@ node_modules/
 apps/api/Data/*.db
 apps/api/Data/*.db-wal
 apps/api/Data/*.db-shm
+apps/api/*.db
+apps/api/*.db-wal
+apps/api/*.db-shm
 app.db
 
 # Logs and temp
 *.log
 *.tmp
+DataProtectionKeys/
 apps/web/DataProtectionKeys/
 tmp/
 

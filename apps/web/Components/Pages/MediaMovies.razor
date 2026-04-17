@@ -3,353 +3,571 @@
 @inject HttpClient Http
 @inject AuthTokenStore TokenStore
 @inject ISnackbar Snackbar
+@using System.Net.Http.Json
 
 <PageTitle>Movies</PageTitle>
 
 <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:0.85rem; flex-wrap:wrap;">
     <div>
         <h1 style="margin:0;">Movies</h1>
-        <p class="subtitle" style="margin:0.25rem 0 0;">Movie library view.</p>
+        <p class="subtitle" style="margin:0.25rem 0 0;">Movie browser with faster search, filter-first workflow, and cleaner triage signals.</p>
     </div>
 
-    <div class="movies-actions-panel">
-        <MudButtonGroup Class="movies-action-group" Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small">
-            <MudButton Class="movies-action-btn movies-action-btn--secondary" OnClick="ReprobeAllMoviesAsync" Disabled="@_isActionRunning">
-                @(_reprobingAllMovies ? "Reprobing runtimes..." : "Probe all runtimes")
-            </MudButton>
-            <MudButton Class="movies-action-btn movies-action-btn--danger" OnClick="PurgeMoviesAsync" Disabled="@_isActionRunning">
-                @(_purgingMovies ? "Purging movies..." : "Purge movie data")
-            </MudButton>
-        </MudButtonGroup>
-
-        <MudButtonGroup Class="movies-source-group" Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small">
-            <MudButton Class="movies-source-btn movies-source-btn--filled" OnClick="RefreshMoviesFromIntegrationsAsync" Disabled="@_isActionRunning">Refresh all</MudButton>
-            <MudButton Class="movies-source-btn movies-source-btn--filled" OnClick='() => RefreshMoviesFromSingleIntegrationAsync("Plex")' Disabled="@_isActionRunning">Plex</MudButton>
-            <MudButton Class="movies-source-btn movies-source-btn--filled" OnClick='() => RefreshMoviesFromSingleIntegrationAsync("Radarr")' Disabled="@_isActionRunning">Radarr</MudButton>
-            <MudButton Class="movies-source-btn movies-source-btn--filled" OnClick='() => RefreshMoviesFromSingleIntegrationAsync("Overseerr")' Disabled="@_isActionRunning">Overseerr</MudButton>
-        </MudButtonGroup>
-
-        @if (_isActionRunning)
-        {
-            <div class="movies-action-progress" role="status" aria-live="polite">
-                @if (_actionProgressIndeterminate)
-                {
-                    <MudProgressLinear Color="Color.Primary" Indeterminate="true" Rounded="true" Class="movies-action-progress-bar" />
-                }
-                else
-                {
-                    <MudProgressLinear Color="Color.Primary" Value="@_actionProgressPercent" Rounded="true" Class="movies-action-progress-bar" />
-                }
-                <div class="movies-action-progress-meta">
-                    <span class="movies-action-progress-text">@_actionStatusText (@ActionPercentLabel)</span>
-                </div>
-            </div>
-        }
+    <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
+        <MudButton Class="media-btn media-btn--secondary" Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Small" OnClick="ResetFilters">Reset filters</MudButton>
+        <MudButton Class="media-btn media-btn--primary" Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small" OnClick="LoadMoviesAsync" Disabled="@_loading">@(_loading ? "Refreshing..." : "Refresh data")</MudButton>
     </div>
 </div>
 
-<MediaLibraryTable FixedMediaType="Movie" RefreshVersion="@_refreshVersion" />
+<div class="moviev2-summary-grid">
+    <div class="card">
+        <p class="card-label">MOVIES LOADED</p>
+        <h2 style="margin:0;">@_allMovies.Count</h2>
+        <p class="card-note" style="margin-top:0.35rem;">Full client-side result set available for instant filtering.</p>
+    </div>
+    <div class="card">
+        <p class="card-label">VISIBLE RESULTS</p>
+        <h2 style="margin:0;">@FilteredCount</h2>
+        <p class="card-note" style="margin-top:0.35rem;">@VisibleSummaryText</p>
+    </div>
+    <div class="card">
+        <p class="card-label">RUNTIME MISMATCHES</p>
+        <h2 style="margin:0;">@FilteredRuntimeMismatchCount</h2>
+        <p class="card-note" style="margin-top:0.35rem;">Critical and warning cases bubble up fast.</p>
+    </div>
+    <div class="card">
+        <p class="card-label">PROBLEMATIC PLAYABILITY</p>
+        <h2 style="margin:0;">@FilteredProblematicPlayabilityCount</h2>
+        <p class="card-note" style="margin-top:0.35rem;">Movies marked risky or problematic in the current slice.</p>
+    </div>
+</div>
+
+<div class="card" style="margin-bottom:1rem;">
+    <p class="card-label">SEARCH &amp; FILTERS</p>
+    <div class="moviev2-filter-grid">
+        <div>
+            <label for="moviev2-search">Search movies</label>
+            <input id="moviev2-search" class="input" @bind="_searchText" @bind:event="oninput" placeholder="Title, alternate title, year…" />
+        </div>
+        <div>
+            <label for="moviev2-availability">Availability</label>
+            <InputSelect id="moviev2-availability" class="input" @bind-Value="_availabilityFilter">
+                @foreach (var option in AvailabilityOptions)
+                {
+                    <option value="@option">@option</option>
+                }
+            </InputSelect>
+        </div>
+        <div>
+            <label for="moviev2-playability">Playability</label>
+            <InputSelect id="moviev2-playability" class="input" @bind-Value="_playabilityFilter">
+                @foreach (var option in PlayabilityOptions)
+                {
+                    <option value="@option">@option</option>
+                }
+            </InputSelect>
+        </div>
+        <div>
+            <label for="moviev2-runtime">Runtime status</label>
+            <InputSelect id="moviev2-runtime" class="input" @bind-Value="_runtimeFilter">
+                @foreach (var option in RuntimeOptions)
+                {
+                    <option value="@option">@option</option>
+                }
+            </InputSelect>
+        </div>
+        <div>
+            <label for="moviev2-source">Source</label>
+            <InputSelect id="moviev2-source" class="input" @bind-Value="_sourceFilter">
+                @foreach (var option in SourceOptions)
+                {
+                    <option value="@option">@option</option>
+                }
+            </InputSelect>
+        </div>
+        <div>
+            <label for="moviev2-sort">Sort by</label>
+            <InputSelect id="moviev2-sort" class="input" @bind-Value="_sortBy">
+                @foreach (var option in SortOptions)
+                {
+                    <option value="@option.Key">@option.Label</option>
+                }
+            </InputSelect>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <div style="display:flex; justify-content:space-between; gap:0.75rem; align-items:center; flex-wrap:wrap; margin-bottom:0.75rem;">
+        <div>
+            <p class="card-label">MOVIES TABLE</p>
+            <p class="card-note" style="margin:0.25rem 0 0;">Search is live. Filters stack together. The table below is a client-side slice of the loaded movie set.</p>
+        </div>
+        <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">
+            <span class="card-note">Page @CurrentPageDisplay of @TotalPages</span>
+            <select class="input" style="width:auto; min-width:88px;" value="@_pageSize" @onchange="OnPageSizeChanged">
+                @foreach (var option in PageSizeOptions)
+                {
+                    <option value="@option">@option / page</option>
+                }
+            </select>
+        </div>
+    </div>
+
+    @if (_loading)
+    {
+        <p class="card-note">Loading movies…</p>
+    }
+    else if (_allMovies.Count == 0)
+    {
+        <p class="card-note">No movie data loaded yet.</p>
+    }
+    else if (PagedMovies.Count == 0)
+    {
+        <p class="card-note">No movies match the current search + filter combination.</p>
+    }
+    else
+    {
+        <div class="moviev2-table-shell">
+            <table class="moviev2-table">
+                <thead>
+                    <tr>
+                        <th>Movie</th>
+                        <th>Sources</th>
+                        <th>Availability</th>
+                        <th>Playability</th>
+                        <th>Runtime</th>
+                        <th>Quality</th>
+                        <th>Updated</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var movie in PagedMovies)
+                    {
+                        <tr>
+                            <td>
+                                <div style="display:grid; gap:0.25rem;">
+                                    <a href="@($"/media/movies/{movie.Id}")" style="color:#93c5fd; text-decoration:none; font-weight:600;">@movie.DisplayTitle</a>
+                                    <div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;">
+                                        <span class="card-note">@movie.YearDisplay · @movie.TitleContext</span>
+                                        <a href="@($"/media/movies/{movie.Id}")" style="display:inline-flex; align-items:center; padding:0.14rem 0.45rem; border-radius:999px; font-size:0.72rem; font-weight:700; text-decoration:none; border:1px solid rgba(96,165,250,0.45); background:rgba(30,64,175,0.18); color:#bfdbfe; text-transform:uppercase; letter-spacing:0.04em;">Open Details</a>
+                                    </div>
+                                </div>
+                            </td>
+                            <td>
+                                <div style="display:flex; flex-wrap:wrap; gap:0.3rem;">
+                                    @foreach (var source in movie.SourceServices)
+                                    {
+                                        <span class="source-pill">@source</span>
+                                    }
+                                </div>
+                            </td>
+                            <td><span style="@GetAvailabilityBadgeStyle(movie)">@movie.AvailabilityLabel</span></td>
+                            <td>
+                                <div style="display:grid; gap:0.25rem;">
+                                    <span style="@GetPlayabilityBadgeStyle(movie)">@movie.PlayabilityLabel</span>
+                                    <span class="card-note">@movie.PlayabilitySummaryText</span>
+                                </div>
+                            </td>
+                            <td>
+                                <div style="display:grid; gap:0.25rem;">
+                                    <span>@movie.RuntimeDisplay</span>
+                                    <span style="@GetRuntimeBadgeStyle(movie)">@movie.RuntimeStatusLabel</span>
+                                </div>
+                            </td>
+                            <td>@movie.QualityProfile</td>
+                            <td>@movie.UpdatedAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:0.75rem; flex-wrap:wrap; margin-top:0.85rem;">
+            <span class="card-note">Showing @PageStartRow-@PageEndRow of @FilteredCount filtered results.</span>
+            <div style="display:flex; gap:0.5rem;">
+                <MudButton Class="media-btn media-btn--secondary" Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Small" OnClick="PreviousPage" Disabled="@(_pageIndex == 0)">Previous</MudButton>
+                <MudButton Class="media-btn media-btn--secondary" Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Small" OnClick="NextPage" Disabled="@(!CanGoNext)">Next</MudButton>
+            </div>
+        </div>
+    }
+</div>
 
 <style>
-    .movies-actions-panel {
-        display: flex;
-        flex-direction: column;
-        align-items: stretch;
-        gap: 0.35rem;
-        min-width: 320px;
-        width: min(100%, 560px);
-    }
-
-    .movies-action-btn.mud-button-root,
-    .movies-source-btn.mud-button-root {
-        text-transform: none !important;
-        font-weight: 600;
-        min-height: 34px;
-        padding-inline: 0.8rem;
-        flex: 1 1 0;
-    }
-
-    .movies-action-btn--secondary {
-        background: var(--mud-palette-primary);
-        color: var(--mud-palette-primary-text);
-        border-color: var(--mud-palette-primary);
-    }
-
-    .movies-action-btn--danger {
-        background: var(--mud-palette-error);
-        color: var(--mud-palette-error-text);
-        border-color: var(--mud-palette-error);
-    }
-
-    .movies-action-group,
-    .movies-source-group {
-        width: 100%;
-    }
-
-    .movies-source-btn--filled {
-        background: var(--mud-palette-primary);
-        color: var(--mud-palette-primary-text);
-        border-color: var(--mud-palette-primary);
-    }
-
-    .movies-action-progress {
-        width: 100%;
+    .moviev2-summary-grid {
         display: grid;
-        gap: 0.35rem;
+        grid-template-columns: repeat(4, minmax(180px, 1fr));
+        gap: 1rem;
+        margin: 1rem 0;
     }
 
-    .movies-action-progress-bar {
+    .moviev2-filter-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(180px, 1fr));
+        gap: 0.75rem;
+        align-items: end;
+    }
+
+    .moviev2-table-shell {
+        max-height: 68vh;
+        overflow: auto;
+        border: 1px solid rgba(51, 65, 85, 0.9);
+        border-radius: 0.75rem;
+        background: rgba(11, 18, 32, 0.95);
+    }
+
+    .moviev2-table {
         width: 100%;
+        border-collapse: separate;
+        border-spacing: 0;
     }
 
-    .movies-action-progress-meta {
-        display: flex;
+    .moviev2-table th,
+    .moviev2-table td {
+        padding: 0.75rem 0.7rem;
+        text-align: left;
+        vertical-align: top;
+        border-bottom: 1px solid rgba(30, 41, 59, 0.9);
+    }
+
+    .moviev2-table th {
+        position: sticky;
+        top: 0;
+        z-index: 2;
+        background: #0b1220;
+        color: #cbd5e1;
+        font-size: 0.78rem;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+    }
+
+    .moviev2-table tbody tr:hover {
+        background: rgba(30, 41, 59, 0.35);
+    }
+
+    .source-pill {
+        display: inline-flex;
         align-items: center;
-        min-height: 1rem;
-    }
-
-    .movies-action-progress-text {
-        color: var(--mud-palette-primary-text);
-        font-size: 0.84rem;
-        font-weight: 600;
-        white-space: nowrap;
+        padding: 0.08rem 0.42rem;
+        border-radius: 999px;
+        font-size: 0.72rem;
+        font-weight: 700;
+        border: 1px solid rgba(96, 165, 250, 0.45);
+        background: rgba(30, 64, 175, 0.23);
+        color: #bfdbfe;
+        text-transform: uppercase;
     }
 </style>
 
 @code {
-    private bool _reprobingAllMovies;
-    private bool _syncingMovies;
-    private bool _purgingMovies;
-    private int _refreshVersion;
-    private bool _actionProgressIndeterminate;
-    private double _actionProgressPercent;
-    private string _actionStatusText = "Ready";
+    private readonly List<MovieLibraryItemDto> _allMovies = [];
+    private readonly int[] PageSizeOptions = [25, 50, 100];
+    private readonly (string Key, string Label)[] SortOptions =
+    [
+        ("title", "Title (A-Z)"),
+        ("updated", "Recently updated"),
+        ("year", "Newest year first"),
+        ("runtime-gap", "Largest runtime gap"),
+        ("playability", "Playability triage")
+    ];
 
-    private bool _isActionRunning => _syncingMovies || _reprobingAllMovies || _purgingMovies;
-    private string ActionPercentLabel => _actionProgressIndeterminate && _isActionRunning ? "--" : $"{Math.Round(_actionProgressPercent),3}%";
+    private static readonly string[] AvailabilityOptions = ["All", "Available", "Unavailable"];
+    private static readonly string[] PlayabilityOptions = ["All", "Excellent", "Good", "Caution", "Risky", "Problematic", "Unknown"];
+    private static readonly string[] RuntimeOptions = ["All", "Match", "Mismatch", "Unknown"];
+    private static readonly string[] SourceOptions = ["All", "Plex", "Radarr", "Overseerr"];
 
-    private async Task RefreshMoviesFromIntegrationsAsync()
-        => await RefreshMoviesByServicesAsync(new[] { "Plex", "Radarr", "Overseerr" }, "movies", "Plex/Radarr/Overseerr");
+    private bool _loading;
+    private int _pageIndex;
+    private int _pageSize = 25;
+    private string _searchText = string.Empty;
+    private string _availabilityFilter = "All";
+    private string _playabilityFilter = "All";
+    private string _runtimeFilter = "All";
+    private string _sourceFilter = "All";
+    private string _sortBy = "updated";
+    private RuntimePolicySettingsResponse _runtimePolicy = new(3, 5, 10, 12, 20, 25);
 
-    private async Task RefreshMoviesFromSingleIntegrationAsync(string serviceKey)
-        => await RefreshMoviesByServicesAsync(new[] { serviceKey }, $"movies from {serviceKey}", serviceKey);
+    private List<MovieViewModel> FilteredMovies => BuildFilteredMovies();
+    private List<MovieViewModel> PagedMovies => FilteredMovies.Skip(_pageIndex * _pageSize).Take(_pageSize).ToList();
+    private int FilteredCount => FilteredMovies.Count;
+    private int FilteredRuntimeMismatchCount => FilteredMovies.Count(x => x.RuntimeStatusKind == "mismatch");
+    private int FilteredProblematicPlayabilityCount => FilteredMovies.Count(x => x.PlayabilityKind is "problematic" or "risky");
+    private int TotalPages => Math.Max(1, (int)Math.Ceiling(Math.Max(FilteredCount, 1) / (double)_pageSize));
+    private int CurrentPageDisplay => Math.Min(_pageIndex + 1, TotalPages);
+    private bool CanGoNext => (_pageIndex + 1) < TotalPages;
+    private int PageStartRow => FilteredCount == 0 ? 0 : (_pageIndex * _pageSize) + 1;
+    private int PageEndRow => Math.Min(FilteredCount, (_pageIndex * _pageSize) + PagedMovies.Count);
+    private string VisibleSummaryText => FilteredCount == _allMovies.Count
+        ? "No filters reducing the set right now."
+        : $"{_allMovies.Count - FilteredCount} hidden by current filters.";
 
-    private async Task RefreshMoviesByServicesAsync(IReadOnlyCollection<string> serviceKeys, string operationLabel, string emptyStateLabel)
+    protected override async Task OnInitializedAsync()
     {
-        _syncingMovies = true;
-        await SetActionProgressAsync("Loading integrations...", 0, indeterminate: true);
+        await TryLoadRuntimePolicyAsync();
+        await LoadMoviesAsync();
+    }
+
+    private async Task TryLoadRuntimePolicyAsync()
+    {
         try
         {
-            using var listRequest = new HttpRequestMessage(HttpMethod.Get, "/api/integrations");
-            await AttachBearerAsync(listRequest);
-            using var listResponse = await Http.SendAsync(listRequest);
-            if (!listResponse.IsSuccessStatusCode)
+            using var request = new HttpRequestMessage(HttpMethod.Get, "/api/settings/runtime-policy");
+            await AttachBearerAsync(request);
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
             {
-                Snackbar.Add($"Failed to load integrations ({(int)listResponse.StatusCode}).", Severity.Error);
                 return;
             }
 
-            var integrations = await listResponse.Content.ReadFromJsonAsync<List<IntegrationInstanceResponse>>() ?? [];
-            var movieIntegrations = integrations
-                .Where(x => x.Enabled && serviceKeys.Any(serviceKey => string.Equals(x.ServiceKey, serviceKey, StringComparison.OrdinalIgnoreCase)))
-                .ToList();
-
-            if (movieIntegrations.Count == 0)
+            var payload = await response.Content.ReadFromJsonAsync<RuntimePolicySettingsResponse>();
+            if (payload is not null)
             {
-                Snackbar.Add($"No enabled {emptyStateLabel} integrations found.", Severity.Warning);
-                return;
-            }
-
-            var synced = 0;
-            var failed = 0;
-            var completed = 0;
-            var total = movieIntegrations.Count;
-            var failedMessages = new List<string>();
-            await SetActionProgressAsync($"Syncing 0/{total} integrations...", 0, indeterminate: false);
-
-            foreach (var integration in movieIntegrations)
-            {
-                using var syncRequest = new HttpRequestMessage(HttpMethod.Post, $"/api/integrations/{integration.Id}/sync")
-                {
-                    Content = JsonContent.Create(new TriggerIntegrationSyncRequest(false, "movies"))
-                };
-                await AttachBearerAsync(syncRequest);
-                using var syncResponse = await Http.SendAsync(syncRequest);
-
-                if (!syncResponse.IsSuccessStatusCode)
-                {
-                    failed++;
-                    failedMessages.Add($"{integration.InstanceName}: HTTP {(int)syncResponse.StatusCode}");
-                }
-                else
-                {
-                    var payload = await syncResponse.Content.ReadFromJsonAsync<TriggerIntegrationSyncResponse>();
-                    if (payload?.Accepted == true)
-                    {
-                        synced++;
-                    }
-                    else
-                    {
-                        failed++;
-                        failedMessages.Add($"{integration.InstanceName}: {payload?.Message ?? "sync not accepted"}");
-                    }
-                }
-
-                completed++;
-                var percent = total == 0 ? 0 : (completed * 100d) / total;
-                await SetActionProgressAsync($"Syncing {completed}/{total} integrations ({Math.Round(percent)}%)...", percent, indeterminate: false);
-            }
-
-            await SetActionProgressAsync($"Finalizing {operationLabel} refresh...", 100, indeterminate: false);
-            _refreshVersion++;
-            Snackbar.Add($"{Capitalize(operationLabel)} refresh complete. Synced {synced}, failed {failed}.", failed == 0 ? Severity.Success : Severity.Warning);
-            if (failedMessages.Count > 0)
-            {
-                Snackbar.Add(string.Join(" | ", failedMessages.Take(2)), Severity.Warning);
+                _runtimePolicy = payload;
             }
         }
         catch
         {
-            Snackbar.Add($"{Capitalize(operationLabel)} refresh failed.", Severity.Error);
-        }
-        finally
-        {
-            _syncingMovies = false;
-            ClearActionProgress();
+            // keep defaults
         }
     }
 
-    private async Task PurgeMoviesAsync()
+    private async Task LoadMoviesAsync()
     {
-        _purgingMovies = true;
-        await SetActionProgressAsync("Purging movie data...", 20, indeterminate: false);
+        if (_loading) return;
+
+        _loading = true;
         try
         {
-            using var purgeRequest = new HttpRequestMessage(HttpMethod.Post, "/api/library/purge")
-            {
-                Content = JsonContent.Create(new PurgeLibraryRequest("Movie", true, true))
-            };
-            await AttachBearerAsync(purgeRequest);
-            using var purgeResponse = await Http.SendAsync(purgeRequest);
-            if (!purgeResponse.IsSuccessStatusCode)
-            {
-                Snackbar.Add($"Purge failed ({(int)purgeResponse.StatusCode}).", Severity.Error);
-                return;
-            }
-
-            var payload = await purgeResponse.Content.ReadFromJsonAsync<PurgeLibraryResponse>();
-            await SetActionProgressAsync("Finalizing purge...", 100, indeterminate: false);
-            _refreshVersion++;
-            Snackbar.Add($"Purged movies: items {payload?.ItemsDeleted ?? 0}, links {payload?.SourceLinksDeleted ?? 0}, issues {payload?.IssuesDeleted ?? 0}.", Severity.Success);
-        }
-        catch
-        {
-            Snackbar.Add("Purge failed.", Severity.Error);
-        }
-        finally
-        {
-            _purgingMovies = false;
-            ClearActionProgress();
-        }
-    }
-
-    private async Task ReprobeAllMoviesAsync()
-    {
-        _reprobingAllMovies = true;
-        await SetActionProgressAsync("Starting runtime probe job...", 0, indeterminate: true);
-        try
-        {
-            using var startRequest = new HttpRequestMessage(HttpMethod.Post, "/api/library/items/reprobe-runtimes/jobs")
-            {
-                Content = JsonContent.Create(new BatchRuntimeReprobeRequest("Movie", 2000, true))
-            };
-            await AttachBearerAsync(startRequest);
-            using var startResponse = await Http.SendAsync(startRequest);
-            if (!startResponse.IsSuccessStatusCode)
-            {
-                Snackbar.Add($"Bulk probe failed to start ({(int)startResponse.StatusCode}). Admin access may be required.", Severity.Error);
-                return;
-            }
-
-            var startPayload = await startResponse.Content.ReadFromJsonAsync<StartRuntimeReprobeJobResponse>();
-            if (startPayload is null || startPayload.JobId == Guid.Empty)
-            {
-                Snackbar.Add("Bulk probe failed to start (no job id returned).", Severity.Error);
-                return;
-            }
+            var allRows = new List<MovieLibraryItemDto>();
+            const int batchSize = 250;
+            var offset = 0;
 
             while (true)
             {
-                using var statusRequest = new HttpRequestMessage(HttpMethod.Get, $"/api/library/items/reprobe-runtimes/jobs/{startPayload.JobId}");
-                await AttachBearerAsync(statusRequest);
-                using var statusResponse = await Http.SendAsync(statusRequest);
-                if (!statusResponse.IsSuccessStatusCode)
+                using var request = new HttpRequestMessage(HttpMethod.Get, $"/api/library/items?mediaType=Movie&sortBy=updated&sortDir=desc&take={batchSize}&offset={offset}");
+                await AttachBearerAsync(request);
+                using var response = await Http.SendAsync(request);
+                if (!response.IsSuccessStatusCode)
                 {
-                    Snackbar.Add($"Bulk probe status check failed ({(int)statusResponse.StatusCode}).", Severity.Error);
+                    Snackbar.Add($"Failed to load movie data ({(int)response.StatusCode}).", Severity.Error);
                     return;
                 }
 
-                var status = await statusResponse.Content.ReadFromJsonAsync<RuntimeReprobeJobStatusResponse>();
-                if (status is null)
+                var payload = await response.Content.ReadFromJsonAsync<List<MovieLibraryItemDto>>() ?? [];
+                allRows.AddRange(payload);
+
+                if (payload.Count < batchSize)
                 {
-                    Snackbar.Add("Bulk probe status payload was empty.", Severity.Error);
-                    return;
+                    break;
                 }
 
-                var message = string.IsNullOrWhiteSpace(status.Message)
-                    ? "Runtime probe in progress..."
-                    : status.Message;
-
-                var percent = status.TotalCandidates <= 0
-                    ? (status.Status.Equals("completed", StringComparison.OrdinalIgnoreCase) ? 100 : 0)
-                    : Math.Min(100, (status.Inspected * 100d) / status.TotalCandidates);
-
-                await SetActionProgressAsync(message, percent, indeterminate: false);
-
-                if (status.Status.Equals("completed", StringComparison.OrdinalIgnoreCase))
-                {
-                    Snackbar.Add($"Bulk probe done: updated {status.Updated}/{status.Inspected}, missing files {status.MissingFiles}, probe failures {status.Failed}.", Severity.Success);
-                    _refreshVersion++;
-                    return;
-                }
-
-                if (status.Status.Equals("failed", StringComparison.OrdinalIgnoreCase))
-                {
-                    Snackbar.Add(status.Message, Severity.Error);
-                    return;
-                }
-
-                await Task.Delay(700);
+                offset += batchSize;
             }
+
+            _allMovies.Clear();
+            _allMovies.AddRange(allRows);
+            _pageIndex = 0;
         }
         catch
         {
-            Snackbar.Add("Bulk probe failed.", Severity.Error);
+            Snackbar.Add("Failed to load movie data.", Severity.Error);
         }
         finally
         {
-            _reprobingAllMovies = false;
-            ClearActionProgress();
+            _loading = false;
         }
     }
 
-    private async Task SetActionProgressAsync(string text, double percent, bool indeterminate)
+    private List<MovieViewModel> BuildFilteredMovies()
     {
-        _actionStatusText = text;
-        _actionProgressPercent = Math.Clamp(percent, 0, 100);
-        _actionProgressIndeterminate = indeterminate;
-        await InvokeAsync(StateHasChanged);
+        IEnumerable<MovieViewModel> query = _allMovies.Select(MapMovieViewModel);
+
+        if (!string.IsNullOrWhiteSpace(_searchText))
+        {
+            var term = _searchText.Trim();
+            query = query.Where(x =>
+                x.DisplayTitle.Contains(term, StringComparison.OrdinalIgnoreCase) ||
+                x.Title.Contains(term, StringComparison.OrdinalIgnoreCase) ||
+                x.SortTitle.Contains(term, StringComparison.OrdinalIgnoreCase) ||
+                x.YearDisplay.Contains(term, StringComparison.OrdinalIgnoreCase));
+        }
+
+        if (_availabilityFilter == "Available")
+            query = query.Where(x => x.IsAvailable);
+        else if (_availabilityFilter == "Unavailable")
+            query = query.Where(x => !x.IsAvailable);
+
+        if (!string.Equals(_playabilityFilter, "All", StringComparison.OrdinalIgnoreCase))
+            query = query.Where(x => string.Equals(x.PlayabilityLabel, _playabilityFilter, StringComparison.OrdinalIgnoreCase));
+
+        if (_runtimeFilter == "Match")
+            query = query.Where(x => x.RuntimeStatusKind == "match");
+        else if (_runtimeFilter == "Mismatch")
+            query = query.Where(x => x.RuntimeStatusKind == "mismatch");
+        else if (_runtimeFilter == "Unknown")
+            query = query.Where(x => x.RuntimeStatusKind == "unknown");
+
+        if (!string.Equals(_sourceFilter, "All", StringComparison.OrdinalIgnoreCase))
+            query = query.Where(x => x.SourceServices.Any(source => string.Equals(source, _sourceFilter, StringComparison.OrdinalIgnoreCase)));
+
+        query = _sortBy switch
+        {
+            "title" => query.OrderBy(x => x.SortTitle).ThenBy(x => x.Year ?? 0),
+            "year" => query.OrderByDescending(x => x.Year ?? 0).ThenBy(x => x.SortTitle),
+            "runtime-gap" => query.OrderByDescending(x => x.RuntimeGapMinutes ?? -1).ThenBy(x => x.SortTitle),
+            "playability" => query.OrderByDescending(x => x.PlayabilityRank).ThenByDescending(x => x.RuntimeGapMinutes ?? -1).ThenBy(x => x.SortTitle),
+            _ => query.OrderByDescending(x => x.UpdatedAtUtc).ThenBy(x => x.SortTitle)
+        };
+
+        var materialized = query.ToList();
+        var maxPageIndex = Math.Max(0, (int)Math.Ceiling(Math.Max(materialized.Count, 1) / (double)_pageSize) - 1);
+        _pageIndex = Math.Min(_pageIndex, maxPageIndex);
+        return materialized;
     }
 
-    private void ClearActionProgress()
+    private MovieViewModel MapMovieViewModel(MovieLibraryItemDto row)
     {
-        _actionStatusText = "Ready";
-        _actionProgressPercent = 0;
-        _actionProgressIndeterminate = false;
+        var runtimeStatus = EvaluateRuntimeStatus(row.RuntimeMinutes, row.ActualRuntimeMinutes);
+        var playabilityLabel = NormalizePlayability(row.PlayabilityScore);
+        var sources = row.SourceServices?.Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(x => x).ToList() ?? [];
+
+        return new MovieViewModel(
+            row.Id,
+            row.DisplayTitle,
+            row.Title,
+            row.SortTitle,
+            row.Year,
+            row.IsAvailable,
+            row.QualityProfile,
+            sources,
+            playabilityLabel,
+            NormalizePlayabilityKind(playabilityLabel),
+            GetPlayabilityRank(playabilityLabel),
+            string.IsNullOrWhiteSpace(row.PlayabilitySummary) ? "No playability notes recorded." : row.PlayabilitySummary,
+            FormatRuntimePair(row.RuntimeMinutes, row.ActualRuntimeMinutes),
+            runtimeStatus.Label,
+            runtimeStatus.Kind,
+            runtimeStatus.DiffMinutes,
+            row.UpdatedAtUtc);
     }
 
-    private static string Capitalize(string value)
-        => string.IsNullOrWhiteSpace(value) ? value : char.ToUpperInvariant(value[0]) + value[1..];
+    private RuntimeStatus EvaluateRuntimeStatus(double? reported, double? actual)
+    {
+        if (!reported.HasValue || !actual.HasValue || reported.Value <= 0 || actual.Value <= 0)
+        {
+            return new RuntimeStatus("Unknown", "unknown", null);
+        }
+
+        var diffMinutes = Math.Abs(actual.Value - reported.Value);
+        var diffPercent = (diffMinutes / reported.Value) * 100d;
+        var thresholdMinutes = Math.Max(_runtimePolicy.ToleranceMinutesFloor, reported.Value * (_runtimePolicy.TolerancePercent / 100d));
+        if (diffMinutes <= thresholdMinutes)
+        {
+            return new RuntimeStatus("Match", "match", diffMinutes);
+        }
+
+        var severity = diffPercent >= _runtimePolicy.CriticalPercent || diffMinutes >= _runtimePolicy.CriticalMinutes
+            ? "Critical"
+            : (diffPercent >= _runtimePolicy.WarningPercent || diffMinutes >= _runtimePolicy.HighMinutes)
+                ? "Warning"
+                : "Warning";
+
+        return new RuntimeStatus($"Mismatch ({severity})", "mismatch", diffMinutes);
+    }
+
+    private static string FormatRuntime(double? runtimeMinutes)
+        => runtimeMinutes.HasValue && runtimeMinutes.Value > 0 ? $"{runtimeMinutes.Value:0.##} min" : "—";
+
+    private static string FormatRuntimePair(double? reported, double? actual)
+        => $"{FormatRuntime(reported)} / {FormatRuntime(actual)}";
+
+    private static string NormalizePlayability(string? playability)
+    {
+        var value = (playability ?? string.Empty).Trim();
+        return value.Length == 0 ? "Unknown" : value;
+    }
+
+    private static string NormalizePlayabilityKind(string playability)
+        => playability.Trim().ToLowerInvariant();
+
+    private static int GetPlayabilityRank(string playability)
+        => playability.Trim().ToLowerInvariant() switch
+        {
+            "problematic" => 5,
+            "risky" => 4,
+            "caution" => 3,
+            "good" => 2,
+            "excellent" => 1,
+            _ => 0
+        };
+
+    private static string GetAvailabilityBadgeStyle(MovieViewModel movie)
+        => movie.IsAvailable
+            ? "display:inline-block; padding:0.2rem 0.52rem; border-radius:999px; font-size:0.78rem; font-weight:700; background:rgba(16,185,129,0.18); color:#6ee7b7; border:1px solid rgba(16,185,129,0.45);"
+            : "display:inline-block; padding:0.2rem 0.52rem; border-radius:999px; font-size:0.78rem; font-weight:700; background:rgba(239,68,68,0.22); color:#fecaca; border:1px solid rgba(239,68,68,0.65);";
+
+    private static string GetPlayabilityBadgeStyle(MovieViewModel movie)
+        => movie.PlayabilityKind switch
+        {
+            "excellent" => BadgeStyle("rgba(16,185,129,0.18)", "#6ee7b7", "rgba(16,185,129,0.45)"),
+            "good" => BadgeStyle("rgba(59,130,246,0.18)", "#bfdbfe", "rgba(59,130,246,0.45)"),
+            "caution" => BadgeStyle("rgba(234,179,8,0.22)", "#fde68a", "rgba(234,179,8,0.65)"),
+            "risky" => BadgeStyle("rgba(249,115,22,0.22)", "#fdba74", "rgba(249,115,22,0.65)"),
+            "problematic" => BadgeStyle("rgba(239,68,68,0.22)", "#fecaca", "rgba(239,68,68,0.65)"),
+            _ => BadgeStyle("rgba(148,163,184,0.18)", "#cbd5e1", "rgba(148,163,184,0.35)")
+        };
+
+    private static string GetRuntimeBadgeStyle(MovieViewModel movie)
+        => movie.RuntimeStatusKind switch
+        {
+            "match" => BadgeStyle("rgba(16,185,129,0.18)", "#6ee7b7", "rgba(16,185,129,0.45)"),
+            "mismatch" => BadgeStyle("rgba(249,115,22,0.22)", "#fed7aa", "rgba(249,115,22,0.65)"),
+            _ => BadgeStyle("rgba(148,163,184,0.18)", "#cbd5e1", "rgba(148,163,184,0.35)")
+        };
+
+    private static string BadgeStyle(string background, string color, string border)
+        => $"display:inline-block; padding:0.2rem 0.52rem; border-radius:999px; font-size:0.78rem; font-weight:700; background:{background}; color:{color}; border:1px solid {border};";
+
+    private void ResetFilters()
+    {
+        _searchText = string.Empty;
+        _availabilityFilter = "All";
+        _playabilityFilter = "All";
+        _runtimeFilter = "All";
+        _sourceFilter = "All";
+        _sortBy = "updated";
+        _pageIndex = 0;
+    }
+
+    private void NextPage()
+    {
+        if (CanGoNext)
+        {
+            _pageIndex++;
+        }
+    }
+
+    private void PreviousPage()
+    {
+        if (_pageIndex > 0)
+        {
+            _pageIndex--;
+        }
+    }
+
+    private void OnPageSizeChanged(ChangeEventArgs args)
+    {
+        if (args.Value is null)
+        {
+            return;
+        }
+
+        if (int.TryParse(args.Value.ToString(), out var size))
+        {
+            _pageSize = size;
+            _pageIndex = 0;
+        }
+    }
 
     private async Task AttachBearerAsync(HttpRequestMessage request)
     {
@@ -360,12 +578,46 @@
         }
     }
 
-    private sealed record BatchRuntimeReprobeRequest(string? MediaType, int Take = 200, bool ForceAll = false);
-    private sealed record StartRuntimeReprobeJobResponse(Guid JobId);
-    private sealed record RuntimeReprobeJobStatusResponse(Guid JobId, string Status, string Message, int TotalCandidates, int Inspected, int Attempted, int Updated, int MissingFiles, int Failed, DateTimeOffset StartedAtUtc, DateTimeOffset? FinishedAtUtc);
-    private sealed record TriggerIntegrationSyncRequest(bool ForceFullResync = false, string? MediaScope = null);
-    private sealed record TriggerIntegrationSyncResponse(long IntegrationId, bool Accepted, string Message);
-    private sealed record PurgeLibraryRequest(string? MediaType = null, bool ResetSyncState = true, bool ClearMonitoringState = true);
-    private sealed record PurgeLibraryResponse(string MediaType, int ItemsDeleted, int SourceLinksDeleted, int IssuesDeleted, int MonitoringStateDeleted);
-    private sealed record IntegrationInstanceResponse(long Id, string ServiceKey, string InstanceName, string BaseUrl, string AuthType, bool Enabled);
+    private record MovieLibraryItemDto(
+        long Id,
+        string CanonicalKey,
+        string MediaType,
+        string DisplayTitle,
+        string Title,
+        string SortTitle,
+        int? Year,
+        int? TmdbId,
+        int? TvdbId,
+        string ImdbId,
+        string PlexRatingKey,
+        string Description,
+        string DescriptionSourceService,
+        double? RuntimeMinutes,
+        double? ActualRuntimeMinutes,
+        IReadOnlyList<string> AudioLanguages,
+        IReadOnlyList<string> SubtitleLanguages,
+        string PlayabilityScore,
+        int PlayabilityNumericScore,
+        string PlayabilitySummary,
+        DateTimeOffset? PlayabilityCheckedAtUtc,
+        IReadOnlyList<string> PlayabilityReasons,
+        string PlayabilityVideoCodec,
+        IReadOnlyList<string> PlayabilityAudioCodecs,
+        IReadOnlyList<string> PlayabilitySubtitleCodecs,
+        bool IsAvailable,
+        string QualityProfile,
+        DateTimeOffset? SourceUpdatedAtUtc,
+        DateTimeOffset UpdatedAtUtc,
+        string PrimaryFilePath,
+        bool LocalFileExists,
+        IReadOnlyList<string> SourceServices);
+
+    private record RuntimePolicySettingsResponse(double ToleranceMinutesFloor, double TolerancePercent, double WarningPercent, double HighMinutes, double CriticalPercent, double CriticalMinutes);
+    private record RuntimeStatus(string Label, string Kind, double? DiffMinutes);
+    private record MovieViewModel(long Id, string DisplayTitle, string Title, string SortTitle, int? Year, bool IsAvailable, string QualityProfile, IReadOnlyList<string> SourceServices, string PlayabilityLabel, string PlayabilityKind, int PlayabilityRank, string PlayabilitySummaryText, string RuntimeDisplay, string RuntimeStatusLabel, string RuntimeStatusKind, double? RuntimeGapMinutes, DateTimeOffset UpdatedAtUtc)
+    {
+        public string AvailabilityLabel => IsAvailable ? "Available" : "Unavailable";
+        public string YearDisplay => Year?.ToString() ?? "Unknown year";
+        public string TitleContext => string.Equals(DisplayTitle, Title, StringComparison.OrdinalIgnoreCase) ? "Movie" : Title;
+    }
 }

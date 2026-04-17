@@ -1,0 +1,34 @@
+@using web.Components.Shared
+
+@if (Episodes.Count > 0)
+{
+    <section class="card" style="margin-top:1rem;">
+        <p class="card-label">EPISODES</p>
+        <table style="width:100%; border-collapse:collapse; font-size:0.88rem; margin-top:0.45rem;">
+            <thead>
+                <tr style="text-align:left; border-bottom:1px solid rgba(148,163,184,0.25);">
+                    <th style="padding:0.35rem 0.4rem;">Title</th>
+                    <th style="padding:0.35rem 0.4rem;">Year</th>
+                    <th style="padding:0.35rem 0.4rem;">Runtime</th>
+                    <th style="padding:0.35rem 0.4rem;">Playability</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var episode in Episodes.Take(MaxRows))
+                {
+                    <tr style="border-bottom:1px solid rgba(148,163,184,0.12); vertical-align:top;">
+                        <td style="padding:0.35rem 0.4rem;"><a href="@($"/media/tv-shows/{episode.Id}")" style="color:#93c5fd; text-decoration:none;">@episode.DisplayTitle</a></td>
+                        <td style="padding:0.35rem 0.4rem;">@(episode.Year?.ToString() ?? "—")</td>
+                        <td style="padding:0.35rem 0.4rem;">@(episode.RuntimeMinutes.HasValue ? $"{Math.Round(episode.RuntimeMinutes.Value, 1):0.#} min" : "—")</td>
+                        <td style="padding:0.35rem 0.4rem;">@(string.IsNullOrWhiteSpace(episode.PlayabilityScore) ? "—" : episode.PlayabilityScore)</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </section>
+}
+
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<MediaItemDetailDto> Episodes { get; set; } = Array.Empty<MediaItemDetailDto>();
+    [Parameter] public int MaxRows { get; set; } = 50;
+}

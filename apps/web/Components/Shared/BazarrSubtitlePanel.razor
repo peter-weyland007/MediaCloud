@@ -1,0 +1,160 @@
+@inject HttpClient Http
+@inject AuthorizedApiRequestFactory RequestFactory
+
+<section class="card" style="margin-top:1rem;">
+    <button type="button"
+            class="subtitle-panel-toggle"
+            @onclick="ToggleExpanded"
+            aria-expanded="@_expanded"
+            aria-controls="subtitle-panel-content">
+        <span>
+            <span class="card-label" style="display:block;">SUBTITLES</span>
+            <span class="card-note" style="display:block; margin:0.35rem 0 0;">Live subtitle availability and missing-target status from Bazarr.</span>
+        </span>
+        <span style="display:flex; align-items:center; gap:0.65rem; margin-left:auto;">
+            @if (_status is not null)
+            {
+                <span style="@GetBadgeStyle(_status.Status)">@GetBadgeLabel(_status.Status)</span>
+            }
+            <span class="subtitle-panel-chevron">@(_expanded ? "▾" : "▸")</span>
+        </span>
+    </button>
+
+    @if (_expanded)
+    {
+        <div id="subtitle-panel-content" style="margin-top:1rem; display:grid; gap:0.85rem;">
+            @if (_loading)
+            {
+                <p class="card-note">Loading Bazarr subtitle status…</p>
+            }
+            else if (_status is null)
+            {
+                <p class="card-note">Bazarr subtitle status is unavailable.</p>
+            }
+            else
+            {
+                <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:0.85rem;">
+                    <div>
+                        <p class="card-label">SOURCE</p>
+                        <p style="margin:0.35rem 0 0;">@DisplayValue(_status.InstanceName)</p>
+                        <p class="card-note" style="margin-top:0.25rem;">Target: @DisplayValue(_status.TargetKind) · External ID: @(_status.ExternalId?.ToString() ?? "—")</p>
+                    </div>
+                    <div>
+                        <p class="card-label">SUMMARY</p>
+                        <p style="margin:0.35rem 0 0;">@DisplayValue(_status.Summary)</p>
+                        <p class="card-note" style="margin-top:0.25rem;">Monitored: @(_status.Monitored ? "Yes" : "No") · Checked: @FormatTimestamp(_status.CheckedAtUtc)</p>
+                    </div>
+                </div>
+
+                @if (_status.EpisodeFileCount > 0)
+                {
+                    <div>
+                        <p class="card-label">SERIES COVERAGE</p>
+                        <p style="margin:0.35rem 0 0;">Episodes tracked: @_status.EpisodeFileCount</p>
+                        <p style="margin:0.15rem 0 0;">Missing targets: @_status.MissingEpisodeCount</p>
+                    </div>
+                }
+
+                <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:0.85rem;">
+                    <div>
+                        <p class="card-label">Available subtitles</p>
+                        <p style="margin:0.35rem 0 0;">@FormatList(_status.AvailableSubtitles)</p>
+                    </div>
+                    <div>
+                        <p class="card-label">Missing targets</p>
+                        <p style="margin:0.35rem 0 0;">@FormatList(_status.MissingSubtitles)</p>
+                    </div>
+                </div>
+            }
+        </div>
+    }
+</section>
+
+<style>
+    .subtitle-panel-toggle {
+        width: 100%;
+        display: flex;
+        align-items: flex-start;
+        gap: 0.75rem;
+        padding: 0;
+        border: 0;
+        background: transparent;
+        color: inherit;
+        text-align: left;
+        cursor: pointer;
+    }
+
+    .subtitle-panel-chevron {
+        color: #cbd5f5;
+        font-size: 1.1rem;
+        line-height: 1;
+    }
+</style>
+
+@code {
+    [Parameter, EditorRequired] public long LibraryItemId { get; set; }
+
+    private bool _loading = true;
+    private bool _expanded;
+    private BazarrSubtitleStatusDto? _status;
+
+    protected override Task OnParametersSetAsync()
+        => LoadAsync();
+
+    private void ToggleExpanded()
+        => _expanded = !_expanded;
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        _status = null;
+
+        try
+        {
+            using var request = await RequestFactory.CreateAsync(HttpMethod.Get, $"/api/library/items/{LibraryItemId}/bazarr-subtitles");
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                return;
+            }
+
+            _status = await response.Content.ReadFromJsonAsync<BazarrSubtitleStatusDto>();
+        }
+        catch
+        {
+            _status = null;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private static string FormatList(IReadOnlyList<string>? values)
+        => values is { Count: > 0 } ? string.Join(", ", values.Where(x => !string.IsNullOrWhiteSpace(x))) : "—";
+
+    private static string DisplayValue(string? value)
+        => string.IsNullOrWhiteSpace(value) ? "—" : value;
+
+    private static string FormatTimestamp(DateTimeOffset value)
+        => value.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
+
+    private static string GetBadgeLabel(string? status)
+        => (status ?? string.Empty).Trim().ToLowerInvariant() switch
+        {
+            "missing" => "Missing",
+            "covered" => "Covered",
+            _ => "Unavailable"
+        };
+
+    private static string GetBadgeStyle(string? status)
+        => (status ?? string.Empty).Trim().ToLowerInvariant() switch
+        {
+            "missing" => BadgeStyle("rgba(249,115,22,0.18)", "#fdba74", "rgba(249,115,22,0.45)"),
+            "covered" => BadgeStyle("rgba(16,185,129,0.18)", "#86efac", "rgba(16,185,129,0.45)"),
+            _ => BadgeStyle("rgba(148,163,184,0.18)", "#cbd5e1", "rgba(148,163,184,0.35)")
+        };
+
+    private static string BadgeStyle(string background, string color, string border)
+        => $"display:inline-block; padding:0.2rem 0.52rem; border-radius:999px; font-size:0.78rem; font-weight:700; background:{background}; color:{color}; border:1px solid {border};";
+}

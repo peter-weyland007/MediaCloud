@@ -30,7 +30,9 @@ public static class LibraryRemediationDiagnosticsDecisioning
                 ShouldSearchNow = false,
                 ShouldBlacklistCurrentRelease = false,
                 NeedsManualReview = true,
-                PolicySummary = "Playback diagnostics point to a client/profile tuning issue rather than a bad media file. Review client/profile tuning before replacing media."
+                PolicySummary = "Playback diagnostics point to a client/profile tuning issue rather than a bad media file. Review client/profile tuning before replacing media.",
+                PolicyState = "client_limitation",
+                NextActionSummary = "Do not replace the file yet. Review the playback client, subtitle mode, and profile tuning first."
             };
         }
 
@@ -41,7 +43,9 @@ public static class LibraryRemediationDiagnosticsDecisioning
                 ShouldSearchNow = true,
                 ShouldBlacklistCurrentRelease = true,
                 NeedsManualReview = false,
-                PolicySummary = "Playback diagnostics point to a likely bad media file, so replacement remediation should proceed."
+                PolicySummary = "Playback diagnostics point to a likely bad media file, so replacement remediation should proceed.",
+                PolicyState = "bad_media_file",
+                NextActionSummary = "Blacklist the current release when possible, then queue a replacement search and verify the new file afterward."
             };
         }
 

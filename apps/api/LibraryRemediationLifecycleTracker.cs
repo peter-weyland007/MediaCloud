@@ -8,7 +8,13 @@ public sealed record LibraryRemediationLifecycleSnapshot(
     string SearchStatus,
     string BlacklistStatus,
     string OutcomeSummary,
-    DateTimeOffset LastCheckedAtUtc);
+    string VerificationStatus,
+    string VerificationSummary,
+    string VerificationDetailsJson,
+    string LoopbackStatus,
+    string LoopbackSummary,
+    DateTimeOffset LastCheckedAtUtc,
+    DateTimeOffset? VerificationCheckedAtUtc);
 
 public static class LibraryRemediationExecution
 {
@@ -42,14 +48,22 @@ public static class LibraryRemediationExecution
                 intent.ShouldBlacklistCurrentRelease,
                 intent.NeedsManualReview,
                 intent.NotesRecordedOnly,
+                intent.ApprovalRequired,
+                intent.ApprovalReason,
                 intent.PolicySummary,
                 intent.NotesHandling,
                 intent.ProfileDecision,
-                intent.ProfileSummary));
+                intent.ProfileSummary,
+                intent.PolicyState,
+                intent.NextActionSummary));
 }
 
 public static class LibraryRemediationLifecycleTracker
 {
+    private const string SearchStatusQueued = "Queued";
+    private const string SearchStatusNoResults = "NoResults";
+    private const string SearchStatusGrabbed = "Grabbed";
+
     public static LibraryRemediationLifecycleSnapshot Evaluate(
         LibraryRemediationJob job,
         LibraryItem item,
@@ -64,7 +78,19 @@ public static class LibraryRemediationLifecycleTracker
 
         if (IsBlockedStatus(status))
         {
-            return new(status, searchStatus, blacklistStatus, FirstNonEmpty(outcome, job.ResultMessage, "Remediation was blocked."), checkedAt);
+            var summary = FirstNonEmpty(outcome, job.ResultMessage, "Remediation was blocked.");
+            return new(
+                status,
+                searchStatus,
+                blacklistStatus,
+                summary,
+                DetermineVerificationStatusForStatus(status),
+                DetermineVerificationSummaryForStatus(status, summary),
+                BuildVerificationDetailsJson(job.IssueType, item, relatedIssue, status, summary),
+                DetermineLoopbackStatusForStatus(status),
+                DetermineLoopbackSummaryForStatus(status, job),
+                checkedAt,
+                checkedAt);
         }
 
         if (relatedIssue is not null
@@ -72,33 +98,102 @@ public static class LibraryRemediationLifecycleTracker
             && relatedIssue.ResolvedAtUtc.HasValue
             && relatedIssue.ResolvedAtUtc.Value >= job.RequestedAtUtc)
         {
-            return new("Resolved", "Completed", blacklistStatus, "Related issue resolved after remediation request.", checkedAt);
+            const string summary = "Related issue resolved after remediation request.";
+            return new(
+                "Resolved",
+                "Completed",
+                blacklistStatus,
+                summary,
+                "Verified",
+                "Related issue was already resolved during verification.",
+                BuildVerificationDetailsJson(job.IssueType, item, relatedIssue, "Resolved", summary),
+                "NotNeeded",
+                "Verification passed; no repeat remediation is recommended.",
+                checkedAt,
+                checkedAt);
         }
 
-        if (string.Equals(searchStatus, "Queued", StringComparison.OrdinalIgnoreCase)
+        if (IsQueuedStatus(searchStatus)
             && ReleaseChangedAfterRequest(job, item, latestContext))
         {
             var verification = VerifyIssueAfterReplacement(job.IssueType, item, relatedIssue);
             if (verification.IsVerified)
             {
-                return new("Resolved", "Completed", blacklistStatus, verification.Message, checkedAt);
+                return new(
+                    "Resolved",
+                    "Completed",
+                    blacklistStatus,
+                    verification.Message,
+                    "Verified",
+                    verification.Message,
+                    BuildVerificationDetailsJson(job.IssueType, item, relatedIssue, "Resolved", verification.Message),
+                    "NotNeeded",
+                    "Verification passed; no repeat remediation is recommended.",
+                    checkedAt,
+                    checkedAt);
             }
 
             if (verification.ShouldMarkFailed)
             {
-                return new("VerificationFailed", "Completed", blacklistStatus, verification.Message, checkedAt);
+                return new(
+                    "VerificationFailed",
+                    "Completed",
+                    blacklistStatus,
+                    verification.Message,
+                    "Failed",
+                    verification.Message,
+                    BuildVerificationDetailsJson(job.IssueType, item, relatedIssue, "VerificationFailed", verification.Message),
+                    "Recommended",
+                    BuildLoopbackSummary(job, verification.Message),
+                    checkedAt,
+                    checkedAt);
             }
 
-            return new("ImportedReplacement", "Completed", blacklistStatus, verification.Message, checkedAt);
+            return new(
+                "ImportedReplacement",
+                "Completed",
+                blacklistStatus,
+                verification.Message,
+                "WaitingForEvidence",
+                verification.Message,
+                BuildVerificationDetailsJson(job.IssueType, item, relatedIssue, "ImportedReplacement", verification.Message),
+                "Standby",
+                "Wait for fresher metadata or probes before repeating remediation.",
+                checkedAt,
+                checkedAt);
         }
 
-        if (string.Equals(searchStatus, "Queued", StringComparison.OrdinalIgnoreCase)
+        if (IsQueuedStatus(searchStatus)
             && ItemUpdatedAfterRequest(item, job.RequestedAtUtc))
         {
-            return new("Processing", "Queued", blacklistStatus, "Source metadata changed after the remediation request. MediaCloud is waiting to confirm whether a replacement import sticks.", checkedAt);
+            const string summary = "Source metadata changed after the remediation request. MediaCloud is waiting to confirm whether a replacement import sticks.";
+            return new(
+                "Processing",
+                "Queued",
+                blacklistStatus,
+                summary,
+                "WaitingForEvidence",
+                summary,
+                BuildVerificationDetailsJson(job.IssueType, item, relatedIssue, "Processing", summary),
+                "Standby",
+                "Wait for fresher metadata or probes before repeating remediation.",
+                checkedAt,
+                checkedAt);
         }
 
-        return new(status, searchStatus, blacklistStatus, FirstNonEmpty(outcome, job.ResultMessage, "Remediation request recorded."), checkedAt);
+        var defaultSummary = FirstNonEmpty(outcome, job.ResultMessage, "Remediation request recorded.");
+        return new(
+            status,
+            searchStatus,
+            blacklistStatus,
+            defaultSummary,
+            DetermineVerificationStatusForStatus(status),
+            FirstNonEmpty(job.VerificationSummary, DetermineVerificationSummaryForStatus(status, defaultSummary)),
+            BuildVerificationDetailsJson(job.IssueType, item, relatedIssue, status, defaultSummary),
+            DetermineLoopbackStatusForStatus(status),
+            FirstNonEmpty(job.LoopbackSummary, DetermineLoopbackSummaryForStatus(status, job)),
+            checkedAt,
+            checkedAt);
     }
 
     public static void Apply(LibraryRemediationJob job, LibraryRemediationLifecycleSnapshot snapshot)
@@ -107,6 +202,12 @@ public static class LibraryRemediationLifecycleTracker
         job.SearchStatus = snapshot.SearchStatus;
         job.BlacklistStatus = snapshot.BlacklistStatus;
         job.OutcomeSummary = snapshot.OutcomeSummary;
+        job.VerificationStatus = snapshot.VerificationStatus;
+        job.VerificationSummary = snapshot.VerificationSummary;
+        job.VerificationDetailsJson = snapshot.VerificationDetailsJson;
+        job.VerificationCheckedAtUtc = snapshot.VerificationCheckedAtUtc;
+        job.LoopbackStatus = snapshot.LoopbackStatus;
+        job.LoopbackSummary = snapshot.LoopbackSummary;
         job.LastCheckedAtUtc = snapshot.LastCheckedAtUtc;
         job.UpdatedAtUtc = snapshot.LastCheckedAtUtc;
     }
@@ -125,6 +226,17 @@ public static class LibraryRemediationLifecycleTracker
             return "Failed";
         }
 
+        var searchStatus = DetermineInitialSearchStatus(intent, result);
+        if (IsNoResultsStatus(searchStatus))
+        {
+            return "NoReplacementFound";
+        }
+
+        if (IsGrabbedStatus(searchStatus))
+        {
+            return "Processing";
+        }
+
         return blacklistSucceeded == true ? "BlacklistedAndQueued" : "SearchQueued";
     }
 
@@ -139,14 +251,26 @@ public static class LibraryRemediationLifecycleTracker
         return normalized is "BlockedProfileReview"
             or "BlockedManualReview"
             or "Failed"
+            or "NoReplacementFound"
             or "Resolved"
             or "VerificationFailed";
     }
 
     public static string DetermineInitialSearchStatus(LibraryRemediationIntent intent, LibraryItemRemediationResponse result)
-        => !intent.ShouldSearchNow ? "Blocked"
-            : result.Success ? "Queued"
-            : "Failed";
+    {
+        if (!intent.ShouldSearchNow)
+        {
+            return "Blocked";
+        }
+
+        if (!result.Success)
+        {
+            return "Failed";
+        }
+
+        var hint = (result.SearchStatusHint ?? string.Empty).Trim();
+        return string.IsNullOrWhiteSpace(hint) ? SearchStatusQueued : hint;
+    }
 
     public static string DetermineInitialBlacklistStatus(LibraryRemediationIntent intent, bool? blacklistSucceeded)
     {
@@ -179,16 +303,129 @@ public static class LibraryRemediationLifecycleTracker
 
         if (blacklistSucceeded == true)
         {
+            if (IsNoResultsStatus(result.SearchStatusHint))
+            {
+                return "Blacklisted current release and ran replacement search, but the provider reported no downloadable results.";
+            }
+
             return "Blacklisted current release and queued replacement search.";
         }
 
         if (blacklistSucceeded == false)
         {
+            if (IsNoResultsStatus(result.SearchStatusHint))
+            {
+                return "Blacklist failed or was skipped, and the replacement search completed with no downloadable results.";
+            }
+
             return "Blacklist failed or was skipped, but replacement search was still queued.";
+        }
+
+        if (IsNoResultsStatus(result.SearchStatusHint))
+        {
+            return "Replacement search completed, but the provider reported no downloadable results.";
+        }
+
+        if (IsGrabbedStatus(result.SearchStatusHint))
+        {
+            return "Replacement search grabbed at least one candidate. MediaCloud is waiting for import and verification.";
         }
 
         return "Queued replacement search.";
     }
+
+    public static string DetermineInitialVerificationStatus(LibraryRemediationIntent intent, LibraryItemRemediationResponse result)
+    {
+        if (!intent.ShouldSearchNow)
+        {
+            return "NotStarted";
+        }
+
+        if (!result.Success)
+        {
+            return "Failed";
+        }
+
+        return IsNoResultsStatus(result.SearchStatusHint)
+            ? "NoMatch"
+            : "Pending";
+    }
+
+    public static string DetermineInitialVerificationSummary(LibraryRemediationIntent intent, LibraryItemRemediationResponse result)
+    {
+        if (!intent.ShouldSearchNow)
+        {
+            return intent.ProfileDecision is "review_language_profile" or "review_quality_profile"
+                ? "Verification cannot start until the acquisition profile is reviewed."
+                : "Verification did not start because this issue is routed to manual review.";
+        }
+
+        if (!result.Success)
+        {
+            return "Remediation request failed before verification could complete.";
+        }
+
+        return IsNoResultsStatus(result.SearchStatusHint)
+            ? "No replacement was found, so verification cannot continue on a new release yet."
+            : "Waiting for the source stack to import or reject a replacement before verification can run.";
+    }
+
+    public static string BuildInitialVerificationDetailsJson(LibraryRemediationIntent intent, LibraryItemRemediationResponse result)
+        => JsonSerializer.Serialize(new
+        {
+            phase = "initial",
+            issueType = intent.IssueType,
+            requestedAction = intent.RequestedAction,
+            searchStatusHint = result.SearchStatusHint,
+            result.Success,
+            result.Message
+        });
+
+    public static DateTimeOffset? DetermineInitialVerificationCheckedAtUtc(LibraryRemediationIntent intent, LibraryItemRemediationResponse result, DateTimeOffset requestedAtUtc)
+        => !intent.ShouldSearchNow || !result.Success || IsNoResultsStatus(result.SearchStatusHint)
+            ? requestedAtUtc
+            : null;
+
+    public static string DetermineInitialLoopbackStatus(LibraryRemediationIntent intent, LibraryItemRemediationResponse result)
+    {
+        if (!intent.ShouldSearchNow)
+        {
+            return "NotNeeded";
+        }
+
+        if (!result.Success || IsNoResultsStatus(result.SearchStatusHint))
+        {
+            return "Recommended";
+        }
+
+        return "Standby";
+    }
+
+    public static string DetermineInitialLoopbackSummary(LibraryRemediationIntent intent, LibraryItemRemediationResponse result)
+    {
+        if (!intent.ShouldSearchNow)
+        {
+            return "Repeat remediation is not recommended until profile review or manual triage is complete.";
+        }
+
+        if (!result.Success)
+        {
+            return "Fix the provider or execution failure before repeating remediation.";
+        }
+
+        return IsNoResultsStatus(result.SearchStatusHint)
+            ? "No replacement was found; use profile tuning or manual review before repeating remediation."
+            : "Wait for verification evidence before deciding whether remediation should repeat.";
+    }
+
+    private static bool IsQueuedStatus(string? searchStatus)
+        => string.Equals(searchStatus, SearchStatusQueued, StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsNoResultsStatus(string? searchStatus)
+        => string.Equals(searchStatus, SearchStatusNoResults, StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsGrabbedStatus(string? searchStatus)
+        => string.Equals(searchStatus, SearchStatusGrabbed, StringComparison.OrdinalIgnoreCase);
 
     private static (bool IsVerified, bool ShouldMarkFailed, string Message) VerifyIssueAfterReplacement(string? issueType, LibraryItem item, LibraryIssue? relatedIssue)
     {
@@ -289,6 +526,83 @@ public static class LibraryRemediationLifecycleTracker
 
     private static string InferBlacklistStatus(LibraryRemediationJob job)
         => job.ShouldBlacklistCurrentRelease ? "Skipped" : "NotNeeded";
+
+    private static string DetermineVerificationStatusForStatus(string status)
+        => status switch
+        {
+            "Resolved" => "Verified",
+            "VerificationFailed" or "Failed" => "Failed",
+            "NoReplacementFound" => "NoMatch",
+            "ImportedReplacement" or "Processing" => "WaitingForEvidence",
+            "BlockedProfileReview" or "BlockedManualReview" => "NotStarted",
+            _ => "Pending"
+        };
+
+    private static string DetermineVerificationSummaryForStatus(string status, string fallbackSummary)
+        => status switch
+        {
+            "Resolved" => "Verification passed and current evidence says the issue is fixed.",
+            "VerificationFailed" => "Verification failed because the latest evidence still shows the issue.",
+            "NoReplacementFound" => "No replacement was found, so verification cannot continue on a new release yet.",
+            "ImportedReplacement" => "A replacement appears to be in place, but verification still needs fresher evidence.",
+            "Processing" => "A source-side change was observed; verification is waiting for fresher evidence.",
+            "BlockedProfileReview" => "Verification cannot start until the acquisition profile is reviewed.",
+            "BlockedManualReview" => "Verification did not start because this issue is routed to manual review.",
+            "Failed" => "Remediation request failed before verification could complete.",
+            _ => fallbackSummary
+        };
+
+    private static string DetermineLoopbackStatusForStatus(string status)
+        => status switch
+        {
+            "VerificationFailed" or "NoReplacementFound" or "Failed" => "Recommended",
+            "BlacklistedAndQueued" or "SearchQueued" or "Processing" or "ImportedReplacement" => "Standby",
+            _ => "NotNeeded"
+        };
+
+    private static string DetermineLoopbackSummaryForStatus(string status, LibraryRemediationJob job)
+        => status switch
+        {
+            "VerificationFailed" => BuildLoopbackSummary(job, "Verification still shows the issue."),
+            "NoReplacementFound" => "No replacement was found; use profile tuning or manual review before repeating remediation.",
+            "Failed" => "Fix the provider or execution failure before repeating remediation.",
+            "BlacklistedAndQueued" or "SearchQueued" or "Processing" or "ImportedReplacement" => "Wait for the current remediation attempt to finish verification before repeating it.",
+            _ => "Verification passed; no repeat remediation is recommended."
+        };
+
+    private static string BuildLoopbackSummary(LibraryRemediationJob job, string verificationMessage)
+    {
+        if (string.Equals(job.RequestedAction, "search_replacement", StringComparison.OrdinalIgnoreCase))
+        {
+            return $"{verificationMessage} Consider repeat remediation with a new replacement search or escalate to manual review if the same evidence keeps returning.";
+        }
+
+        return $"{verificationMessage} Consider repeat remediation only after operator review.";
+    }
+
+    private static string BuildVerificationDetailsJson(string? issueType, LibraryItem item, LibraryIssue? relatedIssue, string status, string summary)
+    {
+        var audioLanguages = ParseLanguages(item.AudioLanguagesJson);
+        var subtitleLanguages = ParseLanguages(item.SubtitleLanguagesJson);
+        var runtimeDelta = item.RuntimeMinutes.HasValue && item.ActualRuntimeMinutes.HasValue
+            ? Math.Abs(item.RuntimeMinutes.Value - item.ActualRuntimeMinutes.Value)
+            : (double?)null;
+
+        return JsonSerializer.Serialize(new
+        {
+            status,
+            issueType,
+            summary,
+            relatedIssueStatus = relatedIssue?.Status,
+            playability = item.PlayabilityScore,
+            playabilityCheckedAtUtc = item.PlayabilityCheckedAtUtc,
+            runtimeDelta,
+            audioLanguages,
+            subtitleLanguages,
+            sourceUpdatedAtUtc = item.SourceUpdatedAtUtc,
+            itemUpdatedAtUtc = item.UpdatedAtUtc
+        });
+    }
 
     private static string FirstNonEmpty(params string?[] values)
         => values.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x))?.Trim() ?? string.Empty;

@@ -1,0 +1,129 @@
+@using web.Components.Shared
+
+@if (Item is null)
+{
+    <p class="card-note">No item selected.</p>
+}
+else
+{
+    @if (ShowOverviewSection)
+    {
+        <section class="card" style="margin-top:1rem;">
+            <p class="card-label">OVERVIEW</p>
+            @if (string.IsNullOrWhiteSpace(Item.Description))
+            {
+                <p class="card-note">@OverviewEmptyText</p>
+            }
+            else
+            {
+                <p style="margin:0.35rem 0 0; line-height:1.55; color:#e2e8f0; white-space:pre-wrap;">@Item.Description</p>
+            }
+        </section>
+    }
+
+    <section class="card" style="margin-top:1rem; display:grid; gap:1rem;">
+        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:1rem; padding-bottom:0.15rem; border-bottom:1px solid rgba(51,65,85,0.65);">
+            <div>
+                <p class="card-label">REPORTED / ACTUAL RUNTIME</p>
+                <p>@($"{FormatRuntime(Item.RuntimeMinutes)} / {FormatRuntime(Item.ActualRuntimeMinutes)}")</p>
+            </div>
+            <div>
+                <p class="card-label">PLAYABILITY</p>
+                <span style="@GetPlayabilityBadgeStyle(Item.PlayabilityScore)">@DisplayValue(Item.PlayabilityScore)</span>
+                <p class="card-note" style="margin-top:0.3rem;">@DisplayValue(Item.PlayabilitySummary)</p>
+            </div>
+            <div>
+                <p class="card-label">AUDIO LANGUAGES</p>
+                <p>@FormatList(Item.AudioLanguages)</p>
+            </div>
+            <div>
+                <p class="card-label">SUBTITLE LANGUAGES</p>
+                <p>@FormatList(Item.SubtitleLanguages)</p>
+            </div>
+        </div>
+        <div style="display:flex; justify-content:space-between; gap:1rem; flex-wrap:wrap; align-items:start;">
+            <div>
+                <p class="card-label">FILE & IDENTIFIERS</p>
+                <p style="margin:0.35rem 0 0;">TMDB: @(Item.TmdbId?.ToString() ?? "—")</p>
+                @if (!string.Equals(Item.MediaType, "Movie", StringComparison.OrdinalIgnoreCase))
+                {
+                    <p>TVDB: @(Item.TvdbId?.ToString() ?? "—")</p>
+                }
+                <p>IMDb: @DisplayValue(Item.ImdbId)</p>
+                <p>Profile: @DisplayValue(Item.QualityProfile)</p>
+            </div>
+            <div style="display:flex; flex-direction:column; gap:0.2rem; align-items:flex-end; align-self:start; min-width:0;">
+                <MudButton Class="media-btn media-btn--primary" Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small" OnClick="OnAnalyze" Disabled="@IsAnalyzing">@(IsAnalyzing ? "Analyzing..." : AnalyzeButtonLabel)</MudButton>
+                <span class="card-note" style="display:block; margin:0; text-align:right; white-space:nowrap; font-size:0.72rem;">Last analyzed: @FormatTimestamp(Item.PlayabilityCheckedAtUtc)</span>
+            </div>
+        </div>
+        <div>
+            <p class="card-label">PRIMARY FILE</p>
+            <p style="margin:0.35rem 0 0; overflow-wrap:anywhere;">@DisplayValue(Item.PrimaryFilePath)</p>
+            @if (!Item.LocalFileExists && !string.IsNullOrWhiteSpace(Item.PrimaryFilePath))
+            {
+                <p class="card-note" style="margin-top:0.45rem;">This path is mapped in MediaCloud, but the file does not exist on this machine.</p>
+            }
+        </div>
+    </section>
+
+    @if (ShowSourceServicesSummary)
+    {
+        <section class="card" style="margin-top:1rem;">
+            <div>
+                <p class="card-label">SOURCE SERVICES</p>
+                <p>@FormatList(Item.SourceServices)</p>
+            </div>
+        </section>
+    }
+}
+
+@code {
+    [Parameter, EditorRequired] public MediaItemDetailDto? Item { get; set; }
+    [Parameter] public string OverviewEmptyText { get; set; } = "No description is currently available.";
+    [Parameter] public string AnalyzeButtonLabel { get; set; } = "Analyze file";
+    [Parameter] public bool IsAnalyzing { get; set; }
+    [Parameter] public bool ShowOverviewSection { get; set; } = true;
+    [Parameter] public bool ShowSourceServicesSummary { get; set; } = true;
+    [Parameter] public EventCallback OnAnalyze { get; set; }
+
+    private static string FormatRuntime(double? minutes)
+        => minutes.HasValue ? $"{Math.Round(minutes.Value, 1):0.#} min" : "—";
+
+    private static string FormatList(IReadOnlyList<string>? values)
+        => values is { Count: > 0 } ? string.Join(", ", values.Where(x => !string.IsNullOrWhiteSpace(x))) : "—";
+
+    private static string DisplayValue(string? value)
+        => string.IsNullOrWhiteSpace(value) ? "—" : value;
+
+    private static string FormatTimestamp(DateTimeOffset? value)
+        => value.HasValue ? value.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss") : "—";
+
+    private static string GetPlayabilityBadgeStyle(string? playabilityScore)
+        => GetPlayabilityKind(playabilityScore) switch
+        {
+            "excellent" => BadgeStyle("rgba(16,185,129,0.18)", "#6ee7b7", "rgba(16,185,129,0.45)"),
+            "good" => BadgeStyle("rgba(59,130,246,0.18)", "#bfdbfe", "rgba(59,130,246,0.45)"),
+            "caution" => BadgeStyle("rgba(234,179,8,0.22)", "#fde68a", "rgba(234,179,8,0.65)"),
+            "risky" => BadgeStyle("rgba(249,115,22,0.22)", "#fdba74", "rgba(249,115,22,0.65)"),
+            "problematic" => BadgeStyle("rgba(239,68,68,0.22)", "#fecaca", "rgba(239,68,68,0.65)"),
+            _ => BadgeStyle("rgba(148,163,184,0.18)", "#cbd5e1", "rgba(148,163,184,0.35)")
+        };
+
+    private static string GetPlayabilityKind(string? playabilityScore)
+    {
+        var normalized = (playabilityScore ?? string.Empty).Trim().ToLowerInvariant();
+        return normalized switch
+        {
+            "excellent" => "excellent",
+            "good" => "good",
+            "caution" => "caution",
+            "risky" => "risky",
+            "problematic" => "problematic",
+            _ => string.Empty
+        };
+    }
+
+    private static string BadgeStyle(string background, string color, string border)
+        => $"display:inline-block; padding:0.2rem 0.52rem; border-radius:999px; font-size:0.78rem; font-weight:700; background:{background}; color:{color}; border:1px solid {border};";
+}

@@ -13,7 +13,7 @@
     <div style="display:flex; gap:0.6rem; align-items:end; flex-wrap:wrap;">
         <div class="form-group" style="min-width:180px;">
             <label>Status</label>
-            <select class="input" @bind="_statusFilter" @bind:after="ReloadAsync">
+            <select class="input" @bind="_statusFilter" @bind:after="OnFiltersChangedAsync">
                 <option value="Open">Open</option>
                 <option value="Resolved">Resolved</option>
                 <option value="">All</option>
@@ -22,18 +22,28 @@
 
         <div class="form-group" style="min-width:180px;">
             <label>Issue Type</label>
-            <select class="input" @bind="_issueTypeFilter">
-                @foreach (var option in IssueTypeOptions)
+            <select class="input" @bind="_issueTypeFilter" @bind:after="OnFiltersChangedAsync">
+                @foreach (var option in _issueTypeOptions)
                 {
-                    <option value="@option">@option</option>
+                    <option value="@option.Key">@option.Label</option>
                 }
             </select>
         </div>
 
         <div class="form-group" style="min-width:180px;">
             <label>Media Type</label>
-            <select class="input" @bind="_mediaTypeFilter">
+            <select class="input" @bind="_mediaTypeFilter" @bind:after="OnFiltersChangedAsync">
                 @foreach (var option in MediaTypeOptions)
+                {
+                    <option value="@option">@option</option>
+                }
+            </select>
+        </div>
+
+        <div class="form-group" style="min-width:110px;">
+            <label>Page Size</label>
+            <select class="input" value="@_pageSize" @onchange="OnPageSizeChangedAsync">
+                @foreach (var option in PageSizeOptions)
                 {
                     <option value="@option">@option</option>
                 }
@@ -45,11 +55,24 @@
 </div>
 
 <div class="card">
+    <div style="display:flex; justify-content:space-between; gap:0.75rem; flex-wrap:wrap; align-items:center; margin-bottom:0.75rem;">
+        <span class="card-note">Page @CurrentPageDisplay of @TotalPages · Showing @PageStartRow-@PageEndRow of @_totalCount issues</span>
+        <div style="display:flex; gap:0.5rem; align-items:end; flex-wrap:wrap;">
+            <div class="form-group" style="min-width:120px; margin:0;">
+                <label>Jump to page</label>
+                <input class="input" type="number" min="1" max="@TotalPages" value="@_jumpPageText" @onchange="OnJumpPageChanged" />
+            </div>
+            <button class="button-secondary" @onclick="GoToPageAsync" disabled="@_loading">Go</button>
+            <button class="button-secondary" @onclick="PreviousPageAsync" disabled="@(_loading || _pageIndex == 0)">Previous</button>
+            <button class="button-secondary" @onclick="NextPageAsync" disabled="@(_loading || !CanGoNext)">Next</button>
+        </div>
+    </div>
+
     @if (_loading)
     {
         <p class="card-note">Loading issues…</p>
     }
-    else if (VisibleIssues.Count == 0)
+    else if (_issues.Count == 0)
     {
         <p class="card-note">No issues found for the selected filter.</p>
     }
@@ -58,18 +81,18 @@
         <table class="data-table" style="width:100%; border-collapse:collapse;">
             <thead>
                 <tr>
-                    <th style="text-align:left; padding:0.5rem;"><button style="all:unset; cursor:pointer;" @onclick='() => ToggleSort("detected")'>Detected @SortGlyph("detected")</button></th>
-                    <th style="text-align:left; padding:0.5rem;"><button style="all:unset; cursor:pointer;" @onclick='() => ToggleSort("item")'>Item @SortGlyph("item")</button></th>
-                    <th style="text-align:left; padding:0.5rem;"><button style="all:unset; cursor:pointer;" @onclick='() => ToggleSort("type")'>Issue Type @SortGlyph("type")</button></th>
-                    <th style="text-align:left; padding:0.5rem;"><button style="all:unset; cursor:pointer;" @onclick='() => ToggleSort("media")'>Media Type @SortGlyph("media")</button></th>
-                    <th style="text-align:left; padding:0.5rem;"><button style="all:unset; cursor:pointer;" @onclick='() => ToggleSort("severity")'>Severity @SortGlyph("severity")</button></th>
-                    <th style="text-align:left; padding:0.5rem;"><button style="all:unset; cursor:pointer;" @onclick='() => ToggleSort("status")'>Status @SortGlyph("status")</button></th>
-                    <th style="text-align:left; padding:0.5rem;"><button style="all:unset; cursor:pointer;" @onclick='() => ToggleSort("difference")'>Details @SortGlyph("difference")</button></th>
+                    <th style="text-align:left; padding:0.5rem;"><button style="all:unset; cursor:pointer;" @onclick='() => ToggleSortAsync("detected")'>Detected @SortGlyph("detected")</button></th>
+                    <th style="text-align:left; padding:0.5rem;"><button style="all:unset; cursor:pointer;" @onclick='() => ToggleSortAsync("item")'>Item @SortGlyph("item")</button></th>
+                    <th style="text-align:left; padding:0.5rem;"><button style="all:unset; cursor:pointer;" @onclick='() => ToggleSortAsync("type")'>Issue Type @SortGlyph("type")</button></th>
+                    <th style="text-align:left; padding:0.5rem;"><button style="all:unset; cursor:pointer;" @onclick='() => ToggleSortAsync("media")'>Media Type @SortGlyph("media")</button></th>
+                    <th style="text-align:left; padding:0.5rem;"><button style="all:unset; cursor:pointer;" @onclick='() => ToggleSortAsync("severity")'>Severity @SortGlyph("severity")</button></th>
+                    <th style="text-align:left; padding:0.5rem;"><button style="all:unset; cursor:pointer;" @onclick='() => ToggleSortAsync("status")'>Status @SortGlyph("status")</button></th>
+                    <th style="text-align:left; padding:0.5rem;"><button style="all:unset; cursor:pointer;" @onclick='() => ToggleSortAsync("difference")'>Details @SortGlyph("difference")</button></th>
                     <th style="text-align:left; padding:0.5rem;">Summary</th>
                 </tr>
             </thead>
             <tbody>
-                @foreach (var row in VisibleIssues)
+                @foreach (var row in _issues)
                 {
                     var mismatchDetails = ParseRuntimeMismatchDetails(row.DetailsJson);
                     var probeDetails = ParseRuntimeProbeFailureDetails(row.DetailsJson);
@@ -78,7 +101,7 @@
                         <td style="padding:0.5rem; border-top:1px solid rgba(148,163,184,0.15);">
                             <a href="@GetItemHref(row)" style="color:#93c5fd; text-decoration:none;">@GetItemDisplayName(row)</a>
                         </td>
-                        <td style="padding:0.5rem; border-top:1px solid rgba(148,163,184,0.15);"><span style="@GetIssueTypeBadgeStyle(row.IssueType)">@GetIssueTypeLabel(row.IssueType)</span></td>
+                        <td style="padding:0.5rem; border-top:1px solid rgba(148,163,184,0.15);"><span style="@GetIssueTypeBadgeStyle(row.IssueType)">@LibraryIssuePresentation.GetIssueTypeLabel(row.IssueType)</span></td>
                         <td style="padding:0.5rem; border-top:1px solid rgba(148,163,184,0.15);">@(string.IsNullOrWhiteSpace(row.MediaType) ? "—" : row.MediaType)</td>
                         <td style="padding:0.5rem; border-top:1px solid rgba(148,163,184,0.15);"><span style="@GetSeverityBadgeStyle(row.Severity)">@row.Severity</span></td>
                         <td style="padding:0.5rem; border-top:1px solid rgba(148,163,184,0.15);">@row.Status</td>
@@ -111,38 +134,101 @@
 @code {
     private bool _loading = true;
     private string _statusFilter = "Open";
-    private string _issueTypeFilter = "All";
+    private string _issueTypeFilter = string.Empty;
     private string _mediaTypeFilter = "All";
     private string _sortBy = "detected";
     private string _sortDir = "desc";
+    private int _pageIndex;
+    private int _pageSize = 50;
+    private int _totalCount;
+    private string _jumpPageText = "1";
     private readonly List<LibraryIssueDto> _issues = [];
+    private List<IssueTypeOption> _issueTypeOptions = [new(string.Empty, "All")];
 
-    private static readonly IReadOnlyList<string> IssueTypeOptions = ["All", "Runtime mismatch", "Runtime probe failed"];
-    private IReadOnlyList<string> MediaTypeOptions => ["All", .. _issues.Select(x => x.MediaType).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(x => x, StringComparer.OrdinalIgnoreCase)];
+    private static readonly IReadOnlyList<string> MediaTypeOptions = ["All", "Movie", "Episode", "Series", "Album", "Track", "Artist"];
+    private static readonly IReadOnlyList<int> PageSizeOptions = [25, 50, 100];
 
-    private List<LibraryIssueDto> VisibleIssues
-    {
-        get
-        {
-            IEnumerable<LibraryIssueDto> query = _issues;
-
-            if (!string.Equals(_issueTypeFilter, "All", StringComparison.OrdinalIgnoreCase))
-            {
-                query = query.Where(x => string.Equals(GetIssueTypeLabel(x.IssueType), _issueTypeFilter, StringComparison.OrdinalIgnoreCase));
-            }
-
-            if (!string.Equals(_mediaTypeFilter, "All", StringComparison.OrdinalIgnoreCase))
-            {
-                query = query.Where(x => string.Equals(x.MediaType, _mediaTypeFilter, StringComparison.OrdinalIgnoreCase));
-            }
-
-            query = ApplySort(query);
-            return query.ToList();
-        }
-    }
+    private int TotalPages => Math.Max(1, (int)Math.Ceiling(Math.Max(_totalCount, 1) / (double)_pageSize));
+    private int CurrentPageDisplay => Math.Min(_pageIndex + 1, TotalPages);
+    private bool CanGoNext => (_pageIndex + 1) < TotalPages;
+    private int PageStartRow => _totalCount == 0 ? 0 : (_pageIndex * _pageSize) + 1;
+    private int PageEndRow => _totalCount == 0 ? 0 : Math.Min(_totalCount, (_pageIndex * _pageSize) + _issues.Count);
 
     protected override async Task OnInitializedAsync()
     {
+        await ReloadAsync();
+    }
+
+    private async Task OnFiltersChangedAsync()
+    {
+        _pageIndex = 0;
+        await ReloadAsync();
+    }
+
+    private async Task OnPageSizeChangedAsync(ChangeEventArgs args)
+    {
+        if (int.TryParse(args.Value?.ToString(), out var size) && PageSizeOptions.Contains(size))
+        {
+            _pageSize = size;
+            _pageIndex = 0;
+            await ReloadAsync();
+        }
+    }
+
+    private void OnJumpPageChanged(ChangeEventArgs args)
+        => _jumpPageText = args.Value?.ToString() ?? string.Empty;
+
+    private async Task GoToPageAsync()
+    {
+        if (!int.TryParse(_jumpPageText, out _))
+        {
+            Snackbar.Add("Enter a valid page number.", Severity.Warning);
+            _jumpPageText = CurrentPageDisplay.ToString();
+            return;
+        }
+
+        var targetPageIndex = LibraryIssuePresentation.ResolveJumpPageIndex(_jumpPageText, TotalPages);
+        if (targetPageIndex == _pageIndex)
+        {
+            _jumpPageText = CurrentPageDisplay.ToString();
+            return;
+        }
+
+        _pageIndex = targetPageIndex;
+        await ReloadAsync();
+    }
+
+    private async Task NextPageAsync()
+    {
+        if (CanGoNext)
+        {
+            _pageIndex++;
+            await ReloadAsync();
+        }
+    }
+
+    private async Task PreviousPageAsync()
+    {
+        if (_pageIndex > 0)
+        {
+            _pageIndex--;
+            await ReloadAsync();
+        }
+    }
+
+    private async Task ToggleSortAsync(string field)
+    {
+        if (string.Equals(_sortBy, field, StringComparison.OrdinalIgnoreCase))
+        {
+            _sortDir = string.Equals(_sortDir, "asc", StringComparison.OrdinalIgnoreCase) ? "desc" : "asc";
+        }
+        else
+        {
+            _sortBy = field;
+            _sortDir = field == "detected" ? "desc" : "asc";
+        }
+
+        _pageIndex = 0;
         await ReloadAsync();
     }
 
@@ -151,10 +237,27 @@
         _loading = true;
         try
         {
-            var query = new List<string> { "take=500" };
+            var query = new List<string>
+            {
+                $"pageIndex={_pageIndex}",
+                $"pageSize={_pageSize}",
+                $"sortBy={Uri.EscapeDataString(_sortBy)}",
+                $"sortDir={Uri.EscapeDataString(_sortDir)}"
+            };
+
             if (!string.IsNullOrWhiteSpace(_statusFilter))
             {
                 query.Add($"status={Uri.EscapeDataString(_statusFilter)}");
+            }
+
+            if (!string.IsNullOrWhiteSpace(_issueTypeFilter))
+            {
+                query.Add($"issueType={Uri.EscapeDataString(_issueTypeFilter)}");
+            }
+
+            if (!string.Equals(_mediaTypeFilter, "All", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(_mediaTypeFilter))
+            {
+                query.Add($"mediaType={Uri.EscapeDataString(_mediaTypeFilter)}");
             }
 
             using var request = new HttpRequestMessage(HttpMethod.Get, $"/api/library/issues?{string.Join("&", query)}");
@@ -166,9 +269,19 @@
                 return;
             }
 
-            var payload = await response.Content.ReadFromJsonAsync<List<LibraryIssueDto>>() ?? [];
+            var payload = await response.Content.ReadFromJsonAsync<LibraryIssuePageDto>() ?? new LibraryIssuePageDto([], 0, 0, _pageSize, []);
             _issues.Clear();
-            _issues.AddRange(payload);
+            _issues.AddRange(payload.Items);
+            _totalCount = payload.TotalCount;
+            _pageIndex = payload.PageIndex;
+            _pageSize = payload.PageSize;
+            _jumpPageText = CurrentPageDisplay.ToString();
+            _issueTypeOptions = [new(string.Empty, "All"), .. payload.AvailableIssueTypes.Select(x => new IssueTypeOption(x, LibraryIssuePresentation.GetIssueTypeLabel(x)))];
+
+            if (!string.IsNullOrWhiteSpace(_issueTypeFilter) && !_issueTypeOptions.Any(x => string.Equals(x.Key, _issueTypeFilter, StringComparison.OrdinalIgnoreCase)))
+            {
+                _issueTypeFilter = string.Empty;
+            }
         }
         catch
         {
@@ -180,49 +293,6 @@
         }
     }
 
-    private IEnumerable<LibraryIssueDto> ApplySort(IEnumerable<LibraryIssueDto> source)
-    {
-        var desc = string.Equals(_sortDir, "desc", StringComparison.OrdinalIgnoreCase);
-        return _sortBy switch
-        {
-            "item" => desc
-                ? source.OrderByDescending(x => GetItemDisplayName(x), StringComparer.OrdinalIgnoreCase)
-                : source.OrderBy(x => GetItemDisplayName(x), StringComparer.OrdinalIgnoreCase),
-            "type" => desc
-                ? source.OrderByDescending(x => GetIssueTypeLabel(x.IssueType), StringComparer.OrdinalIgnoreCase)
-                : source.OrderBy(x => GetIssueTypeLabel(x.IssueType), StringComparer.OrdinalIgnoreCase),
-            "media" => desc
-                ? source.OrderByDescending(x => x.MediaType ?? string.Empty, StringComparer.OrdinalIgnoreCase)
-                : source.OrderBy(x => x.MediaType ?? string.Empty, StringComparer.OrdinalIgnoreCase),
-            "severity" => desc
-                ? source.OrderByDescending(x => SeverityRank(x.Severity))
-                : source.OrderBy(x => SeverityRank(x.Severity)),
-            "status" => desc
-                ? source.OrderByDescending(x => x.Status ?? string.Empty, StringComparer.OrdinalIgnoreCase)
-                : source.OrderBy(x => x.Status ?? string.Empty, StringComparer.OrdinalIgnoreCase),
-            "difference" => desc
-                ? source.OrderByDescending(GetDiffPercent)
-                : source.OrderBy(GetDiffPercent),
-            _ => desc
-                ? source.OrderByDescending(x => x.LastDetectedAtUtc)
-                : source.OrderBy(x => x.LastDetectedAtUtc)
-        };
-    }
-
-    private static double GetDiffPercent(LibraryIssueDto issue)
-        => ParseRuntimeMismatchDetails(issue.DetailsJson)?.DiffPercent ?? 0;
-
-    private static string GetIssueTypeLabel(string issueType)
-    {
-        var value = (issueType ?? string.Empty).Trim().ToLowerInvariant();
-        return value switch
-        {
-            "runtime_probe_failed" => "Runtime probe failed",
-            "runtime_mismatch" => "Runtime mismatch",
-            _ => string.IsNullOrWhiteSpace(issueType) ? "Unknown" : issueType
-        };
-    }
-
     private static string GetItemHref(LibraryIssueDto issue)
         => MediaItemRoutes.GetDetailsHref(issue.MediaType, issue.LibraryItemId);
 
@@ -231,31 +301,6 @@
         if (string.IsNullOrWhiteSpace(value)) return string.Empty;
         var singleLine = value.Replace("\r", " ").Replace("\n", " ").Trim();
         return singleLine.Length <= 120 ? singleLine : $"{singleLine[..117]}...";
-    }
-
-    private static int SeverityRank(string severity)
-    {
-        var value = (severity ?? string.Empty).Trim().ToLowerInvariant();
-        return value switch
-        {
-            "critical" => 3,
-            "high" => 2,
-            "warning" => 1,
-            _ => 0
-        };
-    }
-
-    private void ToggleSort(string field)
-    {
-        if (string.Equals(_sortBy, field, StringComparison.OrdinalIgnoreCase))
-        {
-            _sortDir = string.Equals(_sortDir, "asc", StringComparison.OrdinalIgnoreCase) ? "desc" : "asc";
-        }
-        else
-        {
-            _sortBy = field;
-            _sortDir = field == "detected" ? "desc" : "asc";
-        }
     }
 
     private string SortGlyph(string field)
@@ -345,6 +390,10 @@
             request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
         }
     }
+
+    private record LibraryIssuePageDto(IReadOnlyList<LibraryIssueDto> Items, int TotalCount, int PageIndex, int PageSize, IReadOnlyList<string> AvailableIssueTypes);
+
+    private record IssueTypeOption(string Key, string Label);
 
     private record LibraryIssueDto(
         long Id,

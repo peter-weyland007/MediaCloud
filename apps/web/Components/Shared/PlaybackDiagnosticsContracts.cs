@@ -34,3 +34,18 @@ public record PlaybackDiagnosticDto(
 public record PullPlaybackDiagnosticsRequest(int HoursBack = 48, int MaxItems = 10, bool IncludeServerLogs = true);
 
 public record PullPlaybackDiagnosticsResponse(long LibraryItemId, int ImportedCount, int UpdatedCount, int TotalCount, bool UsedTautulli, bool UsedPlex, string Message);
+
+public record PlaybackDiagnosticsSummaryDto(
+    long LibraryItemId,
+    int TotalCount,
+    DateTimeOffset? LastImportedAtUtc,
+    DateTimeOffset? LastOccurredAtUtc,
+    int DirectPlayCount,
+    int FullTranscodeCount,
+    int AudioTranscodeCount,
+    int SubtitleIssueCount,
+    int FailureCount,
+    int RepeatedIssueKindCount,
+    bool HasRepeatedIssues,
+    string EvidenceState,
+    string Summary);
