@@ -1,0 +1,218 @@
+@page "/integrations"
+@attribute [Authorize(Roles = "Admin")]
+@inject HttpClient Http
+@inject AuthTokenStore TokenStore
+@inject ISnackbar Snackbar
+
+<PageTitle>Integrations</PageTitle>
+
+<h1>Integrations</h1>
+<p class="subtitle">Integration control plane. Open a service panel to manage operational status, health, and deeper service views.</p>
+
+<div class="card" style="margin-bottom:1rem; display:flex; justify-content:space-between; align-items:center; gap:1rem; flex-wrap:wrap;">
+    <div>
+        <p class="card-label">CONTROL PLANE</p>
+        <p class="card-note" style="margin-top:0.35rem;">Use Settings when you need to change how MediaCloud connects to a service.</p>
+    </div>
+    <a class="button-primary" href="/settings/integrations" style="display:inline-block; text-decoration:none;">Open connection settings</a>
+</div>
+
+@if (_loading)
+{
+    <div class="card">
+        <p class="card-note">Loading integrations…</p>
+    </div>
+}
+else if (_groups.Count == 0)
+{
+    <div class="card">
+        <p class="card-note">No integrations configured yet.</p>
+    </div>
+}
+else
+{
+    <div class="cards-grid" style="grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); align-items:stretch;">
+        @foreach (var group in GroupInstancesByService())
+        {
+            <a href="@($"/integrations/{group.ServiceKey}")" class="card" style="text-decoration:none; color:inherit; display:grid; gap:0.85rem; min-height:220px;">
+                <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:0.75rem;">
+                    <div style="display:flex; gap:0.85rem; min-width:0;">
+                        <span class="integration-service-monogram">@GetServiceMonogram(group.DisplayName)</span>
+                        <div style="display:grid; gap:0.3rem; min-width:0;">
+                            <p class="card-label">SERVICE PANEL</p>
+                            <strong style="font-size:1.05rem; color:#f8fafc;">@group.DisplayName</strong>
+                            <span class="card-note">@DisplayRoleSummary(group.RoleSummary)</span>
+                        </div>
+                    </div>
+                    <span style="@BuildGroupHealthPillStyle(group)">@GetGroupHealthLabel(group)</span>
+                </div>
+
+                <div style="display:flex; gap:0.45rem; flex-wrap:wrap;">
+                    <span class="integration-service-metric-chip">@group.Items.Count instance(s)</span>
+                    <span class="integration-service-metric-chip">Healthy: @group.HealthyCount</span>
+                    <span class="integration-service-metric-chip">Operational: @group.OperationalCount</span>
+                    <span class="integration-service-metric-chip">Attention needed: @group.AttentionNeededCount</span>
+                </div>
+
+                <div style="display:grid; gap:0.55rem; margin-top:auto;">
+                    <div>
+                        <p class="card-label">LAST SUCCESS</p>
+                        <p class="card-note" style="margin-top:0.35rem;">@FormatTimestamp(group.LastSuccessfulAtUtc)</p>
+                    </div>
+                    <div>
+                        <p class="card-label">INSTANCES</p>
+                        <p class="card-note" style="margin-top:0.35rem;">@string.Join(", ", group.Items.Select(x => x.InstanceName))</p>
+                    </div>
+                </div>
+            </a>
+        }
+    </div>
+}
+
+@code {
+    private readonly List<IntegrationInstanceResponse> _instances = [];
+    private readonly List<ServiceIntegrationGroup> _groups = [];
+    private bool _loading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadInstancesAsync();
+    }
+
+    private async Task LoadInstancesAsync()
+    {
+        _loading = true;
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, "/api/integrations");
+            await AttachBearerAsync(request);
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add($"Failed to load integrations ({(int)response.StatusCode}).", Severity.Error);
+                return;
+            }
+
+            var items = await response.Content.ReadFromJsonAsync<List<IntegrationInstanceResponse>>() ?? [];
+            _instances.Clear();
+            _instances.AddRange(items);
+            _groups.Clear();
+            _groups.AddRange(GroupInstancesByService());
+        }
+        catch
+        {
+            Snackbar.Add("Failed to load integrations.", Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task AttachBearerAsync(HttpRequestMessage request)
+    {
+        var token = await TokenStore.GetTokenAsync();
+        if (!string.IsNullOrWhiteSpace(token))
+        {
+            request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+        }
+    }
+
+    private IReadOnlyList<ServiceIntegrationGroup> GroupInstancesByService()
+        => _instances
+            .GroupBy(x => new { x.ServiceKey, x.DisplayName })
+            .OrderBy(g => g.Key.DisplayName, StringComparer.OrdinalIgnoreCase)
+            .Select(g => new ServiceIntegrationGroup(
+                g.Key.ServiceKey,
+                g.Key.DisplayName,
+                g.FirstOrDefault()?.RoleSummary ?? string.Empty,
+                g.OrderBy(x => x.InstanceName, StringComparer.OrdinalIgnoreCase).ToList(),
+                g.Count(x => string.Equals(GetHealthLabel(x), "Healthy", StringComparison.OrdinalIgnoreCase)),
+                g.Count(x => string.Equals(GetHealthLabel(x), "Operational", StringComparison.OrdinalIgnoreCase)),
+                g.Count(x => string.Equals(GetHealthLabel(x), "Attention needed", StringComparison.OrdinalIgnoreCase)),
+                g.Where(x => x.LastSuccessfulAtUtc.HasValue).OrderByDescending(x => x.LastSuccessfulAtUtc).Select(x => x.LastSuccessfulAtUtc).FirstOrDefault()))
+            .ToList();
+
+    private static string FormatTimestamp(DateTimeOffset? value)
+        => value?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "—";
+
+    private static string GetHealthLabel(IntegrationInstanceResponse item)
+    {
+        if (!item.Enabled) return "Disabled";
+        if (!string.IsNullOrWhiteSpace(item.LastError) || item.ConsecutiveFailureCount > 0) return "Attention needed";
+        if (item.LastSuccessfulAtUtc.HasValue) return "Healthy";
+        if (item.LastAttemptedAtUtc.HasValue) return "Awaiting success";
+        if (!item.SupportsSync)
+        {
+            return item.ProwlarrSummary is not null ? "Operational" : "Ops-only";
+        }
+
+        return "Not checked";
+    }
+
+    private static string DisplayRoleSummary(string? value)
+        => string.IsNullOrWhiteSpace(value) ? "—" : value;
+
+    private static string GetServiceMonogram(string? displayName)
+    {
+        var letters = (displayName ?? string.Empty)
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(part => char.ToUpperInvariant(part[0]))
+            .Take(2)
+            .ToArray();
+
+        return letters.Length == 0 ? "--" : new string(letters);
+    }
+
+    private static string GetGroupHealthLabel(ServiceIntegrationGroup group)
+        => group.AttentionNeededCount > 0 ? "Attention needed" : group.HealthyCount > 0 ? "Healthy" : group.OperationalCount > 0 ? "Operational" : "Not checked";
+
+    private static string BuildGroupHealthPillStyle(ServiceIntegrationGroup group)
+        => GetGroupHealthLabel(group) switch
+        {
+            "Healthy" => "display:inline-flex; align-items:center; gap:0.35rem; width:max-content; padding:0.22rem 0.62rem; border-radius:999px; background:rgba(21,128,61,0.3); color:#dcfce7; border:1px solid rgba(74,222,128,0.55); font-size:0.78rem; font-weight:800;",
+            "Operational" => "display:inline-flex; align-items:center; gap:0.35rem; width:max-content; padding:0.22rem 0.62rem; border-radius:999px; background:rgba(14,116,144,0.3); color:#cffafe; border:1px solid rgba(34,211,238,0.55); font-size:0.78rem; font-weight:800;",
+            "Attention needed" => "display:inline-flex; align-items:center; gap:0.35rem; width:max-content; padding:0.22rem 0.62rem; border-radius:999px; background:rgba(185,28,28,0.28); color:#fecaca; border:1px solid rgba(248,113,113,0.55); font-size:0.78rem; font-weight:800;",
+            _ => "display:inline-flex; align-items:center; gap:0.35rem; width:max-content; padding:0.22rem 0.62rem; border-radius:999px; background:rgba(30,41,59,0.6); color:#cbd5e1; border:1px solid rgba(71,85,105,0.75); font-size:0.78rem; font-weight:800;"
+        };
+
+    private sealed record ServiceIntegrationGroup(
+        string ServiceKey,
+        string DisplayName,
+        string RoleSummary,
+        IReadOnlyList<IntegrationInstanceResponse> Items,
+        int HealthyCount,
+        int OperationalCount,
+        int AttentionNeededCount,
+        DateTimeOffset? LastSuccessfulAtUtc);
+
+    private sealed record IntegrationInstanceResponse(
+        long Id,
+        string ServiceKey,
+        string DisplayName,
+        string InstanceName,
+        string BaseUrl,
+        string AuthType,
+        string ApiKey,
+        string Username,
+        string Password,
+        bool Enabled,
+        DateTimeOffset? UpdatedAtUtc,
+        string CurrentVersion,
+        string LatestReleaseVersion,
+        string RoleSummary,
+        DateTimeOffset? LastAttemptedAtUtc,
+        DateTimeOffset? LastSuccessfulAtUtc,
+        string LastError,
+        int ConsecutiveFailureCount,
+        bool SupportsSync,
+        ProwlarrSummaryResponse? ProwlarrSummary);
+
+    private sealed record ProwlarrSummaryResponse(
+        int ConfiguredIndexers,
+        int UnavailableIndexers,
+        int ApplicationLinks,
+        int HealthIssues,
+        int WarningHealthIssues,
+        int ErrorHealthIssues);
+}

@@ -1,0 +1,351 @@
+@page "/integrations/{ServiceKey}"
+@attribute [Authorize(Roles = "Admin")]
+@inject HttpClient Http
+@inject AuthTokenStore TokenStore
+@inject ISnackbar Snackbar
+@inject NavigationManager Navigation
+
+<PageTitle>@TitleText</PageTitle>
+
+<p class="subtitle"><a href="/integrations">Integrations</a> / @ServiceDisplayName</p>
+<h1>@ServiceDisplayName</h1>
+<p class="subtitle">Service instances, operational status, and actions for @ServiceDisplayName.</p>
+
+<div class="card" style="margin-bottom:1rem; display:flex; justify-content:space-between; align-items:center; gap:1rem; flex-wrap:wrap;">
+    <div>
+        <p class="card-label">SERVICE CONTROL PLANE</p>
+        <p class="card-note" style="margin-top:0.35rem;">Back to integrations for the broader control plane, or open connection settings to edit URLs and credentials.</p>
+    </div>
+    <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
+        <a class="button-primary" href="/integrations" style="display:inline-block; text-decoration:none; background:#334155; border-color:#334155;">Back to integrations</a>
+        <a class="button-primary" href="/settings/integrations" style="display:inline-block; text-decoration:none;">Open connection settings</a>
+    </div>
+</div>
+
+@if (_loading)
+{
+    <div class="card">
+        <p class="card-note">Loading service instances…</p>
+    </div>
+}
+else if (!string.IsNullOrWhiteSpace(_loadError))
+{
+    <div class="card">
+        <p class="error-text">@_loadError</p>
+    </div>
+}
+else if (_instances.Count == 0)
+{
+    <div class="card">
+        <p class="card-label">SERVICE INSTANCES</p>
+        <p class="card-note" style="margin-top:0.35rem;">No configured instances were found for @ServiceDisplayName.</p>
+    </div>
+}
+else
+{
+    <div class="card" style="margin-bottom:1rem; display:grid; gap:0.85rem;">
+        <p class="card-label">SUMMARY</p>
+        <div style="display:flex; gap:0.55rem; flex-wrap:wrap;">
+            <span class="integration-service-metric-chip">@_instances.Count instance(s)</span>
+            <span class="integration-service-metric-chip">Healthy: @_instances.Count(x => string.Equals(GetHealthLabel(x), "Healthy", StringComparison.OrdinalIgnoreCase))</span>
+            <span class="integration-service-metric-chip">Operational: @_instances.Count(x => string.Equals(GetHealthLabel(x), "Operational", StringComparison.OrdinalIgnoreCase))</span>
+            <span class="integration-service-metric-chip">Attention needed: @_instances.Count(x => string.Equals(GetHealthLabel(x), "Attention needed", StringComparison.OrdinalIgnoreCase))</span>
+        </div>
+    </div>
+
+    <div class="card" style="display:grid; gap:0.85rem;">
+        <p class="card-label">SERVICE INSTANCES</p>
+        @foreach (var item in _instances)
+        {
+            <div class="integration-instance-card">
+                <div class="integration-instance-heading">
+                    <div class="integration-instance-title-block">
+                        <strong>@item.InstanceName</strong>
+                        <a href="@item.BaseUrl" target="_blank" rel="noopener noreferrer" class="integration-instance-link">@item.BaseUrl</a>
+                        <span class="card-note">Auth: @item.AuthType · Enabled: @(item.Enabled ? "Yes" : "No") · Mode: @(item.SupportsSync ? "Sync-backed" : "Ops-only") · Updated: @FormatTimestamp(item.UpdatedAtUtc)</span>
+                    </div>
+                    <span class="integration-instance-health" style="@BuildHealthPillStyle(item)">@GetHealthLabel(item)</span>
+                </div>
+
+                <div class="integration-instance-detail-grid">
+                    <div>
+                        <p class="card-label">VERSION</p>
+                        <div class="integration-instance-version-row">
+                            <span>@DisplayVersionComparison(item.CurrentVersion, item.LatestReleaseVersion)</span>
+                            <span style="@BuildVersionStatusPillStyle(item.CurrentVersion, item.LatestReleaseVersion)">@GetVersionStatusLabel(item.CurrentVersion, item.LatestReleaseVersion)</span>
+                        </div>
+                    </div>
+                    <div>
+                        <p class="card-label">HEALTH</p>
+                        <p style="margin:0.35rem 0 0;">Last success: @FormatTimestamp(item.LastSuccessfulAtUtc)</p>
+                        <p class="card-note" style="margin-top:0.25rem;">Last attempt: @FormatTimestamp(item.LastAttemptedAtUtc)</p>
+                        @if (!string.IsNullOrWhiteSpace(item.LastError))
+                        {
+                            <p class="card-note" style="margin-top:0.25rem;">Error: @item.LastError</p>
+                        }
+                    </div>
+                </div>
+
+                @if (string.Equals(item.ServiceKey, "prowlarr", StringComparison.OrdinalIgnoreCase) && item.ProwlarrSummary is not null)
+                {
+                    <div class="integration-prowlarr-summary-grid">
+                        <div>
+                            <p class="card-label">CONFIGURED INDEXERS</p>
+                            <p style="margin:0.35rem 0 0;">@item.ProwlarrSummary.ConfiguredIndexers</p>
+                        </div>
+                        <div>
+                            <p class="card-label">UNAVAILABLE INDEXERS</p>
+                            <p style="margin:0.35rem 0 0;">@item.ProwlarrSummary.UnavailableIndexers</p>
+                        </div>
+                        <div>
+                            <p class="card-label">APPLICATION LINKS</p>
+                            <p style="margin:0.35rem 0 0;">@item.ProwlarrSummary.ApplicationLinks</p>
+                        </div>
+                        <div>
+                            <p class="card-label">HEALTH ISSUES</p>
+                            <p style="margin:0.35rem 0 0;">@item.ProwlarrSummary.HealthIssues</p>
+                            <p class="card-note" style="margin-top:0.25rem;">Warnings: @item.ProwlarrSummary.WarningHealthIssues · Errors: @item.ProwlarrSummary.ErrorHealthIssues</p>
+                        </div>
+                    </div>
+                }
+
+                <div class="integration-instance-actions">
+                    @if (item.SupportsSync)
+                    {
+                        <button class="button-primary integration-action-button integration-action-button-sync" disabled="@(_syncingId == item.Id)" @onclick="() => SyncIntegrationAsync(item)">
+                            @(_syncingId == item.Id ? "Syncing..." : "Sync")
+                        </button>
+                    }
+                    <button class="button-primary integration-action-button integration-action-button-secondary" disabled="@(_testingId == item.Id)" @onclick="() => TestIntegrationAsync(item)">
+                        @(_testingId == item.Id ? "Testing..." : "Test")
+                    </button>
+                    <a class="button-primary integration-action-button" href="/settings/integrations" style="display:inline-block; text-decoration:none; background:#334155; border-color:#334155;">Connection settings</a>
+                </div>
+            </div>
+        }
+    </div>
+}
+
+@code {
+    [Parameter] public string ServiceKey { get; set; } = string.Empty;
+
+    private readonly List<IntegrationInstanceResponse> _instances = [];
+    private bool _loading = true;
+    private string _loadError = string.Empty;
+    private long? _testingId;
+    private long? _syncingId;
+
+    private string NormalizedServiceKey => (ServiceKey ?? string.Empty).Trim().ToLowerInvariant();
+    private string ServiceDisplayName => _instances.FirstOrDefault()?.DisplayName ?? NormalizeServiceDisplayName(ServiceKey);
+    private string TitleText => string.IsNullOrWhiteSpace(ServiceDisplayName) ? "Integration" : $"{ServiceDisplayName} integration";
+
+    protected override async Task OnParametersSetAsync()
+    {
+        await LoadInstancesAsync();
+    }
+
+    private async Task LoadInstancesAsync()
+    {
+        _loading = true;
+        _loadError = string.Empty;
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, "/api/integrations");
+            await AttachBearerAsync(request);
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                _loadError = $"Failed to load integrations ({(int)response.StatusCode}).";
+                return;
+            }
+
+            var items = await response.Content.ReadFromJsonAsync<List<IntegrationInstanceResponse>>() ?? [];
+            _instances.Clear();
+            _instances.AddRange(items.Where(x => string.Equals(x.ServiceKey, NormalizedServiceKey, StringComparison.OrdinalIgnoreCase)));
+        }
+        catch
+        {
+            _loadError = "Failed to load integrations.";
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task TestIntegrationAsync(IntegrationInstanceResponse item)
+    {
+        _testingId = item.Id;
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, $"/api/integrations/{item.Id}/test");
+            await AttachBearerAsync(request);
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add($"Connection test failed ({(int)response.StatusCode}).", Severity.Error);
+                return;
+            }
+
+            var result = await response.Content.ReadFromJsonAsync<IntegrationTestResponse>();
+            if (result is null)
+            {
+                Snackbar.Add("Connection test returned no data.", Severity.Error);
+                return;
+            }
+
+            var message = result.Success
+                ? $"{item.DisplayName} / {item.InstanceName}: connection successful ({result.StatusCode}){(string.IsNullOrWhiteSpace(result.Version) ? string.Empty : $" · version {result.Version}")}."
+                : $"{item.DisplayName} / {item.InstanceName}: connection failed ({result.StatusCode}) — {result.Message}";
+            Snackbar.Add(message, result.Success ? Severity.Success : Severity.Error);
+            await LoadInstancesAsync();
+        }
+        catch
+        {
+            Snackbar.Add("Connection test failed.", Severity.Error);
+        }
+        finally
+        {
+            _testingId = null;
+        }
+    }
+
+    private async Task SyncIntegrationAsync(IntegrationInstanceResponse item)
+    {
+        _syncingId = item.Id;
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, $"/api/integrations/{item.Id}/sync")
+            {
+                Content = JsonContent.Create(new { ForceFullResync = false, MediaScope = (string?)null })
+            };
+            await AttachBearerAsync(request);
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add($"Failed to sync integration ({(int)response.StatusCode}).", Severity.Error);
+                return;
+            }
+
+            var result = await response.Content.ReadFromJsonAsync<TriggerIntegrationSyncResponse>();
+            Snackbar.Add(result?.Message ?? $"{item.DisplayName} sync completed.", result?.Accepted == true ? Severity.Success : Severity.Warning);
+            await LoadInstancesAsync();
+        }
+        catch
+        {
+            Snackbar.Add("Failed to sync integration.", Severity.Error);
+        }
+        finally
+        {
+            _syncingId = null;
+        }
+    }
+
+    private async Task AttachBearerAsync(HttpRequestMessage request)
+    {
+        var token = await TokenStore.GetTokenAsync();
+        if (!string.IsNullOrWhiteSpace(token))
+        {
+            request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+        }
+    }
+
+    private static string NormalizeServiceDisplayName(string? value)
+    {
+        var normalized = (value ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            return "Integration";
+        }
+
+        return char.ToUpperInvariant(normalized[0]) + normalized[1..].ToLowerInvariant();
+    }
+
+    private static string FormatTimestamp(DateTimeOffset? value)
+        => value?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "—";
+
+    private static string DisplayVersionComparison(string? currentVersion, string? latestReleaseVersion)
+    {
+        var current = string.IsNullOrWhiteSpace(currentVersion) ? "—" : currentVersion.Trim();
+        var latest = string.IsNullOrWhiteSpace(latestReleaseVersion) ? "—" : latestReleaseVersion.Trim();
+        return $"{current} / {latest}";
+    }
+
+    private static string GetVersionStatusLabel(string? currentVersion, string? latestReleaseVersion)
+    {
+        var current = (currentVersion ?? string.Empty).Trim();
+        var latest = (latestReleaseVersion ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(current) || string.IsNullOrWhiteSpace(latest))
+        {
+            return "Unknown";
+        }
+
+        return string.Equals(current, latest, StringComparison.OrdinalIgnoreCase) ? "Up to date" : "Out of date";
+    }
+
+    private static string BuildVersionStatusPillStyle(string? currentVersion, string? latestReleaseVersion)
+        => GetVersionStatusLabel(currentVersion, latestReleaseVersion) switch
+        {
+            "Up to date" => "display:inline-flex; align-items:center; gap:0.35rem; padding:0.22rem 0.62rem; border-radius:999px; background:rgba(21,128,61,0.3); color:#dcfce7; border:1px solid rgba(74,222,128,0.55); box-shadow:inset 0 0 0 1px rgba(34,197,94,0.12); font-size:0.78rem; font-weight:800; letter-spacing:0.01em; white-space:nowrap;",
+            "Out of date" => "display:inline-flex; align-items:center; gap:0.35rem; padding:0.22rem 0.62rem; border-radius:999px; background:rgba(180,83,9,0.34); color:#fef3c7; border:1px solid rgba(251,191,36,0.58); box-shadow:inset 0 0 0 1px rgba(245,158,11,0.14); font-size:0.78rem; font-weight:800; letter-spacing:0.01em; white-space:nowrap;",
+            _ => "display:inline-flex; align-items:center; gap:0.35rem; padding:0.22rem 0.62rem; border-radius:999px; background:rgba(71,85,105,0.34); color:#e2e8f0; border:1px solid rgba(148,163,184,0.45); box-shadow:inset 0 0 0 1px rgba(226,232,240,0.06); font-size:0.78rem; font-weight:800; letter-spacing:0.01em; white-space:nowrap;"
+        };
+
+    private static string GetHealthLabel(IntegrationInstanceResponse item)
+    {
+        if (!item.Enabled) return "Disabled";
+        if (!string.IsNullOrWhiteSpace(item.LastError) || item.ConsecutiveFailureCount > 0) return "Attention needed";
+        if (item.LastSuccessfulAtUtc.HasValue) return "Healthy";
+        if (item.LastAttemptedAtUtc.HasValue) return "Awaiting success";
+        if (!item.SupportsSync)
+        {
+            return item.ProwlarrSummary is not null ? "Operational" : "Ops-only";
+        }
+
+        return "Not checked";
+    }
+
+    private static string BuildHealthPillStyle(IntegrationInstanceResponse item)
+        => GetHealthLabel(item) switch
+        {
+            "Healthy" => "display:inline-flex; align-items:center; gap:0.35rem; width:max-content; padding:0.22rem 0.62rem; border-radius:999px; background:rgba(21,128,61,0.3); color:#dcfce7; border:1px solid rgba(74,222,128,0.55); font-size:0.78rem; font-weight:800;",
+            "Operational" => "display:inline-flex; align-items:center; gap:0.35rem; width:max-content; padding:0.22rem 0.62rem; border-radius:999px; background:rgba(14,116,144,0.3); color:#cffafe; border:1px solid rgba(34,211,238,0.55); font-size:0.78rem; font-weight:800;",
+            "Attention needed" => "display:inline-flex; align-items:center; gap:0.35rem; width:max-content; padding:0.22rem 0.62rem; border-radius:999px; background:rgba(185,28,28,0.28); color:#fecaca; border:1px solid rgba(248,113,113,0.55); font-size:0.78rem; font-weight:800;",
+            "Awaiting success" => "display:inline-flex; align-items:center; gap:0.35rem; width:max-content; padding:0.22rem 0.62rem; border-radius:999px; background:rgba(180,83,9,0.34); color:#fef3c7; border:1px solid rgba(251,191,36,0.58); font-size:0.78rem; font-weight:800;",
+            "Disabled" => "display:inline-flex; align-items:center; gap:0.35rem; width:max-content; padding:0.22rem 0.62rem; border-radius:999px; background:rgba(71,85,105,0.34); color:#e2e8f0; border:1px solid rgba(148,163,184,0.45); font-size:0.78rem; font-weight:800;",
+            _ => "display:inline-flex; align-items:center; gap:0.35rem; width:max-content; padding:0.22rem 0.62rem; border-radius:999px; background:rgba(30,41,59,0.6); color:#cbd5e1; border:1px solid rgba(71,85,105,0.75); font-size:0.78rem; font-weight:800;"
+        };
+
+    private sealed record IntegrationInstanceResponse(
+        long Id,
+        string ServiceKey,
+        string DisplayName,
+        string InstanceName,
+        string BaseUrl,
+        string AuthType,
+        string ApiKey,
+        string Username,
+        string Password,
+        bool Enabled,
+        DateTimeOffset? UpdatedAtUtc,
+        string CurrentVersion,
+        string LatestReleaseVersion,
+        string RoleSummary,
+        DateTimeOffset? LastAttemptedAtUtc,
+        DateTimeOffset? LastSuccessfulAtUtc,
+        string LastError,
+        int ConsecutiveFailureCount,
+        bool SupportsSync,
+        ProwlarrSummaryResponse? ProwlarrSummary);
+
+    private sealed record ProwlarrSummaryResponse(
+        int ConfiguredIndexers,
+        int UnavailableIndexers,
+        int ApplicationLinks,
+        int HealthIssues,
+        int WarningHealthIssues,
+        int ErrorHealthIssues);
+
+    private sealed record IntegrationTestResponse(long IntegrationId, string ServiceKey, string InstanceName, bool Success, int StatusCode, string Message, string Version);
+    private sealed record TriggerIntegrationSyncResponse(long IntegrationId, bool Accepted, string Message);
+}
