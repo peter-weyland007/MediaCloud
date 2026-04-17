@@ -195,6 +195,17 @@ CREATE TABLE IF NOT EXISTS LibraryItemSourceLinks (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS IX_ItemLinks_Item_Integration_External ON LibraryItemSourceLinks(LibraryItemId, IntegrationId, ExternalId);
 CREATE INDEX IF NOT EXISTS IX_ItemLinks_IntegrationId ON LibraryItemSourceLinks(IntegrationId);
+CREATE TABLE IF NOT EXISTS LibraryItemSourceSyncStates (
+    Id INTEGER NOT NULL CONSTRAINT PK_LibraryItemSourceSyncStates PRIMARY KEY AUTOINCREMENT,
+    LibraryItemId INTEGER NOT NULL,
+    IntegrationId INTEGER NOT NULL,
+    LastSyncedAtUtc TEXT NOT NULL,
+    UpdatedAtUtc TEXT NOT NULL,
+    FOREIGN KEY (LibraryItemId) REFERENCES LibraryItems(Id) ON DELETE CASCADE,
+    FOREIGN KEY (IntegrationId) REFERENCES IntegrationConfigs(Id) ON DELETE CASCADE
+);
+CREATE UNIQUE INDEX IF NOT EXISTS IX_LibraryItemSourceSyncStates_LibraryItemId_IntegrationId ON LibraryItemSourceSyncStates(LibraryItemId, IntegrationId);
+CREATE INDEX IF NOT EXISTS IX_LibraryItemSourceSyncStates_IntegrationId ON LibraryItemSourceSyncStates(IntegrationId);
 CREATE TABLE IF NOT EXISTS LibraryIssues (
     Id INTEGER NOT NULL CONSTRAINT PK_LibraryIssues PRIMARY KEY AUTOINCREMENT,
     LibraryItemId INTEGER NOT NULL,
