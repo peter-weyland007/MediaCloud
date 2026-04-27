@@ -13,5 +13,8 @@ public sealed class SourceStatusLastSyncedPersistenceTests
         Assert.Contains("UpsertLibraryItemSourceSyncStateAsync", content);
         Assert.Contains("DateTimeOffset? LastSyncedAtUtc", content);
         Assert.Contains("GetLibraryItemSourceSyncStateMapAsync", content);
+        Assert.Contains("DateTimeOffset? SyncedAtUtc", content);
+        Assert.Contains("await UpsertLibraryItemSourceSyncStateAsync(db, item.Id, integration.Id, syncedAtUtc);", content);
+        Assert.Contains("sync finished.", content);
     }
 }

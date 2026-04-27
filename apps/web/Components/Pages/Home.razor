@@ -95,9 +95,11 @@
             <input type="checkbox" @bind="_backfillIncludeAlreadyRequested" />
             Preview only missing-Radarr items
         </label>
-        <button class="button-secondary" @onclick="EnrichPlexBackfillIdsAsync" disabled="@_backfillWorking">@(_backfillEnriching ? "Enriching..." : "Enrich IDs from Plex")</button>
-        <button class="button-secondary" @onclick="PreviewPlexBackfillAsync" disabled="@_backfillWorking">@(_backfillPreviewing ? "Previewing..." : "Preview")</button>
-        <button class="button-primary" @onclick="ApplyPlexBackfillAsync" disabled="@(_backfillWorking || _selectedBackfillIds.Count == 0)">@(_backfillApplying ? "Applying..." : "Apply selected")</button>
+        <MudButtonGroup Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small">
+            <MudButton ButtonType="ButtonType.Button" Color="Color.Secondary" OnClick="EnrichPlexBackfillIdsAsync" Disabled="@_backfillWorking">@(_backfillEnriching ? "Enriching..." : "Enrich IDs from Plex")</MudButton>
+            <MudButton ButtonType="ButtonType.Button" Color="Color.Secondary" OnClick="PreviewPlexBackfillAsync" Disabled="@_backfillWorking">@(_backfillPreviewing ? "Previewing..." : "Preview")</MudButton>
+            <MudButton ButtonType="ButtonType.Button" OnClick="ApplyPlexBackfillAsync" Disabled="@(_backfillWorking || _selectedBackfillIds.Count == 0)">@(_backfillApplying ? "Applying..." : "Apply selected")</MudButton>
+        </MudButtonGroup>
     </div>
 
     <p class="card-note">@_backfillStatus</p>

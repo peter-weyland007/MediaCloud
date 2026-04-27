@@ -1,3 +1,5 @@
+using System.Net;
+using System.Net.Http;
 using api;
 using api.Data;
 using api.Models;
@@ -80,7 +82,7 @@ public sealed class LibraryRemediationTests
     {
         var now = new DateTimeOffset(2026, 4, 9, 15, 0, 0, TimeSpan.Zero);
         var intent = LibraryRemediationPlanner.BuildIntent("corrupt_file", "crc errors");
-        var result = new LibraryItemRemediationResponse(41, true, "radarr", "Radarr", "MoviesSearch", 9001, false, "corrupt_file", "crc errors", "Queued Radarr replacement search for movie ID 9001.");
+        var result = new LibraryItemRemediationResponse(41, true, "radarr", "Radarr", "MoviesSearch", 9001, false, "corrupt_file", "crc errors", "Queued Radarr replacement search for movie ID 9001.", null, string.Empty, 314, "Queued", "Provider MoviesSearch command 314 is queued.");
 
         var releaseContext = LibraryRemediationReleaseAwareness.BuildContext("radarr", 9001, "/data/movies/Movie.mkv", "HD-1080p", "Movie", []);
         var job = LibraryRemediationJobFactory.Create(
@@ -100,8 +102,26 @@ public sealed class LibraryRemediationTests
         Assert.Equal("high", job.Confidence);
         Assert.Equal("mark", job.RequestedBy);
         Assert.Equal("Queued Radarr replacement search for movie ID 9001.", job.ResultMessage);
+        Assert.Equal(314, job.ProviderCommandId);
+        Assert.Equal("Queued", job.ProviderCommandStatus);
+        Assert.Contains("314", job.ProviderCommandSummary, StringComparison.Ordinal);
         Assert.Contains("Movie.mkv", job.ReleaseSummary, StringComparison.OrdinalIgnoreCase);
         Assert.Null(job.FinishedAtUtc);
+    }
+
+    [Fact]
+    public void BuildQueuedResult_parses_provider_command_id_and_state()
+    {
+        var result = LibraryRemediationProviderCommandTracker.BuildQueuedResult(
+            success: true,
+            message: "Queued Radarr replacement search for movie ID 9001.",
+            responseBody: "{\"id\":314,\"name\":\"MoviesSearch\",\"status\":\"queued\"}");
+
+        Assert.True(result.Success);
+        Assert.Equal(314, result.ProviderCommandId);
+        Assert.Equal("Queued", result.ProviderCommandStatus);
+        Assert.Contains("MoviesSearch", result.ProviderCommandSummary, StringComparison.Ordinal);
+        Assert.Contains("314", result.ProviderCommandSummary, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -685,6 +705,86 @@ public sealed class LibraryRemediationTests
     }
 
     [Fact]
+    public void BuildArrSearchProgressSnapshot_detects_downloading_from_queue_payload()
+    {
+        var requestedAt = new DateTimeOffset(2026, 4, 27, 20, 9, 33, TimeSpan.Zero);
+        var queueJson = "{\"records\":[{\"title\":\"28 Years Later\",\"status\":\"downloading\",\"trackedDownloadState\":\"downloading\",\"protocol\":\"torrent\"}]}";
+        var historyJson = "{\"records\":[{\"eventType\":\"grabbed\",\"date\":\"2026-04-27T20:10:00Z\",\"sourceTitle\":\"28.Years.Later.2025.2160p\"}]}";
+
+        var snapshot = LibraryRemediationProviderCommandTracker.BuildArrSearchProgressSnapshot("radarr", 9001, queueJson, historyJson, requestedAt);
+
+        Assert.NotNull(snapshot);
+        Assert.Equal("Downloading", snapshot!.SearchStatus);
+        Assert.Equal("Processing", snapshot.Status);
+        Assert.Contains("downloading", snapshot.OutcomeSummary, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("via Torrent", snapshot.OutcomeSummary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BuildArrSearchProgressSnapshot_detects_importing_from_queue_payload()
+    {
+        var requestedAt = new DateTimeOffset(2026, 4, 27, 20, 9, 33, TimeSpan.Zero);
+        var queueJson = "{\"records\":[{\"title\":\"28 Years Later\",\"status\":\"completed\",\"trackedDownloadState\":\"importPending\"}]}";
+        var historyJson = "{\"records\":[{\"eventType\":\"grabbed\",\"date\":\"2026-04-27T20:10:00Z\",\"sourceTitle\":\"28.Years.Later.2025.2160p\"}]}";
+
+        var snapshot = LibraryRemediationProviderCommandTracker.BuildArrSearchProgressSnapshot("radarr", 9001, queueJson, historyJson, requestedAt);
+
+        Assert.NotNull(snapshot);
+        Assert.Equal("Importing", snapshot!.SearchStatus);
+        Assert.Equal("Processing", snapshot.Status);
+        Assert.Contains("import", snapshot.OutcomeSummary, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void BuildArrSearchProgressSnapshot_ignores_queue_records_for_other_movies()
+    {
+        var requestedAt = new DateTimeOffset(2026, 4, 27, 20, 9, 33, TimeSpan.Zero);
+        var queueJson = "{\"records\":[{\"title\":\"Dave.1993.1080p.BluRay\",\"status\":\"downloading\",\"trackedDownloadState\":\"downloading\",\"movieId\":428}]}";
+        var historyJson = "{\"records\":[{\"eventType\":\"grabbed\",\"date\":\"2026-04-27T20:10:00Z\",\"sourceTitle\":\"Dave.1993.1080p.BluRay\",\"movieId\":428}]}";
+
+        var snapshot = LibraryRemediationProviderCommandTracker.BuildArrSearchProgressSnapshot("radarr", 9001, queueJson, historyJson, requestedAt);
+
+        Assert.Null(snapshot);
+    }
+
+    [Fact]
+    public void BuildArrSearchProgressSnapshot_detects_imported_from_history_payload()
+    {
+        var requestedAt = new DateTimeOffset(2026, 4, 27, 20, 9, 33, TimeSpan.Zero);
+        var queueJson = "{\"records\":[]}";
+        var historyJson = "{\"records\":[{\"eventType\":\"downloadFolderImported\",\"date\":\"2026-04-27T20:20:00Z\",\"sourceTitle\":\"28.Years.Later.2025.2160p\"},{\"eventType\":\"grabbed\",\"date\":\"2026-04-27T20:10:00Z\",\"sourceTitle\":\"28.Years.Later.2025.2160p\"}]}";
+
+        var snapshot = LibraryRemediationProviderCommandTracker.BuildArrSearchProgressSnapshot("radarr", 9001, queueJson, historyJson, requestedAt);
+
+        Assert.NotNull(snapshot);
+        Assert.Equal("Imported", snapshot!.SearchStatus);
+        Assert.Equal("Processing", snapshot.Status);
+        Assert.Contains("imported", snapshot.OutcomeSummary, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void EvaluateLifecycle_keeps_imported_status_visible_while_waiting_for_metadata_refresh()
+    {
+        var requestedAt = new DateTimeOffset(2026, 4, 27, 20, 9, 33, TimeSpan.Zero);
+        var job = new api.Models.LibraryRemediationJob
+        {
+            Status = "Processing",
+            SearchStatus = "Imported",
+            BlacklistStatus = "Succeeded",
+            OutcomeSummary = "Radarr imported a replacement. MediaCloud is waiting for source refresh and verification.",
+            RequestedAtUtc = requestedAt,
+            IssueType = "wrong_language"
+        };
+
+        var snapshot = LibraryRemediationLifecycleTracker.Evaluate(job, new api.Models.LibraryItem(), new api.Models.LibraryIssue { Status = "Open", IssueType = "wrong_language" }, null);
+
+        Assert.Equal("Processing", snapshot.Status);
+        Assert.Equal("Imported", snapshot.SearchStatus);
+        Assert.Contains("imported", snapshot.OutcomeSummary, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("WaitingForEvidence", snapshot.VerificationStatus);
+    }
+
+    [Fact]
     public void EvaluateLifecycle_marks_job_resolved_when_related_issue_is_closed()
     {
         var requestedAt = new DateTimeOffset(2026, 4, 9, 15, 0, 0, TimeSpan.Zero);
@@ -1196,6 +1296,89 @@ public sealed class LibraryRemediationTests
     }
 
     [Fact]
+    public void SearchReplacement_endpoint_checks_repeat_guard_before_executing_search()
+    {
+        var repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../../"));
+        var programPath = Path.GetFullPath(Path.Combine(repoRoot, "apps/api/Program.cs"));
+        var content = File.ReadAllText(programPath);
+        var endpointStart = content.IndexOf("app.MapPost(\"/api/library/items/{id:long}/remediation/search-replacement\"", StringComparison.Ordinal);
+        var endpointEnd = content.IndexOf("app.MapPost(\"/api/library/items/{id:long}/sources/{serviceKey}/sync\"", StringComparison.Ordinal);
+        var endpointSlice = content[endpointStart..endpointEnd];
+
+        Assert.Contains("LibraryRemediationRepeatGuard.Evaluate", endpointSlice);
+        Assert.Contains("var relatedJobs = await db.LibraryRemediationJobs", endpointSlice);
+        Assert.True(
+            endpointSlice.IndexOf("LibraryRemediationRepeatGuard.Evaluate", StringComparison.Ordinal) < endpointSlice.IndexOf("ExecuteSearchReplacementAsync", StringComparison.Ordinal),
+            "Repeat guard should run before executing a replacement search.");
+    }
+
+    [Fact]
+    public void EvaluateRetryGuard_blocks_new_request_when_older_active_search_exists()
+    {
+        var now = new DateTimeOffset(2026, 4, 16, 1, 0, 0, TimeSpan.Zero);
+        var newRequest = new api.Models.LibraryRemediationJob
+        {
+            Id = 80,
+            LibraryItemId = 1474,
+            RequestedAction = "search_replacement",
+            IssueType = "media_compatibility",
+            Reason = "request_better_file",
+            RequestedAtUtc = now
+        };
+        var olderActiveJob = new api.Models.LibraryRemediationJob
+        {
+            Id = 81,
+            LibraryItemId = 1474,
+            RequestedAction = "search_replacement",
+            IssueType = "media_compatibility",
+            Reason = "request_better_file",
+            Status = "SearchQueued",
+            RequestedAtUtc = now.AddMinutes(-2)
+        };
+
+        var decision = LibraryRemediationRepeatGuard.Evaluate(newRequest, [newRequest, olderActiveJob], now);
+
+        Assert.False(decision.Allowed);
+        Assert.Equal(81, decision.BlockingJobId);
+        Assert.Contains("already queued", decision.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void RemediationJobDto_exposes_lifecycle_and_verification_fields()
+    {
+        var repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../../"));
+        var programPath = Path.GetFullPath(Path.Combine(repoRoot, "apps/api/Program.cs"));
+        var content = File.ReadAllText(programPath);
+        var dtoStart = content.IndexOf("public record LibraryRemediationJobDto(", StringComparison.Ordinal);
+        var dtoEnd = content.IndexOf("public record SetDesiredMonitoringRequest", StringComparison.Ordinal);
+        var dtoSlice = content[dtoStart..dtoEnd];
+        var mapStart = content.IndexOf("static LibraryRemediationJobDto MapLibraryRemediationJobDto", StringComparison.Ordinal);
+        var mapEnd = content.IndexOf("static void ApplyPreferredDescription", StringComparison.Ordinal);
+        var mapSlice = content[mapStart..mapEnd];
+
+        Assert.Contains("long? IntegrationId", dtoSlice);
+        Assert.Contains("int? ProviderCommandId", dtoSlice);
+        Assert.Contains("string ProviderCommandStatus", dtoSlice);
+        Assert.Contains("string ProviderCommandSummary", dtoSlice);
+        Assert.Contains("DateTimeOffset? ProviderCommandCheckedAtUtc", dtoSlice);
+        Assert.Contains("string VerificationStatus", dtoSlice);
+        Assert.Contains("string VerificationSummary", dtoSlice);
+        Assert.Contains("DateTimeOffset? VerificationCheckedAtUtc", dtoSlice);
+        Assert.Contains("string LoopbackStatus", dtoSlice);
+        Assert.Contains("string LoopbackSummary", dtoSlice);
+        Assert.Contains("row.IntegrationId", mapSlice);
+        Assert.Contains("row.ProviderCommandId", mapSlice);
+        Assert.Contains("row.ProviderCommandStatus", mapSlice);
+        Assert.Contains("row.ProviderCommandSummary", mapSlice);
+        Assert.Contains("row.ProviderCommandCheckedAtUtc", mapSlice);
+        Assert.Contains("row.VerificationStatus", mapSlice);
+        Assert.Contains("row.VerificationSummary", mapSlice);
+        Assert.Contains("row.VerificationCheckedAtUtc", mapSlice);
+        Assert.Contains("row.LoopbackStatus", mapSlice);
+        Assert.Contains("row.LoopbackSummary", mapSlice);
+    }
+
+    [Fact]
     public void BuildContext_falls_back_to_file_name_when_history_missing()
     {
         var context = LibraryRemediationReleaseAwareness.BuildContext(
@@ -1356,6 +1539,208 @@ public sealed class LibraryRemediationTests
         Assert.Equal(string.Empty, normalized);
     }
 
+    [Fact]
+    public async Task RefreshAsync_reconciles_stale_radarr_external_item_id_from_tmdb_before_fetching_progress()
+    {
+        using var db = CreateDb();
+        var integration = new IntegrationConfig
+        {
+            Id = 2,
+            ServiceKey = "radarr",
+            InstanceName = "Radarr",
+            BaseUrl = "http://radarr.local",
+            AuthType = "ApiKey",
+            ApiKey = "secret"
+        };
+        var item = new LibraryItem
+        {
+            Id = 1298,
+            MediaType = "Movie",
+            CanonicalKey = "movie:1100988",
+            Title = "28 Years Later",
+            SortTitle = "28 Years Later",
+            TmdbId = 1100988
+        };
+        var requestedAt = new DateTimeOffset(2026, 4, 27, 20, 9, 33, TimeSpan.Zero);
+        var job = new LibraryRemediationJob
+        {
+            Id = 15,
+            LibraryItemId = 1298,
+            IntegrationId = 2,
+            ServiceKey = "radarr",
+            ServiceDisplayName = "Radarr",
+            RequestedAction = "search_replacement",
+            CommandName = "MoviesSearch",
+            ExternalItemId = 6,
+            ProviderCommandId = 466317,
+            RequestedAtUtc = requestedAt,
+            Status = "SearchQueued",
+            SearchStatus = "Queued",
+            VerificationStatus = "Pending"
+        };
+        var sourceLink = new LibraryItemSourceLink
+        {
+            LibraryItemId = 1298,
+            IntegrationId = 2,
+            ExternalId = "6",
+            ExternalType = "movie",
+            SourceTitle = "28 Years Later",
+            SourceSortTitle = "28 Years Later",
+            SourcePayloadHash = "hash",
+            FirstSeenAtUtc = requestedAt,
+            LastSeenAtUtc = requestedAt
+        };
+
+        db.IntegrationConfigs.Add(integration);
+        db.LibraryItems.Add(item);
+        db.LibraryRemediationJobs.Add(job);
+        db.LibraryItemSourceLinks.Add(sourceLink);
+        db.SaveChanges();
+
+        using var handler = new StubHttpMessageHandler(request =>
+        {
+            var url = request.RequestUri!.ToString();
+            if (url == "http://radarr.local/api/v3/movie?tmdbId=1100988")
+            {
+                return Json(HttpStatusCode.OK, "[{\"id\":42,\"monitored\":true}]");
+            }
+
+            if (url == "http://radarr.local/api/v3/command/466317")
+            {
+                return Json(HttpStatusCode.OK, "{\"id\":466317,\"status\":\"completed\",\"name\":\"MoviesSearch\"}");
+            }
+
+            if (url.Contains("/api/v3/queue?", StringComparison.Ordinal) && url.Contains("movieId=42", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK, "{\"records\":[{\"title\":\"28.Years.Later.2025.2160p\",\"status\":\"downloading\",\"trackedDownloadState\":\"downloading\"}]}");
+            }
+
+            if (url.Contains("/api/v3/history/movie?", StringComparison.Ordinal) && url.Contains("movieId=42", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK, "{\"records\":[{\"eventType\":\"grabbed\",\"date\":\"2026-04-27T20:10:00Z\",\"sourceTitle\":\"28.Years.Later.2025.2160p\"}]}");
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.NotFound)
+            {
+                Content = new StringContent(url)
+            };
+        });
+        var factory = new StubHttpClientFactory(handler);
+
+        var changed = await LibraryRemediationProviderCommandTracker.RefreshAsync(job, db, factory, requestedAt.AddMinutes(5));
+        var requestUris = handler.Requests.Select(request => request.RequestUri!.ToString()).ToArray();
+
+        Assert.True(requestUris.Any(url => url == "http://radarr.local/api/v3/movie?tmdbId=1100988"), string.Join("\n", requestUris));
+        Assert.True(requestUris.Any(url => url.Contains("/api/v3/command/466317", StringComparison.Ordinal)), string.Join("\n", requestUris));
+        Assert.True(requestUris.Any(url => url.Contains("/api/v3/queue?", StringComparison.Ordinal) && url.Contains("movieId=42", StringComparison.Ordinal)), string.Join("\n", requestUris));
+        Assert.True(requestUris.Any(url => url.Contains("/api/v3/history/movie?", StringComparison.Ordinal) && url.Contains("movieId=42", StringComparison.Ordinal)), string.Join("\n", requestUris));
+        Assert.True(changed);
+        Assert.Equal(42, job.ExternalItemId);
+        Assert.Equal("Downloading", job.SearchStatus);
+        Assert.Equal("Processing", job.Status);
+        Assert.Contains("28.Years.Later.2025.2160p", job.OutcomeSummary);
+        Assert.Equal("42", sourceLink.ExternalId);
+        Assert.DoesNotContain(handler.Requests, request => request.RequestUri!.ToString().Contains("movieId=6", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task RefreshAsync_returns_changed_when_external_item_reconciles_even_if_provider_snapshot_is_otherwise_unchanged()
+    {
+        using var db = CreateDb();
+        var requestedAt = new DateTimeOffset(2026, 4, 27, 20, 5, 0, TimeSpan.Zero);
+        var checkedAt = requestedAt.AddMinutes(5);
+        var integration = new IntegrationConfig
+        {
+            Id = 7,
+            ServiceKey = "radarr",
+            InstanceName = "Radarr",
+            BaseUrl = "http://radarr.local",
+            ApiKey = "abc123"
+        };
+        db.IntegrationConfigs.Add(integration);
+
+        var item = new LibraryItem
+        {
+            Id = 1298,
+            MediaType = "Movie",
+            Title = "28 Years Later",
+            TmdbId = 1100988,
+            CanonicalKey = "movie:1100988",
+            UpdatedAtUtc = requestedAt,
+            SourceUpdatedAtUtc = requestedAt
+        };
+        db.LibraryItems.Add(item);
+
+        var sourceLink = new LibraryItemSourceLink
+        {
+            LibraryItemId = item.Id,
+            IntegrationId = integration.Id,
+            ExternalId = "6",
+            ExternalType = "movie",
+            SourceTitle = "28 Years Later",
+            SourceSortTitle = "28 Years Later",
+            LastSeenAtUtc = requestedAt
+        };
+        db.LibraryItemSourceLinks.Add(sourceLink);
+
+        var job = new LibraryRemediationJob
+        {
+            LibraryItemId = item.Id,
+            IntegrationId = integration.Id,
+            ServiceKey = "radarr",
+            ServiceDisplayName = "Radarr",
+            RequestedAction = "search_replacement",
+            CommandName = "MoviesSearch",
+            ExternalItemId = 6,
+            ProviderCommandId = 466317,
+            ProviderCommandStatus = "completed",
+            ProviderCommandSummary = "MoviesSearch completed.",
+            ProviderCommandCheckedAtUtc = checkedAt,
+            SearchStatus = "Queued",
+            Status = "SearchQueued",
+            RequestedAtUtc = requestedAt,
+            UpdatedAtUtc = requestedAt
+        };
+        db.LibraryRemediationJobs.Add(job);
+        await db.SaveChangesAsync();
+
+        using var handler = new StubHttpMessageHandler(request =>
+        {
+            var url = request.RequestUri!.ToString();
+            if (url == "http://radarr.local/api/v3/movie?tmdbId=1100988")
+            {
+                return Json(HttpStatusCode.OK, "[{\"id\":42,\"monitored\":true}]");
+            }
+
+            if (url == "http://radarr.local/api/v3/command/466317")
+            {
+                return Json(HttpStatusCode.OK, "{\"id\":466317,\"status\":\"completed\",\"name\":\"MoviesSearch\"}");
+            }
+
+            if (url.Contains("/api/v3/queue?", StringComparison.Ordinal) && url.Contains("movieId=42", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK, "{\"records\":[]}");
+            }
+
+            if (url.Contains("/api/v3/history/movie?", StringComparison.Ordinal) && url.Contains("movieId=42", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK, "{\"records\":[]}");
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.NotFound)
+            {
+                Content = new StringContent(url)
+            };
+        });
+        var factory = new StubHttpClientFactory(handler);
+
+        var changed = await LibraryRemediationProviderCommandTracker.RefreshAsync(job, db, factory, checkedAt);
+
+        Assert.True(changed);
+        Assert.Equal(42, job.ExternalItemId);
+        Assert.Equal("42", sourceLink.ExternalId);
+    }
+
     private static MediaCloudDbContext CreateDb()
     {
         var options = new DbContextOptionsBuilder<MediaCloudDbContext>()
@@ -1366,5 +1751,30 @@ public sealed class LibraryRemediationTests
         db.Database.OpenConnection();
         db.Database.EnsureCreated();
         return db;
+    }
+
+    private static HttpResponseMessage Json(HttpStatusCode statusCode, string body)
+        => new(statusCode)
+        {
+            Content = new StringContent(body)
+        };
+
+    private sealed class StubHttpClientFactory(StubHttpMessageHandler handler) : IHttpClientFactory
+    {
+        private readonly StubHttpMessageHandler _handler = handler;
+
+        public HttpClient CreateClient(string name = "") => new(_handler, disposeHandler: false);
+    }
+
+    private sealed class StubHttpMessageHandler(Func<HttpRequestMessage, HttpResponseMessage> responder) : HttpMessageHandler
+    {
+        private readonly Func<HttpRequestMessage, HttpResponseMessage> _responder = responder;
+        public List<HttpRequestMessage> Requests { get; } = [];
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Requests.Add(new HttpRequestMessage(request.Method, request.RequestUri));
+            return Task.FromResult(_responder(request));
+        }
     }
 }

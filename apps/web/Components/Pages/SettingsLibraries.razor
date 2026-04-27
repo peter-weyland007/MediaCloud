@@ -76,10 +76,10 @@
                 <button type="button" class="button-secondary" @onclick="CloseLocalBrowser">Close</button>
             </div>
             <p style="margin:0.5rem 0; font-family:monospace;">@_localBrowsePath</p>
-            <div style="display:flex; gap:0.45rem; margin-bottom:0.65rem;">
-                <button type="button" class="button-secondary" @onclick="NavigateLocalParentAsync" disabled="@string.IsNullOrWhiteSpace(_localBrowseParent)">Up</button>
-                <button type="button" class="button-primary" @onclick="UseCurrentLocalDirectory">Use this folder</button>
-            </div>
+            <MudButtonGroup Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small">
+                <MudButton ButtonType="ButtonType.Button" Color="Color.Secondary" OnClick="NavigateLocalParentAsync" Disabled="@string.IsNullOrWhiteSpace(_localBrowseParent)">Up</MudButton>
+                <MudButton ButtonType="ButtonType.Button" OnClick="UseCurrentLocalDirectory">Use this folder</MudButton>
+            </MudButtonGroup>
             @if (_loadingLocalDirectories)
             {
                 <p class="card-note">Loading folders…</p>
@@ -104,10 +104,10 @@
         </div>
     }
 
-    <div style="display:flex; gap:0.5rem; margin-top:0.85rem;">
-        <button class="button-primary" @onclick="SaveAsync" disabled="@_saving">@(_saving ? "Saving..." : (_editingId is null ? "Add mapping" : "Save mapping"))</button>
-        <button class="button-secondary" @onclick="ResetForm">Clear</button>
-    </div>
+    <MudButtonGroup Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small">
+        <MudButton ButtonType="ButtonType.Button" OnClick="SaveAsync" Disabled="@_saving">@(_saving ? "Saving..." : (_editingId is null ? "Add mapping" : "Save mapping"))</MudButton>
+        <MudButton ButtonType="ButtonType.Button" Color="Color.Secondary" OnClick="ResetForm">Clear</MudButton>
+    </MudButtonGroup>
 </div>
 
 <div class="card" style="max-width:1100px;">
@@ -157,10 +157,12 @@
                         <td>@m.RemoteRootPath</td>
                         <td>@m.LocalRootPath</td>
                         <td>@m.UpdatedAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
-                        <td style="display:flex; gap:0.4rem; flex-wrap:wrap;">
-                            <button class="button-secondary" @onclick="async () => await TestMappingAsync(m)">Test</button>
-                            <button class="button-secondary" @onclick="async () => await LoadForEditAsync(m)">Edit</button>
-                            <button class="button-danger" @onclick="() => DeleteAsync(m)">Delete</button>
+                        <td>
+                            <MudButtonGroup Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small">
+                                <MudButton ButtonType="ButtonType.Button" Color="Color.Secondary" OnClick="@(() => TestMappingAsync(m))">Test</MudButton>
+                                <MudButton ButtonType="ButtonType.Button" Color="Color.Secondary" OnClick="@(() => LoadForEditAsync(m))">Edit</MudButton>
+                                <MudButton ButtonType="ButtonType.Button" Color="Color.Error" OnClick="@(() => DeleteAsync(m))">Delete</MudButton>
+                            </MudButtonGroup>
                         </td>
                     </tr>
                 }

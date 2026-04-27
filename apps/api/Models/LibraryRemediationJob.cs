@@ -7,6 +7,7 @@ public class LibraryRemediationJob
     public long? LibraryIssueId { get; set; }
     public string ServiceKey { get; set; } = string.Empty;
     public string ServiceDisplayName { get; set; } = string.Empty;
+    public long? IntegrationId { get; set; }
     public string RequestedAction { get; set; } = string.Empty;
     public string CommandName { get; set; } = string.Empty;
     public int? ExternalItemId { get; set; }
@@ -29,6 +30,11 @@ public class LibraryRemediationJob
     public string BlacklistStatus { get; set; } = string.Empty;
     public string OutcomeSummary { get; set; } = string.Empty;
     public string ResultMessage { get; set; } = string.Empty;
+    public int? ProviderCommandId { get; set; }
+    public string ProviderCommandStatus { get; set; } = string.Empty;
+    public string ProviderCommandSummary { get; set; } = string.Empty;
+    public string DownloadType { get; set; } = string.Empty;
+    public DateTimeOffset? ProviderCommandCheckedAtUtc { get; set; }
     public string VerificationStatus { get; set; } = string.Empty;
     public string VerificationSummary { get; set; } = string.Empty;
     public string VerificationDetailsJson { get; set; } = string.Empty;

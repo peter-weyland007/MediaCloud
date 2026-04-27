@@ -113,6 +113,75 @@ public static class LibraryRemediationLifecycleTracker
                 checkedAt);
         }
 
+        if (IsImportedStatus(searchStatus)
+            && !ReleaseChangedAfterRequest(job, item, latestContext))
+        {
+            const string summary = "Radarr imported a replacement. MediaCloud is waiting for source refresh and verification.";
+            return new(
+                "Processing",
+                "Imported",
+                blacklistStatus,
+                FirstNonEmpty(outcome, summary),
+                "WaitingForEvidence",
+                "The provider says the replacement imported, but MediaCloud is still waiting for refreshed local metadata.",
+                BuildVerificationDetailsJson(job.IssueType, item, relatedIssue, "Processing", FirstNonEmpty(outcome, summary)),
+                "Standby",
+                "Wait for the current remediation attempt to refresh local metadata before repeating it.",
+                checkedAt,
+                checkedAt);
+        }
+
+        if (IsImportingStatus(searchStatus))
+        {
+            var summary = FirstNonEmpty(outcome, "The provider is importing the replacement now.");
+            return new(
+                "Processing",
+                "Importing",
+                blacklistStatus,
+                summary,
+                "Pending",
+                "The provider is importing the replacement before verification can start.",
+                BuildVerificationDetailsJson(job.IssueType, item, relatedIssue, "Processing", summary),
+                "Standby",
+                "Wait for the current remediation attempt to finish importing before repeating it.",
+                checkedAt,
+                checkedAt);
+        }
+
+        if (IsDownloadingStatus(searchStatus))
+        {
+            var summary = FirstNonEmpty(outcome, "The provider is downloading the replacement now.");
+            return new(
+                "Processing",
+                "Downloading",
+                blacklistStatus,
+                summary,
+                "Pending",
+                "The provider is downloading the replacement before verification can start.",
+                BuildVerificationDetailsJson(job.IssueType, item, relatedIssue, "Processing", summary),
+                "Standby",
+                "Wait for the current remediation attempt to finish downloading before repeating it.",
+                checkedAt,
+                checkedAt);
+        }
+
+        if (IsGrabbedStatus(searchStatus))
+        {
+            var summary = FirstNonEmpty(outcome, "The provider grabbed a replacement and is waiting for download/import.");
+            return new(
+                "Processing",
+                "Grabbed",
+                blacklistStatus,
+                summary,
+                "Pending",
+                "The provider grabbed a replacement, but verification cannot start until download/import finishes.",
+                BuildVerificationDetailsJson(job.IssueType, item, relatedIssue, "Processing", summary),
+                "Standby",
+                "Wait for the current remediation attempt to finish downloading before repeating it.",
+                checkedAt,
+                checkedAt);
+        }
+
         if (IsQueuedStatus(searchStatus)
             && ReleaseChangedAfterRequest(job, item, latestContext))
         {
@@ -420,6 +489,15 @@ public static class LibraryRemediationLifecycleTracker
 
     private static bool IsQueuedStatus(string? searchStatus)
         => string.Equals(searchStatus, SearchStatusQueued, StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsDownloadingStatus(string? searchStatus)
+        => string.Equals(searchStatus, "Downloading", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsImportingStatus(string? searchStatus)
+        => string.Equals(searchStatus, "Importing", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsImportedStatus(string? searchStatus)
+        => string.Equals(searchStatus, "Imported", StringComparison.OrdinalIgnoreCase);
 
     private static bool IsNoResultsStatus(string? searchStatus)
         => string.Equals(searchStatus, SearchStatusNoResults, StringComparison.OrdinalIgnoreCase);

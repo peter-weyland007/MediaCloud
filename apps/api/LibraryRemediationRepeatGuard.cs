@@ -22,7 +22,6 @@ public static class LibraryRemediationRepeatGuard
             .Where(x => x.LibraryItemId == job.LibraryItemId)
             .Where(x => string.Equals(x.RequestedAction, "search_replacement", StringComparison.OrdinalIgnoreCase))
             .Where(x => string.Equals(NormalizeIssueKey(x), NormalizeIssueKey(job), StringComparison.OrdinalIgnoreCase))
-            .Where(x => x.RequestedAtUtc >= job.RequestedAtUtc)
             .OrderByDescending(x => x.RequestedAtUtc)
             .ToList();
 

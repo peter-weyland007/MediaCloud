@@ -3,46 +3,43 @@ using Xunit;
 public sealed class IntegrationPanelLayoutSourceTests
 {
     [Fact]
-    public void Settings_integrations_page_uses_collapsible_service_panels_collapsed_by_default()
+    public void Integrations_page_uses_table_driven_control_plane_with_filtering_and_panel_links()
     {
         var repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../../"));
-        var pagePath = Path.GetFullPath(Path.Combine(repoRoot, "apps/web/Components/Pages/SettingsIntegrations.razor"));
+        var pagePath = Path.GetFullPath(Path.Combine(repoRoot, "apps/web/Components/Pages/Integrations.razor"));
         var content = File.ReadAllText(pagePath);
 
-        Assert.Contains("INTEGRATION PANELS", content);
-        Assert.Contains("aria-expanded=\"@IsServicePanelExpanded(group.ServiceKey)\"", content);
-        Assert.Contains("@if (IsServicePanelExpanded(group.ServiceKey))", content);
-        Assert.Contains("ToggleServicePanel(group.ServiceKey)", content);
-        Assert.Contains("▾", content);
-        Assert.Contains("▸", content);
+        Assert.Contains("SET UP INTEGRATIONS", content);
+        Assert.Contains("QUICK FILTER", content);
+        Assert.Contains("@foreach (var item in FilteredInstances())", content);
+        Assert.Contains("Href=\"@($\"/integrations/{item.ServiceKey}\")\"", content);
+        Assert.Contains("FilteredInstances()", content);
     }
 
     [Fact]
-    public void Settings_integrations_page_uses_stronger_panel_structure_with_identity_metrics_and_status_clusters()
+    public void Integration_service_detail_page_uses_collapsible_panels_with_plain_chevrons()
     {
         var repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../../"));
-        var pagePath = Path.GetFullPath(Path.Combine(repoRoot, "apps/web/Components/Pages/SettingsIntegrations.razor"));
+        var pagePath = Path.GetFullPath(Path.Combine(repoRoot, "apps/web/Components/Pages/IntegrationServiceDetails.razor"));
         var content = File.ReadAllText(pagePath);
 
-        Assert.Contains("integration-service-identity", content);
-        Assert.Contains("integration-service-monogram", content);
-        Assert.Contains("integration-service-summary-grid", content);
-        Assert.Contains("integration-service-metric-chip", content);
-        Assert.Contains("integration-service-status-cluster", content);
-        Assert.Contains("GetServiceMonogram(group.DisplayName)", content);
+        Assert.Contains("integration-detail-panel-toggle", content);
+        Assert.Contains("@onclick='() => TogglePanel(\"summary\")'", content);
+        Assert.Contains("PanelChevron(\"summary\")", content);
+        Assert.Contains("=> IsPanelExpanded(key) ? \"▾\" : \"▸\";", content);
     }
 
     [Fact]
-    public void Settings_integrations_page_groups_instances_per_service_and_surfaces_prowlarr_detail_summary()
+    public void Integration_service_detail_page_surfaces_radarr_control_and_mapping_panels()
     {
         var repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../../"));
-        var pagePath = Path.GetFullPath(Path.Combine(repoRoot, "apps/web/Components/Pages/SettingsIntegrations.razor"));
+        var pagePath = Path.GetFullPath(Path.Combine(repoRoot, "apps/web/Components/Pages/IntegrationServiceDetails.razor"));
         var content = File.ReadAllText(pagePath);
 
-        Assert.Contains("GroupInstancesByService()", content);
-        Assert.Contains("PROWLARR DETAIL", content);
-        Assert.Contains("Indexer control plane + search source orchestration", content);
-        Assert.Contains("Attention needed", content);
-        Assert.Contains("Healthy", content);
+        Assert.Contains("NAMING CONVENTION", content);
+        Assert.Contains("ROOT FOLDERS & MAPPINGS", content);
+        Assert.Contains("OpenCreatePathMappingDialogAsync", content);
+        Assert.Contains("OpenEditPathMappingDialogAsync", content);
+        Assert.Contains("TestPathMappingAsync(_radarrPathMapping)", content);
     }
 }

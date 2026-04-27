@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.AspNetCore.Components.Server.ProtectedBrowserStorage;
 using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.Hosting.StaticWebAssets;
 using Microsoft.Extensions.Configuration;
 using MudBlazor;
 using MudBlazor.Services;
@@ -10,6 +11,8 @@ using web.Components;
 using web.Services.Auth;
 
 var builder = WebApplication.CreateBuilder(args);
+
+StaticWebAssetsLoader.UseStaticWebAssets(builder.Environment, builder.Configuration);
 
 var apiBaseUrl = builder.Configuration["ApiBaseUrl"];
 if (string.IsNullOrWhiteSpace(apiBaseUrl))
@@ -33,9 +36,7 @@ builder.Services.AddMudServices(options =>
 
 var configuredKeysPath = builder.Configuration["DataProtection:KeysPath"];
 var dataProtectionKeysPath = string.IsNullOrWhiteSpace(configuredKeysPath)
-    ? (builder.Environment.IsDevelopment()
-        ? Path.Combine(builder.Environment.ContentRootPath, "DataProtectionKeys")
-        : "/app/data/dpkeys")
+    ? GetDefaultDataProtectionKeysPath(builder.Environment)
     : configuredKeysPath;
 
 Directory.CreateDirectory(dataProtectionKeysPath);
@@ -85,5 +86,22 @@ app.MapStaticAssets();
 
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode();
+
+static string GetDefaultDataProtectionKeysPath(IHostEnvironment environment)
+{
+    var contentRootPath = Path.GetFullPath(environment.ContentRootPath);
+    if (environment.IsDevelopment())
+    {
+        return Path.Combine(contentRootPath, "DataProtectionKeys");
+    }
+
+    return IsContainerContentRoot(contentRootPath)
+        ? "/app/data/dpkeys"
+        : Path.Combine(contentRootPath, "DataProtectionKeys");
+}
+
+static bool IsContainerContentRoot(string contentRootPath)
+    => string.Equals(contentRootPath, "/app", StringComparison.OrdinalIgnoreCase)
+       || contentRootPath.StartsWith("/app/", StringComparison.OrdinalIgnoreCase);
 
 app.Run();

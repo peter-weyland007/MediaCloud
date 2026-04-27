@@ -21,8 +21,8 @@ else
         </section>
     }
 
-    <section class="card" style="margin-top:1rem; display:grid; gap:1rem;">
-        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:1rem; padding-bottom:0.15rem; border-bottom:1px solid rgba(51,65,85,0.65);">
+    <section class="@(FlattenMetricsPanel ? null : "card")" style="margin-top:1rem; display:grid; gap:1rem;">
+        <div style="display:grid; grid-template-columns:minmax(220px, 1fr) minmax(220px, 1fr); gap:1rem; padding-bottom:0.15rem; border-bottom:1px solid rgba(51,65,85,0.65); align-items:start;">
             <div>
                 <p class="card-label">REPORTED / ACTUAL RUNTIME</p>
                 <p>@($"{FormatRuntime(Item.RuntimeMinutes)} / {FormatRuntime(Item.ActualRuntimeMinutes)}")</p>
@@ -32,13 +32,15 @@ else
                 <span style="@GetPlayabilityBadgeStyle(Item.PlayabilityScore)">@DisplayValue(Item.PlayabilityScore)</span>
                 <p class="card-note" style="margin-top:0.3rem;">@DisplayValue(Item.PlayabilitySummary)</p>
             </div>
-            <div>
-                <p class="card-label">AUDIO LANGUAGES</p>
-                <p>@FormatList(Item.AudioLanguages)</p>
-            </div>
-            <div>
-                <p class="card-label">SUBTITLE LANGUAGES</p>
-                <p>@FormatList(Item.SubtitleLanguages)</p>
+            <div style="display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:1rem; grid-column:1 / -1; align-items:start;">
+                <div>
+                    <p class="card-label">AUDIO LANGUAGES</p>
+                    <p>@FormatList(Item.AudioLanguages)</p>
+                </div>
+                <div>
+                    <p class="card-label">SUBTITLE LANGUAGES</p>
+                    <p>@FormatList(Item.SubtitleLanguages)</p>
+                </div>
             </div>
         </div>
         <div style="display:flex; justify-content:space-between; gap:1rem; flex-wrap:wrap; align-items:start;">
@@ -52,10 +54,13 @@ else
                 <p>IMDb: @DisplayValue(Item.ImdbId)</p>
                 <p>Profile: @DisplayValue(Item.QualityProfile)</p>
             </div>
-            <div style="display:flex; flex-direction:column; gap:0.2rem; align-items:flex-end; align-self:start; min-width:0;">
-                <MudButton Class="media-btn media-btn--primary" Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small" OnClick="OnAnalyze" Disabled="@IsAnalyzing">@(IsAnalyzing ? "Analyzing..." : AnalyzeButtonLabel)</MudButton>
-                <span class="card-note" style="display:block; margin:0; text-align:right; white-space:nowrap; font-size:0.72rem;">Last analyzed: @FormatTimestamp(Item.PlayabilityCheckedAtUtc)</span>
-            </div>
+            @if (!AnalyzeButtonBelowPrimaryFile)
+            {
+                <div style="display:flex; flex-direction:column; gap:0.2rem; align-items:flex-end; align-self:start; min-width:0;">
+                    <MudButton Class="media-btn media-btn--primary" Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small" OnClick="OnAnalyze" Disabled="@IsAnalyzing">@(IsAnalyzing ? "Analyzing..." : AnalyzeButtonLabel)</MudButton>
+                    <span class="card-note" style="display:block; margin:0; text-align:right; white-space:nowrap; font-size:0.72rem;">Last analyzed: @FormatTimestamp(Item.PlayabilityCheckedAtUtc)</span>
+                </div>
+            }
         </div>
         <div>
             <p class="card-label">PRIMARY FILE</p>
@@ -63,6 +68,14 @@ else
             @if (!Item.LocalFileExists && !string.IsNullOrWhiteSpace(Item.PrimaryFilePath))
             {
                 <p class="card-note" style="margin-top:0.45rem;">This path is mapped in MediaCloud, but the file does not exist on this machine.</p>
+            }
+
+            @if (AnalyzeButtonBelowPrimaryFile)
+            {
+                <div style="display:flex; flex-direction:column; gap:0.2rem; align-items:flex-start; margin-top:0.85rem; min-width:0;">
+                    <MudButton Class="media-btn media-btn--primary" Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small" OnClick="OnAnalyze" Disabled="@IsAnalyzing">@(IsAnalyzing ? "Analyzing..." : AnalyzeButtonLabel)</MudButton>
+                    <span class="card-note" style="display:block; margin:0; text-align:left; white-space:nowrap; font-size:0.72rem;">Last analyzed: @FormatTimestamp(Item.PlayabilityCheckedAtUtc)</span>
+                </div>
             }
         </div>
     </section>
@@ -85,6 +98,8 @@ else
     [Parameter] public bool IsAnalyzing { get; set; }
     [Parameter] public bool ShowOverviewSection { get; set; } = true;
     [Parameter] public bool ShowSourceServicesSummary { get; set; } = true;
+    [Parameter] public bool FlattenMetricsPanel { get; set; }
+    [Parameter] public bool AnalyzeButtonBelowPrimaryFile { get; set; }
     [Parameter] public EventCallback OnAnalyze { get; set; }
 
     private static string FormatRuntime(double? minutes)

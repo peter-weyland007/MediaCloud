@@ -1,93 +1,77 @@
 @inject HttpClient Http
 @inject AuthorizedApiRequestFactory RequestFactory
 
-<section class="card" style="margin-top:1rem;">
-    <button type="button"
-            class="subtitle-panel-toggle"
-            @onclick="ToggleExpanded"
-            aria-expanded="@_expanded"
-            aria-controls="subtitle-panel-content">
-        <span>
-            <span class="card-label" style="display:block;">SUBTITLES</span>
-            <span class="card-note" style="display:block; margin:0.35rem 0 0;">Live subtitle availability and missing-target status from Bazarr.</span>
-        </span>
-        <span style="display:flex; align-items:center; gap:0.65rem; margin-left:auto;">
-            @if (_status is not null)
-            {
-                <span style="@GetBadgeStyle(_status.Status)">@GetBadgeLabel(_status.Status)</span>
-            }
-            <span class="subtitle-panel-chevron">@(_expanded ? "▾" : "▸")</span>
-        </span>
-    </button>
-
-    @if (_expanded)
-    {
-        <div id="subtitle-panel-content" style="margin-top:1rem; display:grid; gap:0.85rem;">
-            @if (_loading)
-            {
-                <p class="card-note">Loading Bazarr subtitle status…</p>
-            }
-            else if (_status is null)
-            {
-                <p class="card-note">Bazarr subtitle status is unavailable.</p>
-            }
-            else
-            {
-                <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:0.85rem;">
-                    <div>
-                        <p class="card-label">SOURCE</p>
-                        <p style="margin:0.35rem 0 0;">@DisplayValue(_status.InstanceName)</p>
-                        <p class="card-note" style="margin-top:0.25rem;">Target: @DisplayValue(_status.TargetKind) · External ID: @(_status.ExternalId?.ToString() ?? "—")</p>
-                    </div>
-                    <div>
-                        <p class="card-label">SUMMARY</p>
-                        <p style="margin:0.35rem 0 0;">@DisplayValue(_status.Summary)</p>
-                        <p class="card-note" style="margin-top:0.25rem;">Monitored: @(_status.Monitored ? "Yes" : "No") · Checked: @FormatTimestamp(_status.CheckedAtUtc)</p>
-                    </div>
-                </div>
-
-                @if (_status.EpisodeFileCount > 0)
-                {
-                    <div>
-                        <p class="card-label">SERIES COVERAGE</p>
-                        <p style="margin:0.35rem 0 0;">Episodes tracked: @_status.EpisodeFileCount</p>
-                        <p style="margin:0.15rem 0 0;">Missing targets: @_status.MissingEpisodeCount</p>
-                    </div>
-                }
-
-                <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:0.85rem;">
-                    <div>
-                        <p class="card-label">Available subtitles</p>
-                        <p style="margin:0.35rem 0 0;">@FormatList(_status.AvailableSubtitles)</p>
-                    </div>
-                    <div>
-                        <p class="card-label">Missing targets</p>
-                        <p style="margin:0.35rem 0 0;">@FormatList(_status.MissingSubtitles)</p>
-                    </div>
-                </div>
-            }
+<section style="margin-top:1rem; display:grid; gap:1rem;">
+    <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:0.75rem; flex-wrap:wrap;">
+        <div>
+            <p class="card-label">SUBTITLES</p>
+            <p class="card-note" style="margin:0.35rem 0 0;">Live subtitle availability and missing-target status from Bazarr.</p>
         </div>
-    }
+        @if (_status is not null)
+        {
+            <span style="@GetBadgeStyle(_status.Status)">@GetBadgeLabel(_status.Status)</span>
+        }
+    </div>
+
+    <div id="subtitle-panel-content" style="display:grid; gap:0.85rem;">
+        @if (_loading)
+        {
+            <p class="card-note">Loading Bazarr subtitle status…</p>
+        }
+        else if (_status is null)
+        {
+            <p class="card-note">Bazarr subtitle status is unavailable.</p>
+        }
+        else
+        {
+            <div class="subtitle-summary-grid">
+                <div>
+                    <p class="card-label">SOURCE</p>
+                    <p style="margin:0.35rem 0 0;">@DisplayValue(_status.InstanceName)</p>
+                    <p class="card-note" style="margin-top:0.25rem;">Target: @DisplayValue(_status.TargetKind) · External ID: @(_status.ExternalId?.ToString() ?? "—")</p>
+                </div>
+                <div>
+                    <p class="card-label">SUMMARY</p>
+                    <p style="margin:0.35rem 0 0;">@DisplayValue(_status.Summary)</p>
+                    <p class="card-note" style="margin-top:0.25rem;">Monitored: @(_status.Monitored ? "Yes" : "No") · Checked: @FormatTimestamp(_status.CheckedAtUtc)</p>
+                </div>
+            </div>
+
+            @if (_status.EpisodeFileCount > 0)
+            {
+                <div>
+                    <p class="card-label">SERIES COVERAGE</p>
+                    <p style="margin:0.35rem 0 0;">Episodes tracked: @_status.EpisodeFileCount</p>
+                    <p style="margin:0.15rem 0 0;">Missing targets: @_status.MissingEpisodeCount</p>
+                </div>
+            }
+
+            <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:0.85rem;">
+                <div>
+                    <p class="card-label">Available subtitles</p>
+                    <p style="margin:0.35rem 0 0;">@FormatList(_status.AvailableSubtitles)</p>
+                </div>
+                <div>
+                    <p class="card-label">Missing targets</p>
+                    <p style="margin:0.35rem 0 0;">@FormatList(_status.MissingSubtitles)</p>
+                </div>
+            </div>
+        }
+    </div>
 </section>
 
 <style>
-    .subtitle-panel-toggle {
-        width: 100%;
-        display: flex;
-        align-items: flex-start;
-        gap: 0.75rem;
-        padding: 0;
-        border: 0;
-        background: transparent;
-        color: inherit;
-        text-align: left;
-        cursor: pointer;
+    .subtitle-summary-grid {
+        display: grid;
+        grid-template-columns: minmax(180px, 0.8fr) minmax(360px, 1.6fr);
+        gap: 0.85rem;
+        align-items: start;
     }
 
-    .subtitle-panel-chevron {
-        color: #cbd5f5;
-        font-size: 1.1rem;
-        line-height: 1;
+    @@media (max-width: 920px) {
+        .subtitle-summary-grid {
+            grid-template-columns: 1fr;
+        }
     }
 </style>
 
@@ -95,14 +79,10 @@
     [Parameter, EditorRequired] public long LibraryItemId { get; set; }
 
     private bool _loading = true;
-    private bool _expanded;
     private BazarrSubtitleStatusDto? _status;
 
     protected override Task OnParametersSetAsync()
         => LoadAsync();
-
-    private void ToggleExpanded()
-        => _expanded = !_expanded;
 
     private async Task LoadAsync()
     {

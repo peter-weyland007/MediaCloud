@@ -23,7 +23,12 @@ public sealed record MediaCompatibilityRecommendationResponse(
     string ReviewOperatorWarning,
     IReadOnlyList<string> BlockedReasons,
     IReadOnlyList<string> ManualPlanSteps,
-    string ManualCommandPreview);
+    string ManualCommandPreview,
+    string UserDecisionGuidance = "",
+    string BestActionLabel = "",
+    string CurrentFileRiskLabel = "Unknown",
+    string ConversionRiskLabel = "Unknown",
+    string UserDecisionSummary = "");
 
 public sealed record QueueMediaCompatibilityRemediationResponse(long LibraryItemId, long JobId, bool Queued, bool AlreadyQueued, string Message);
 public sealed record RemoveMediaCompatibilityRemediationResponse(long JobId, bool Removed, string Message);
@@ -72,7 +77,12 @@ public static class MediaCompatibilityRecommendationEngine
                 expectedBenefit: "Run Analyze file first so MediaCloud can inspect container, codec, audio, and subtitle traits.",
                 riskSummary: "No ffmpeg preview is generated without probe details.",
                 outputStrategy: DefaultNoOverwriteStrategy,
-                commandPreview: string.Empty);
+                commandPreview: string.Empty,
+                userDecisionGuidance: "Analyze this file first",
+                bestActionLabel: "Analyze file",
+                currentFileRiskLabel: "Unknown",
+                conversionRiskLabel: "Unknown",
+                userDecisionSummary: BuildAnalyzeFirstDecisionSummary());
         }
 
         if (discImageSource)
@@ -96,7 +106,12 @@ public static class MediaCompatibilityRecommendationEngine
                 reviewDialogTitle: "Disc Image Review",
                 reviewOperatorWarning: "ISO sources should be identified and reviewed manually before any remediation path is considered.",
                 blockedReasons: blockedReasons,
-                manualPlanSteps: ["Confirm the source file is an ISO disc image and leave it out of the standard compatibility queue for now."]);
+                manualPlanSteps: ["Confirm the source file is an ISO disc image and leave it out of the standard compatibility queue for now."],
+                userDecisionGuidance: "Better to request a new file",
+                bestActionLabel: "Request better file",
+                currentFileRiskLabel: "High",
+                conversionRiskLabel: "High",
+                userDecisionSummary: BuildRequestReplacementDecisionSummary(comparisonRows));
         }
 
         var preferredContainer = Normalize(settings.PreferredContainer);
@@ -109,6 +124,14 @@ public static class MediaCompatibilityRecommendationEngine
             && !imageSubtitlePresent;
         var needsAudioConversion = audioCodecs.Any(codec => !IsPreferredAudio(codec, preferredAudioCodec));
         var prefersTextOnlyButImageSubs = settings.PreferTextSubtitlesOnly && imageSubtitlePresent;
+        var currentFileRiskLabel = BuildCurrentFileRiskLabel(
+            recentTranscode,
+            item.PlayabilityScore,
+            requiresVideoTranscode,
+            prefersTextOnlyButImageSubs,
+            discImageSource,
+            needsContainerRemux,
+            needsAudioConversion);
         var hasReasonToAct = recentTranscode
             || string.Equals(item.PlayabilityScore, "Risky", StringComparison.OrdinalIgnoreCase)
             || string.Equals(item.PlayabilityScore, "Problematic", StringComparison.OrdinalIgnoreCase)
@@ -131,7 +154,12 @@ public static class MediaCompatibilityRecommendationEngine
                 expectedBenefit: "Keep observing playback. Pull diagnostics again if client behavior changes.",
                 riskSummary: "No ffmpeg preview was generated.",
                 outputStrategy: DefaultNoOverwriteStrategy,
-                commandPreview: string.Empty);
+                commandPreview: string.Empty,
+                userDecisionGuidance: "Safe to leave alone",
+                bestActionLabel: "Leave as-is",
+                currentFileRiskLabel: "Low",
+                conversionRiskLabel: "Not needed",
+                userDecisionSummary: BuildLeaveAloneDecisionSummary(comparisonRows));
         }
 
         if (requiresVideoTranscode)
@@ -162,7 +190,12 @@ public static class MediaCompatibilityRecommendationEngine
                 reviewOperatorWarning: "This path requires a lossy or time-consuming video transcode. MediaCloud will not auto-queue it without explicit operator review.",
                 blockedReasons: blockedReasons,
                 manualPlanSteps: manualPlanSteps,
-                manualCommandPreview: manualCommandPreview);
+                manualCommandPreview: manualCommandPreview,
+                userDecisionGuidance: "Better to request a new file",
+                bestActionLabel: "Request better file",
+                currentFileRiskLabel: currentFileRiskLabel,
+                conversionRiskLabel: "High",
+                userDecisionSummary: BuildRequestReplacementDecisionSummary(comparisonRows));
         }
 
         if (prefersTextOnlyButImageSubs)
@@ -193,7 +226,12 @@ public static class MediaCompatibilityRecommendationEngine
                 reviewOperatorWarning: "Image-based subtitles usually need OCR, replacement subtitles, or a deliberate burn-in decision. MediaCloud will not auto-queue that blindly.",
                 blockedReasons: blockedReasons,
                 manualPlanSteps: manualPlanSteps,
-                manualCommandPreview: manualCommandPreview);
+                manualCommandPreview: manualCommandPreview,
+                userDecisionGuidance: "Better to request a new file",
+                bestActionLabel: "Request better file",
+                currentFileRiskLabel: currentFileRiskLabel,
+                conversionRiskLabel: "Medium",
+                userDecisionSummary: BuildSubtitleDecisionSummary(comparisonRows));
         }
 
         var recommendationKey = needsContainerRemux && needsAudioConversion
@@ -239,14 +277,21 @@ public static class MediaCompatibilityRecommendationEngine
             expectedBenefit: expectedBenefit,
             riskSummary: risk,
             outputStrategy: outputStrategy,
-            commandPreview: commandPreview);
+            commandPreview: commandPreview,
+            userDecisionGuidance: "Worth converting",
+            bestActionLabel: "Convert this file",
+            currentFileRiskLabel: currentFileRiskLabel,
+            conversionRiskLabel: "Low",
+            userDecisionSummary: BuildSafeQueueDecisionSummary(comparisonRows));
     }
 
     public static LibraryRemediationJob BuildPreviewJob(
         MediaCompatibilityRecommendationResponse recommendation,
         string actor,
         DateTimeOffset now)
-        => new()
+    {
+        var commandPreview = GetApprovedCommandPreview(recommendation);
+        return new()
         {
             LibraryItemId = recommendation.LibraryItemId,
             ServiceKey = "ffmpeg",
@@ -255,29 +300,29 @@ public static class MediaCompatibilityRecommendationEngine
             CommandName = "ffmpeg-compat-preview",
             IssueType = "playback_compatibility",
             Reason = recommendation.WhySummary,
-            Notes = recommendation.CommandPreview,
+            Notes = commandPreview,
             ReasonCategory = "compatibility",
             Confidence = recommendation.Confidence,
             ShouldSearchNow = false,
             ShouldBlacklistCurrentRelease = false,
-            NeedsManualReview = false,
+            NeedsManualReview = !recommendation.SafeToQueue,
             NotesRecordedOnly = true,
             LookedUpRemotely = false,
             PolicySummary = recommendation.ExpectedBenefit,
-            NotesHandling = "preview_queue_only",
+            NotesHandling = recommendation.SafeToQueue ? "preview_queue_only" : "approved_manual_preview_queue",
             ProfileDecision = recommendation.OutputStrategy,
             ProfileSummary = recommendation.ProfileSummary,
             Status = "Queued",
             SearchStatus = "NotApplicable",
             BlacklistStatus = "NotApplicable",
-            OutcomeSummary = "Queued FFmpeg compatibility preview for operator review.",
-            ResultMessage = string.IsNullOrWhiteSpace(recommendation.CommandPreview) ? recommendation.WhySummary : recommendation.CommandPreview,
+            OutcomeSummary = "Queued FFmpeg command for approved compatibility remediation.",
+            ResultMessage = string.IsNullOrWhiteSpace(commandPreview) ? recommendation.WhySummary : commandPreview,
             ReleaseSummary = recommendation.RecommendationTitle,
             ReleaseContextJson = JsonSerializer.Serialize(new MediaCompatibilityExecutionContext(
                 recommendation.RecommendationKey,
-                BuildInputPathFromPreview(recommendation.CommandPreview),
-                BuildOutputPathFromPreview(recommendation.CommandPreview),
-                recommendation.CommandPreview,
+                BuildInputPathFromPreview(commandPreview),
+                BuildOutputPathFromPreview(commandPreview),
+                commandPreview,
                 recommendation.OutputStrategy,
                 recommendation.Reasons.ToArray())),
             RequestedBy = actor,
@@ -285,6 +330,7 @@ public static class MediaCompatibilityRecommendationEngine
             CreatedAtUtc = now,
             UpdatedAtUtc = now
         };
+    }
 
     public static LibraryRemediationJob BuildManualReviewJob(
         MediaCompatibilityRecommendationResponse recommendation,
@@ -334,6 +380,11 @@ public static class MediaCompatibilityRecommendationEngine
     private const string DefaultNoOverwriteStrategy = "Create sidecar remediated copy; never overwrite original automatically.";
     private const string UnsavedPresetName = "Custom / Unsaved";
 
+    public static string GetApprovedCommandPreview(MediaCompatibilityRecommendationResponse recommendation)
+        => !string.IsNullOrWhiteSpace(recommendation.CommandPreview)
+            ? recommendation.CommandPreview
+            : recommendation.ManualCommandPreview;
+
     private static MediaCompatibilityRecommendationResponse CreateRecommendation(
         LibraryItem item,
         MediaProfileSettingsResponse settings,
@@ -353,7 +404,12 @@ public static class MediaCompatibilityRecommendationEngine
         string reviewOperatorWarning = "",
         IReadOnlyList<string>? blockedReasons = null,
         IReadOnlyList<string>? manualPlanSteps = null,
-        string manualCommandPreview = "")
+        string manualCommandPreview = "",
+        string userDecisionGuidance = "",
+        string bestActionLabel = "",
+        string currentFileRiskLabel = "Unknown",
+        string conversionRiskLabel = "Unknown",
+        string userDecisionSummary = "")
         => new(
             item.Id,
             hasRecommendation,
@@ -374,7 +430,12 @@ public static class MediaCompatibilityRecommendationEngine
             reviewOperatorWarning,
             blockedReasons ?? [],
             manualPlanSteps ?? [],
-            manualCommandPreview);
+            manualCommandPreview,
+            userDecisionGuidance,
+            bestActionLabel,
+            currentFileRiskLabel,
+            conversionRiskLabel,
+            userDecisionSummary);
 
     private static string GetActivePresetName(MediaProfileSettingsResponse settings)
         => string.IsNullOrWhiteSpace(settings.ActivePresetName) ? UnsavedPresetName : settings.ActivePresetName;
@@ -430,6 +491,141 @@ public static class MediaCompatibilityRecommendationEngine
         return $"{fallback} Current traits: {container.ToUpperInvariant()} · {video} video · {audio} audio. {diagnostic} Preferred target: {MediaProfileSettings.BuildSummary(settings)}";
     }
 
+    private static string BuildUserDecisionSummary(IReadOnlyList<MediaCompatibilityComparisonRowResponse> comparisonRows, string followUp)
+    {
+        var mismatches = comparisonRows
+            .Where(row => string.Equals(row.Status, "Outside profile", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(row.Status, "Disc image", StringComparison.OrdinalIgnoreCase))
+            .OrderBy(GetMismatchPriority)
+            .Select(BuildUserFacingMismatchPhrase)
+            .Where(phrase => !string.IsNullOrWhiteSpace(phrase))
+            .Take(4)
+            .ToArray();
+
+        if (mismatches.Length == 0)
+        {
+            return followUp;
+        }
+
+        return $"This file differs from the preferred profile because {JoinUserFacingPhrases(mismatches)}. {followUp}";
+    }
+
+    private static string BuildUserFacingMismatchPhrase(MediaCompatibilityComparisonRowResponse row)
+    {
+        var inspected = FormatDecisionDisplayValue(row.Label, row.InspectedValue);
+        var selected = FormatDecisionDisplayValue(row.Label, row.SelectedProfileValue);
+
+        if (string.Equals(inspected, selected, StringComparison.OrdinalIgnoreCase))
+        {
+            return string.Empty;
+        }
+
+        return row.Label switch
+        {
+            "Container" => $"container is {inspected} instead of {selected}",
+            "Video codec" => $"video codec is {inspected} instead of {selected}",
+            "Audio" => $"audio is {inspected} instead of {selected}",
+            "Subtitles" => $"subtitles are {inspected} instead of {selected}",
+            "Resolution" => $"resolution is {inspected} instead of {selected}",
+            _ => $"{row.Label.ToLowerInvariant()} is {inspected} instead of {selected}"
+        };
+    }
+
+    private static string FormatDecisionDisplayValue(string? label, string? value)
+    {
+        var display = FirstNonEmpty(value, "Unknown");
+        return (label ?? string.Empty).Trim().ToLowerInvariant() switch
+        {
+            "container" => display.Trim().ToLowerInvariant() switch
+            {
+                "matroska,webm" => "MKV",
+                "matroska/webm" => "MKV",
+                "matroska" => "MKV",
+                "mkv" => "MKV",
+                "mov,mp4,m4a,3gp,3g2,mj2" => "MP4",
+                "mp4" => "MP4",
+                "iso" => "ISO",
+                _ => display.ToUpperInvariant()
+            },
+            "video codec" => display.Trim().ToLowerInvariant() switch
+            {
+                "h264" => "H.264",
+                "avc" => "H.264",
+                "hevc" => "HEVC",
+                "h265" => "H.265",
+                _ => display.ToUpperInvariant()
+            },
+            "subtitles" => NormalizeSubtitleDisplayValue(display),
+            _ => display
+        };
+    }
+
+    private static int GetMismatchPriority(MediaCompatibilityComparisonRowResponse row)
+        => row.Label switch
+        {
+            "Container" => 0,
+            "Video codec" => 1,
+            "Subtitles" => 2,
+            "Audio" => 3,
+            "Resolution" => 4,
+            "10-bit video" => 5,
+            "Bitrate" => 6,
+            _ => 10
+        };
+
+    private static string JoinUserFacingPhrases(IReadOnlyList<string> phrases)
+        => phrases.Count switch
+        {
+            0 => string.Empty,
+            1 => phrases[0],
+            2 => $"{phrases[0]}, and {phrases[1]}",
+            _ => $"{string.Join(", ", phrases.Take(phrases.Count - 1))}, and {phrases[^1]}"
+        };
+
+    private static string BuildCurrentFileRiskLabel(bool recentTranscode, string? playabilityScore, bool requiresVideoTranscode, bool prefersTextOnlyButImageSubs, bool discImageSource, bool needsContainerRemux, bool needsAudioConversion)
+    {
+        if (recentTranscode
+            || string.Equals(playabilityScore, "Problematic", StringComparison.OrdinalIgnoreCase)
+            || requiresVideoTranscode
+            || prefersTextOnlyButImageSubs
+            || discImageSource)
+        {
+            return "High";
+        }
+
+        if (string.Equals(playabilityScore, "Risky", StringComparison.OrdinalIgnoreCase)
+            || needsContainerRemux
+            || needsAudioConversion)
+        {
+            return "Medium";
+        }
+
+        return "Low";
+    }
+
+    private static string BuildSafeQueueDecisionSummary(IReadOnlyList<MediaCompatibilityComparisonRowResponse> comparisonRows)
+        => BuildUserDecisionSummary(
+            comparisonRows,
+            "The fix is a lower-risk compatibility change, so converting this file is usually worth it.");
+
+    private static string BuildLeaveAloneDecisionSummary(IReadOnlyList<MediaCompatibilityComparisonRowResponse> comparisonRows)
+        => BuildUserDecisionSummary(
+            comparisonRows,
+            "MediaCloud does not see enough playback risk to justify changing it right now.");
+
+    private static string BuildRequestReplacementDecisionSummary(IReadOnlyList<MediaCompatibilityComparisonRowResponse> comparisonRows)
+        => BuildUserDecisionSummary(
+            comparisonRows,
+            "Fixing it would require a higher-risk conversion, so requesting a better file is usually safer than converting this one.");
+
+    private static string BuildAnalyzeFirstDecisionSummary()
+        => "MediaCloud needs a fresh analysis before it can tell you whether to leave this file alone, convert it, or request a better one.";
+
+    private static string BuildSubtitleDecisionSummary(IReadOnlyList<MediaCompatibilityComparisonRowResponse> comparisonRows)
+        => BuildUserDecisionSummary(
+            comparisonRows,
+            "Subtitle cleanup here is manual enough that requesting a better file is usually the cleaner move.");
+
     private static string BuildCommandPreview(string primaryFilePath, string preferredContainer, string preferredAudioCodec, bool needsAudioConversion)
     {
         if (string.IsNullOrWhiteSpace(primaryFilePath))
@@ -441,7 +637,7 @@ public static class MediaCompatibilityRecommendationEngine
         var outputPath = $"{primaryFilePath}{outputExtension}";
         var subtitleCodec = preferredContainer == "mp4" ? "mov_text" : "copy";
         var audioCodec = needsAudioConversion ? preferredAudioCodec : "copy";
-        return $"ffmpeg -y -i \"{primaryFilePath}\" -map 0:v:0 -map 0:a? -map 0:s? -c:v copy -c:a {audioCodec} -c:s {subtitleCodec} \"{outputPath}\"";
+        return $"ffmpeg -y -i {QuoteShellArgument(primaryFilePath)} -map 0:v:0 -map 0:a? -map 0:s? -c:v copy -c:a {audioCodec} -c:s {subtitleCodec} {QuoteShellArgument(outputPath)}";
     }
 
     private static string BuildManualCommandPreview(string primaryFilePath, string preferredContainer, string preferredAudioCodec, bool includeSubtitleTextConversion)
@@ -454,7 +650,7 @@ public static class MediaCompatibilityRecommendationEngine
         var outputExtension = preferredContainer == "mkv" ? ".manual-review.mkv" : ".manual-review.mp4";
         var outputPath = $"{primaryFilePath}{outputExtension}";
         var subtitleCodec = includeSubtitleTextConversion && preferredContainer == "mp4" ? "mov_text" : "copy";
-        return $"ffmpeg -i \"{primaryFilePath}\" -map 0:v:0 -map 0:a? -map 0:s? -c:v libx264 -preset slow -crf 18 -c:a {preferredAudioCodec} -c:s {subtitleCodec} \"{outputPath}\"";
+        return $"ffmpeg -i {QuoteShellArgument(primaryFilePath)} -map 0:v:0 -map 0:a? -map 0:s? -c:v libx264 -preset slow -crf 18 -c:a {preferredAudioCodec} -c:s {subtitleCodec} {QuoteShellArgument(outputPath)}";
     }
 
     private static string BuildManualSubtitleCommandPreview(string primaryFilePath)
@@ -464,8 +660,11 @@ public static class MediaCompatibilityRecommendationEngine
             return string.Empty;
         }
 
-        return $"ffmpeg -i \"{primaryFilePath}\" -map 0:s:0 \"{primaryFilePath}.manual-review.sup\"";
+        return $"ffmpeg -i {QuoteShellArgument(primaryFilePath)} -map 0:s:0 {QuoteShellArgument($"{primaryFilePath}.manual-review.sup")}";
     }
+
+    private static string QuoteShellArgument(string value)
+        => $"\"{(value ?? string.Empty).Replace("\\", "\\\\", StringComparison.Ordinal).Replace("\"", "\\\"", StringComparison.Ordinal)}\"";
 
     private static IReadOnlyList<string> BuildBlockedReasons(IReadOnlyList<MediaCompatibilityComparisonRowResponse> comparisonRows)
         => comparisonRows
@@ -554,7 +753,7 @@ public static class MediaCompatibilityRecommendationEngine
                 "Subtitles",
                 subtitleCodecs.Length == 0
                     ? "None detected"
-                    : string.Join(", ", subtitleCodecs.Select(x => x.ToUpperInvariant())),
+                    : string.Join(", ", subtitleCodecs.Select(NormalizeSubtitleDisplayValue)),
                 settings.PreferTextSubtitlesOnly
                     ? "Text subtitles only"
                     : settings.AllowImageBasedSubtitles ? "Image subtitles allowed" : "Text preferred",
@@ -683,6 +882,21 @@ public static class MediaCompatibilityRecommendationEngine
 
     private static bool IsPreferredAudio(string codec, string preferredAudioCodec)
         => codec == preferredAudioCodec || codec is "aac" or "ac3" or "eac3";
+
+    private static string NormalizeSubtitleDisplayValue(string value)
+        => value.Trim().ToLowerInvariant() switch
+        {
+            "hdmv_pgs_subtitle" => "PGS",
+            "pgs" => "PGS",
+            "dvd_subtitle" => "VobSub",
+            "vobsub" => "VobSub",
+            "mov_text" => "Text",
+            "text subtitles only" => "Text subtitles only",
+            "image subtitles allowed" => "Image subtitles allowed",
+            "text preferred" => "Text preferred",
+            "none detected" => "None detected",
+            _ => value.ToUpperInvariant()
+        };
 
     private static bool IsImageSubtitle(string codec)
         => codec is "hdmv_pgs_subtitle" or "pgs" or "dvd_subtitle" or "vobsub";

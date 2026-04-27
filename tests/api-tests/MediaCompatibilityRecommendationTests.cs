@@ -49,6 +49,9 @@ public sealed class MediaCompatibilityRecommendationTests
         Assert.True(recommendation.HasRecommendation);
         Assert.True(recommendation.SafeToQueue);
         Assert.Equal("container_audio_sidecar", recommendation.RecommendationKey);
+        Assert.Equal("Worth converting", recommendation.UserDecisionGuidance);
+        Assert.Equal("Convert this file", recommendation.BestActionLabel);
+        Assert.Equal("Low", recommendation.ConversionRiskLabel);
         Assert.Equal("Stable / Broad Compatibility", recommendation.ActivePresetName);
         Assert.Contains("ffmpeg -y -i", recommendation.CommandPreview);
         Assert.Contains("-c:v copy", recommendation.CommandPreview);
@@ -127,6 +130,10 @@ public sealed class MediaCompatibilityRecommendationTests
         Assert.Equal("manual_video_review", recommendation.RecommendationKey);
         Assert.Equal(string.Empty, recommendation.CommandPreview);
         Assert.Equal("Manual Conversion Review", recommendation.ReviewDialogTitle);
+        Assert.Equal("Better to request a new file", recommendation.UserDecisionGuidance);
+        Assert.Equal("Request better file", recommendation.BestActionLabel);
+        Assert.Equal("High", recommendation.ConversionRiskLabel);
+        Assert.Contains("video codec is AV1", recommendation.UserDecisionSummary, System.StringComparison.OrdinalIgnoreCase);
         Assert.Contains("video transcode", recommendation.ReviewOperatorWarning, System.StringComparison.OrdinalIgnoreCase);
         Assert.Contains(recommendation.BlockedReasons, reason => reason.Contains("Video codec", System.StringComparison.OrdinalIgnoreCase));
         Assert.Contains(recommendation.BlockedReasons, reason => reason.Contains("Resolution", System.StringComparison.OrdinalIgnoreCase));
@@ -134,6 +141,36 @@ public sealed class MediaCompatibilityRecommendationTests
         Assert.Contains(".manual-review.mp4", recommendation.ManualCommandPreview);
         Assert.Contains(recommendation.ComparisonRows, row => row.Label == "Video codec" && row.InspectedValue == "AV1" && row.Status == "Outside profile");
         Assert.Contains(recommendation.ComparisonRows, row => row.Label == "Resolution" && row.InspectedValue == "3840×2160" && row.SelectedProfileValue == "1080P max" && row.Status == "Outside profile");
+    }
+
+    [Fact]
+    public void Build_manual_video_review_prioritizes_subtitle_mismatch_in_user_summary_and_normalizes_pgs_display()
+    {
+        var item = new LibraryItem
+        {
+            Id = 1298,
+            MediaType = "Movie",
+            Title = "28 Years Later",
+            PrimaryFilePath = "/mnt/media/28 Years Later.m2ts",
+            PlayabilityScore = "Problematic"
+        };
+        var details = new MediaPlayabilityStoredDetails(
+            ContainerNames: ["mpegts"],
+            VideoCodec: "hevc",
+            VideoProfile: "Main 10",
+            PixelFormat: "yuv420p10le",
+            Width: 3840,
+            Height: 2160,
+            BitrateBitsPerSecond: 89_500_000,
+            AudioCodecs: ["truehd", "ac3", "dts"],
+            SubtitleCodecs: ["hdmv_pgs_subtitle"],
+            Reasons: ["10-bit HEVC raises compatibility risk.", "PGS subtitles often force burn-in."]);
+
+        var recommendation = MediaCompatibilityRecommendationEngine.Build(item, details, latestDiagnostic: null, DefaultProfile);
+
+        Assert.Equal("manual_video_review", recommendation.RecommendationKey);
+        Assert.Contains("subtitles are PGS instead of Text subtitles only", recommendation.UserDecisionSummary, System.StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(recommendation.ComparisonRows, row => row.Label == "Subtitles" && row.InspectedValue == "PGS" && row.SelectedProfileValue == "Text subtitles only" && row.Status == "Outside profile");
     }
 
     [Fact]

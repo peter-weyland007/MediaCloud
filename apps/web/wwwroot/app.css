@@ -693,9 +693,112 @@ h1 {
   border-color: #1d4ed8;
 }
 
+button.integration-action-button[disabled],
+button.integration-action-button-sync[disabled],
+button.integration-action-button-secondary[disabled],
+.integration-action-button.mud-disabled,
+.integration-action-button-sync.mud-disabled,
+.integration-action-button-secondary.mud-disabled {
+  background: #64748b !important;
+  border-color: #94a3b8 !important;
+  color: #f8fafc !important;
+  opacity: 1 !important;
+}
+
+button.integration-action-button[disabled] .mud-button-label,
+button.integration-action-button-sync[disabled] .mud-button-label,
+button.integration-action-button-secondary[disabled] .mud-button-label,
+.integration-action-button.mud-disabled .mud-button-label,
+.integration-action-button-sync.mud-disabled .mud-button-label,
+.integration-action-button-secondary.mud-disabled .mud-button-label {
+  color: inherit !important;
+  opacity: 1 !important;
+}
+
 .integration-action-button-secondary {
   background: #334155;
   border-color: #334155;
+}
+
+
+.integration-dialog {
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0.98), rgba(11, 18, 32, 0.98)) !important;
+  color: #e2e8f0 !important;
+  border: 1px solid rgba(51, 65, 85, 0.85) !important;
+  border-radius: 18px !important;
+  box-shadow: 0 24px 80px rgba(2, 6, 23, 0.65) !important;
+}
+
+.integration-dialog .mud-dialog-title {
+  color: #f8fafc !important;
+  font-weight: 700;
+  border-bottom: 1px solid rgba(51, 65, 85, 0.65);
+  padding-bottom: 0.9rem;
+}
+
+.integration-dialog .mud-dialog-content {
+  background: transparent !important;
+  color: #e2e8f0 !important;
+}
+
+.integration-dialog .mud-dialog-actions {
+  background: transparent !important;
+  border-top: 1px solid rgba(51, 65, 85, 0.65);
+}
+
+.integration-dialog label,
+.integration-dialog .card-note,
+.integration-dialog .mud-typography,
+.integration-dialog p,
+.integration-dialog span {
+  color: #cbd5e1;
+}
+
+.integration-dialog input.input,
+.integration-dialog select.input {
+  background: #0b1220;
+  color: #e2e8f0;
+  border-color: #334155;
+}
+
+.integration-dialog input.input:focus,
+.integration-dialog select.input:focus {
+  outline: none;
+  border-color: #7c3aed;
+  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.2);
+}
+
+.integration-dialog option {
+  background: #0b1220;
+  color: #e2e8f0;
+}
+
+.integration-dialog input[type="checkbox"] {
+  accent-color: #7c3aed;
+}
+
+.radarr-naming-help-dialog .mud-dialog-title {
+  letter-spacing: 0.01em;
+}
+
+.radarr-naming-help-dialog .mud-dialog-content,
+.radarr-naming-help-dialog .mud-dialog-actions {
+  background: transparent !important;
+}
+
+.radarr-naming-help-dialog .card-note,
+.radarr-naming-help-dialog li,
+.radarr-naming-help-dialog span,
+.radarr-naming-help-dialog p {
+  color: #cbd5e1;
+}
+
+.radarr-naming-help-dialog code {
+  color: #bfdbfe;
+  background: rgba(30, 41, 59, 0.9);
+  border: 1px solid rgba(71, 85, 105, 0.55);
+  border-radius: 6px;
+  padding: 0.1rem 0.3rem;
 }
 
 .integration-ops-pill {

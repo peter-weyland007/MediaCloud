@@ -11,6 +11,12 @@ public static class MediaCompatibilityQueueManagement
 {
     public static async Task<MediaCompatibilityQueueResult> QueuePreviewAsync(MediaCloudDbContext db, MediaCompatibilityRecommendationResponse recommendation, string actor, DateTimeOffset now)
     {
+        var approvedCommand = MediaCompatibilityRecommendationEngine.GetApprovedCommandPreview(recommendation);
+        if (string.IsNullOrWhiteSpace(approvedCommand))
+        {
+            return new MediaCompatibilityQueueResult(0, false, false, "No FFmpeg command is available to queue for this recommendation yet.");
+        }
+
         var existing = await db.LibraryRemediationJobs
             .Where(x => x.LibraryItemId == recommendation.LibraryItemId)
             .Where(x => x.ServiceKey == "ffmpeg")
@@ -31,7 +37,7 @@ public static class MediaCompatibilityQueueManagement
         var job = MediaCompatibilityRecommendationEngine.BuildPreviewJob(recommendation, actor, now);
         db.LibraryRemediationJobs.Add(job);
         await db.SaveChangesAsync();
-        return new MediaCompatibilityQueueResult(job.Id, true, false, "Queued safe FFmpeg compatibility remediation job. MediaCloud will execute it in the background and keep the original file untouched.");
+        return new MediaCompatibilityQueueResult(job.Id, true, false, "Queued approved FFmpeg compatibility action. MediaCloud will keep the original file untouched.");
     }
 
     public static async Task<MediaCompatibilityQueueRemovalResult> RemoveQueuedPreviewJobAsync(MediaCloudDbContext db, long jobId)

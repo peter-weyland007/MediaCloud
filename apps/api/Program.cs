@@ -6,6 +6,7 @@ using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Xml.Linq;
 using api;
 using api.Auth;
@@ -162,6 +163,7 @@ CREATE TABLE IF NOT EXISTS LibraryItems (
     TvdbId INTEGER NULL,
     ImdbId TEXT NOT NULL DEFAULT '',
     PlexRatingKey TEXT NOT NULL DEFAULT '',
+    ContentRating TEXT NOT NULL DEFAULT '',
     RuntimeMinutes REAL NULL,
     ActualRuntimeMinutes REAL NULL,
     PrimaryFilePath TEXT NOT NULL DEFAULT '',
@@ -229,6 +231,7 @@ CREATE TABLE IF NOT EXISTS LibraryRemediationJobs (
     LibraryIssueId INTEGER NULL,
     ServiceKey TEXT NOT NULL DEFAULT '',
     ServiceDisplayName TEXT NOT NULL DEFAULT '',
+    IntegrationId INTEGER NULL,
     RequestedAction TEXT NOT NULL DEFAULT '',
     CommandName TEXT NOT NULL DEFAULT '',
     ExternalItemId INTEGER NULL,
@@ -251,6 +254,11 @@ CREATE TABLE IF NOT EXISTS LibraryRemediationJobs (
     BlacklistStatus TEXT NOT NULL DEFAULT '',
     OutcomeSummary TEXT NOT NULL DEFAULT '',
     ResultMessage TEXT NOT NULL DEFAULT '',
+    ProviderCommandId INTEGER NULL,
+    ProviderCommandStatus TEXT NOT NULL DEFAULT '',
+    ProviderCommandSummary TEXT NOT NULL DEFAULT '',
+    DownloadType TEXT NOT NULL DEFAULT '',
+    ProviderCommandCheckedAtUtc TEXT NULL,
     ReleaseSummary TEXT NOT NULL DEFAULT '',
     ReleaseContextJson TEXT NOT NULL DEFAULT '',
     RequestedBy TEXT NOT NULL DEFAULT '',
@@ -299,6 +307,38 @@ CREATE TABLE IF NOT EXISTS PlaybackDiagnosticEntries (
 );
 CREATE INDEX IF NOT EXISTS IX_PlaybackDiagnosticEntries_Item_OccurredAtUtc ON PlaybackDiagnosticEntries(LibraryItemId, OccurredAtUtc);
 CREATE UNIQUE INDEX IF NOT EXISTS IX_PlaybackDiagnosticEntries_Item_Source_External ON PlaybackDiagnosticEntries(LibraryItemId, SourceService, ExternalId);
+CREATE TABLE IF NOT EXISTS WatchHistoryEntries (
+    Id INTEGER NOT NULL CONSTRAINT PK_WatchHistoryEntries PRIMARY KEY AUTOINCREMENT,
+    LibraryItemId INTEGER NOT NULL,
+    IntegrationId INTEGER NULL,
+    SourceService TEXT NOT NULL,
+    ExternalId TEXT NOT NULL DEFAULT '',
+    OccurredAtUtc TEXT NOT NULL,
+    ImportedAtUtc TEXT NOT NULL,
+    StartedAtUtc TEXT NULL,
+    StoppedAtUtc TEXT NULL,
+    UserName TEXT NOT NULL DEFAULT '',
+    ClientName TEXT NOT NULL DEFAULT '',
+    Player TEXT NOT NULL DEFAULT '',
+    Product TEXT NOT NULL DEFAULT '',
+    Platform TEXT NOT NULL DEFAULT '',
+    Decision TEXT NOT NULL DEFAULT '',
+    TranscodeDecision TEXT NOT NULL DEFAULT '',
+    VideoDecision TEXT NOT NULL DEFAULT '',
+    AudioDecision TEXT NOT NULL DEFAULT '',
+    SubtitleDecision TEXT NOT NULL DEFAULT '',
+    Container TEXT NOT NULL DEFAULT '',
+    VideoCodec TEXT NOT NULL DEFAULT '',
+    AudioCodec TEXT NOT NULL DEFAULT '',
+    SubtitleCodec TEXT NOT NULL DEFAULT '',
+    QualityProfile TEXT NOT NULL DEFAULT '',
+    ErrorMessage TEXT NOT NULL DEFAULT '',
+    RawPayloadJson TEXT NOT NULL DEFAULT '',
+    FOREIGN KEY (LibraryItemId) REFERENCES LibraryItems(Id) ON DELETE CASCADE,
+    FOREIGN KEY (IntegrationId) REFERENCES IntegrationConfigs(Id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS IX_WatchHistoryEntries_Item_OccurredAtUtc ON WatchHistoryEntries(LibraryItemId, OccurredAtUtc);
+CREATE UNIQUE INDEX IF NOT EXISTS IX_WatchHistoryEntries_Item_Source_External ON WatchHistoryEntries(LibraryItemId, SourceService, ExternalId);
 ");
 
     EnsureSqliteColumn(db, "IntegrationConfigs", "InstanceName", "TEXT NOT NULL DEFAULT 'Default'");
@@ -311,6 +351,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS IX_PlaybackDiagnosticEntries_Item_Source_Exter
     EnsureSqliteColumn(db, "IntegrationConfigs", "LatestReleaseVersion", "TEXT NOT NULL DEFAULT ''");
     EnsureSqliteColumn(db, "LibraryItems", "Description", "TEXT NOT NULL DEFAULT ''");
     EnsureSqliteColumn(db, "LibraryItems", "DescriptionSourceService", "TEXT NOT NULL DEFAULT ''");
+    EnsureSqliteColumn(db, "LibraryItems", "ContentRating", "TEXT NOT NULL DEFAULT ''");
     EnsureSqliteColumn(db, "LibraryItems", "ActualRuntimeMinutes", "REAL NULL");
     EnsureSqliteColumn(db, "LibraryItems", "PrimaryFilePath", "TEXT NOT NULL DEFAULT ''");
     EnsureSqliteColumn(db, "LibraryItems", "PlayabilityScore", "TEXT NOT NULL DEFAULT ''");
@@ -319,6 +360,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS IX_PlaybackDiagnosticEntries_Item_Source_Exter
     EnsureSqliteColumn(db, "LibraryItems", "PlayabilityCheckedAtUtc", "TEXT NULL");
     EnsureSqliteColumn(db, "LibraryItemSourceLinks", "SourceTitle", "TEXT NOT NULL DEFAULT ''");
     EnsureSqliteColumn(db, "LibraryItemSourceLinks", "SourceSortTitle", "TEXT NOT NULL DEFAULT ''");
+    EnsureSqliteColumn(db, "LibraryRemediationJobs", "IntegrationId", "INTEGER NULL");
     EnsureSqliteColumn(db, "LibraryRemediationJobs", "ReleaseSummary", "TEXT NOT NULL DEFAULT ''");
     EnsureSqliteColumn(db, "LibraryRemediationJobs", "ReleaseContextJson", "TEXT NOT NULL DEFAULT ''");
     EnsureSqliteColumn(db, "LibraryRemediationJobs", "ProfileDecision", "TEXT NOT NULL DEFAULT ''");
@@ -326,6 +368,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS IX_PlaybackDiagnosticEntries_Item_Source_Exter
     EnsureSqliteColumn(db, "LibraryRemediationJobs", "SearchStatus", "TEXT NOT NULL DEFAULT ''");
     EnsureSqliteColumn(db, "LibraryRemediationJobs", "BlacklistStatus", "TEXT NOT NULL DEFAULT ''");
     EnsureSqliteColumn(db, "LibraryRemediationJobs", "OutcomeSummary", "TEXT NOT NULL DEFAULT ''");
+    EnsureSqliteColumn(db, "LibraryRemediationJobs", "ProviderCommandId", "INTEGER NULL");
+    EnsureSqliteColumn(db, "LibraryRemediationJobs", "ProviderCommandStatus", "TEXT NOT NULL DEFAULT ''");
+    EnsureSqliteColumn(db, "LibraryRemediationJobs", "ProviderCommandSummary", "TEXT NOT NULL DEFAULT ''");
+    EnsureSqliteColumn(db, "LibraryRemediationJobs", "DownloadType", "TEXT NOT NULL DEFAULT ''");
+    EnsureSqliteColumn(db, "LibraryRemediationJobs", "ProviderCommandCheckedAtUtc", "TEXT NULL");
     EnsureSqliteColumn(db, "LibraryRemediationJobs", "LastCheckedAtUtc", "TEXT NULL");
 
     db.Database.ExecuteSqlRaw(@"INSERT INTO LibraryPathMappings (IntegrationId, RemoteRootPath, LocalRootPath, UpdatedAtUtc)
@@ -453,7 +500,7 @@ app.MapPost("/api/reconcile/plex-backfill/apply", async (PlexBackfillApplyReques
 
         if (candidate.MissingRadarr)
         {
-            var radarrResult = await EnsureMovieInRadarrAsync(candidate, radarr, httpClientFactory);
+            var radarrResult = await EnsureMovieInRadarrAsync(candidate, radarr, db, httpClientFactory);
             if (radarrResult.Success)
             {
                 appliedRadarr += radarrResult.PerformedAction ? 1 : 0;
@@ -1487,40 +1534,467 @@ app.MapGet("/api/integrations/{id:long}/remote-roots", async (long id, MediaClou
 
     try
     {
+        var roots = await FetchIntegrationRemoteRootsAsync(integration, httpClientFactory);
+        return Results.Ok(new IntegrationRemoteRootsResponse(integration.Id, serviceKey, roots, roots.Count == 0 ? "No root folders returned by integration." : string.Empty));
+    }
+    catch (Exception ex)
+    {
+        return Results.Ok(new IntegrationRemoteRootsResponse(integration.Id, serviceKey, [], $"Failed to discover root folders: {ex.Message}"));
+    }
+}).RequireAuthorization("AdminOnly");
+
+
+app.MapGet("/api/integrations/{id:long}/radarr/default-add-policy", async (long id, MediaCloudDbContext db, IHttpClientFactory httpClientFactory) =>
+{
+    var integration = await db.IntegrationConfigs.FirstOrDefaultAsync(x => x.Id == id);
+    if (integration is null) return Results.NotFound(new ErrorResponse("Integration instance not found."));
+    if (!string.Equals(integration.ServiceKey, "radarr", StringComparison.OrdinalIgnoreCase)) return Results.BadRequest(new ErrorResponse("Default add policy management is supported for Radarr only."));
+
+    try
+    {
+        return Results.Ok(await LoadRadarrDefaultAddPolicyAsync(db, integration, httpClientFactory));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new ErrorResponse($"Failed to load Radarr default add policy: {ex.Message}"));
+    }
+}).RequireAuthorization("AdminOnly");
+
+app.MapPut("/api/integrations/{id:long}/radarr/default-add-policy", async (long id, UpdateRadarrDefaultAddPolicyRequest requestBody, MediaCloudDbContext db, IHttpClientFactory httpClientFactory, ClaimsPrincipal principal) =>
+{
+    var integration = await db.IntegrationConfigs.FirstOrDefaultAsync(x => x.Id == id);
+    if (integration is null) return Results.NotFound(new ErrorResponse("Integration instance not found."));
+    if (!string.Equals(integration.ServiceKey, "radarr", StringComparison.OrdinalIgnoreCase)) return Results.BadRequest(new ErrorResponse("Default add policy management is supported for Radarr only."));
+
+    try
+    {
+        var current = await LoadRadarrDefaultAddPolicyAsync(db, integration, httpClientFactory);
+        if (current.AvailableRootFolders.Count == 0)
+        {
+            return Results.BadRequest(new ErrorResponse("Radarr returned no root folders, so a default add policy cannot be saved yet."));
+        }
+
+        if (!current.AvailableRootFolders.Contains(requestBody.RootFolderPath, StringComparer.OrdinalIgnoreCase))
+        {
+            return Results.BadRequest(new ErrorResponse("Selected root folder does not exist in Radarr."));
+        }
+
+        if (!current.AvailableQualityProfiles.Any(x => x.Id == requestBody.QualityProfileId))
+        {
+            return Results.BadRequest(new ErrorResponse("Selected quality profile does not exist in Radarr."));
+        }
+
+        if (!GetRadarrMinimumAvailabilityOptions().Contains(requestBody.MinimumAvailability, StringComparer.OrdinalIgnoreCase))
+        {
+            return Results.BadRequest(new ErrorResponse("Selected minimum availability is not supported."));
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        await SetRadarrPreferredRootFolderAsync(db, integration.Id, requestBody.RootFolderPath.Trim(), now);
+        await SetRadarrPreferredQualityProfileIdAsync(db, integration.Id, requestBody.QualityProfileId, now);
+        await SetRadarrMinimumAvailabilityAsync(db, integration.Id, requestBody.MinimumAvailability.Trim(), now);
+        await SetRadarrMonitoredDefaultAsync(db, integration.Id, requestBody.Monitored, now);
+        await WriteAuditAsync(db, principal, "radarr_default_add_policy", principal.Identity?.Name ?? "admin", $"Updated Radarr default add policy for '{integration.InstanceName}' root='{requestBody.RootFolderPath}', qualityProfileId={requestBody.QualityProfileId}, minimumAvailability='{requestBody.MinimumAvailability}', monitored={requestBody.Monitored}");
+        await db.SaveChangesAsync();
+
+        return Results.Ok(await LoadRadarrDefaultAddPolicyAsync(db, integration, httpClientFactory));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new ErrorResponse($"Failed to save Radarr default add policy: {ex.Message}"));
+    }
+}).RequireAuthorization("AdminOnly");
+
+app.MapGet("/api/integrations/{id:long}/radarr/tags", async (long id, MediaCloudDbContext db, IHttpClientFactory httpClientFactory) =>
+{
+    var integration = await db.IntegrationConfigs.FirstOrDefaultAsync(x => x.Id == id);
+    if (integration is null) return Results.NotFound(new ErrorResponse("Integration instance not found."));
+    if (!string.Equals(integration.ServiceKey, "radarr", StringComparison.OrdinalIgnoreCase)) return Results.BadRequest(new ErrorResponse("Tag management is supported for Radarr only."));
+
+    try
+    {
+        return Results.Ok(await LoadRadarrTagsAsync(db, integration, httpClientFactory));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new ErrorResponse($"Failed to load Radarr tags: {ex.Message}"));
+    }
+}).RequireAuthorization("AdminOnly");
+
+app.MapPut("/api/integrations/{id:long}/radarr/tags", async (long id, UpdateRadarrTagsRequest requestBody, MediaCloudDbContext db, IHttpClientFactory httpClientFactory, ClaimsPrincipal principal) =>
+{
+    var integration = await db.IntegrationConfigs.FirstOrDefaultAsync(x => x.Id == id);
+    if (integration is null) return Results.NotFound(new ErrorResponse("Integration instance not found."));
+    if (!string.Equals(integration.ServiceKey, "radarr", StringComparison.OrdinalIgnoreCase)) return Results.BadRequest(new ErrorResponse("Tag management is supported for Radarr only."));
+
+    try
+    {
+        var current = await LoadRadarrTagsAsync(db, integration, httpClientFactory);
+        var selectedTagIds = requestBody.SelectedTagIds?
+            .Distinct()
+            .OrderBy(x => x)
+            .ToList() ?? [];
+
+        if (selectedTagIds.Except(current.Tags.Select(x => x.Id)).Any())
+        {
+            return Results.BadRequest(new ErrorResponse("One or more selected Radarr tags do not exist."));
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        await SetRadarrPreferredTagIdsAsync(db, integration.Id, selectedTagIds, now);
+        var selectedNames = current.Tags.Where(x => selectedTagIds.Contains(x.Id)).Select(x => x.Label).ToList();
+        await WriteAuditAsync(db, principal, "radarr_tags", principal.Identity?.Name ?? "admin", $"Updated Radarr default tags for '{integration.InstanceName}' to [{string.Join(", ", selectedNames)}]");
+        await db.SaveChangesAsync();
+
+        return Results.Ok(await LoadRadarrTagsAsync(db, integration, httpClientFactory));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new ErrorResponse($"Failed to save Radarr tags: {ex.Message}"));
+    }
+}).RequireAuthorization("AdminOnly");
+
+app.MapGet("/api/integrations/{id:long}/radarr/quality-profiles", async (long id, MediaCloudDbContext db, IHttpClientFactory httpClientFactory) =>
+{
+    var integration = await db.IntegrationConfigs.FirstOrDefaultAsync(x => x.Id == id);
+    if (integration is null) return Results.NotFound(new ErrorResponse("Integration instance not found."));
+    if (!string.Equals(integration.ServiceKey, "radarr", StringComparison.OrdinalIgnoreCase)) return Results.BadRequest(new ErrorResponse("Quality profile management is supported for Radarr only."));
+
+    try
+    {
+        var profiles = await FetchRadarrQualityProfilesAsync(integration, httpClientFactory);
+        var preferredProfileId = await GetRadarrPreferredQualityProfileIdAsync(db, integration.Id);
+        var preferredProfileName = preferredProfileId.HasValue
+            ? profiles.FirstOrDefault(x => x.Id == preferredProfileId.Value)?.Name ?? string.Empty
+            : string.Empty;
+        var observedLibraryQualityProfiles = await db.LibraryItemSourceLinks
+            .Where(x => x.IntegrationId == integration.Id)
+            .Join(db.LibraryItems,
+                link => link.LibraryItemId,
+                item => item.Id,
+                (_, item) => item.QualityProfile)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct()
+            .OrderBy(x => x)
+            .ToListAsync();
+
+        return Results.Ok(new RadarrQualityProfilesResponse(
+            integration.Id,
+            profiles,
+            preferredProfileId,
+            preferredProfileName,
+            observedLibraryQualityProfiles));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new ErrorResponse($"Failed to load Radarr quality profiles: {ex.Message}"));
+    }
+}).RequireAuthorization("AdminOnly");
+
+app.MapPut("/api/integrations/{id:long}/radarr/quality-profiles", async (long id, UpdateRadarrPreferredQualityProfileRequest requestBody, MediaCloudDbContext db, IHttpClientFactory httpClientFactory, ClaimsPrincipal principal) =>
+{
+    var integration = await db.IntegrationConfigs.FirstOrDefaultAsync(x => x.Id == id);
+    if (integration is null) return Results.NotFound(new ErrorResponse("Integration instance not found."));
+    if (!string.Equals(integration.ServiceKey, "radarr", StringComparison.OrdinalIgnoreCase)) return Results.BadRequest(new ErrorResponse("Quality profile management is supported for Radarr only."));
+
+    try
+    {
+        var profiles = await FetchRadarrQualityProfilesAsync(integration, httpClientFactory);
+        var selectedProfile = profiles.FirstOrDefault(x => x.Id == requestBody.PreferredProfileId);
+        if (selectedProfile is null)
+        {
+            return Results.BadRequest(new ErrorResponse("Selected Radarr quality profile does not exist."));
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        await SetRadarrPreferredQualityProfileIdAsync(db, integration.Id, selectedProfile.Id, now);
+        await WriteAuditAsync(db, principal, "radarr_quality_profile", principal.Identity?.Name ?? "admin", $"Set Radarr preferred quality profile for '{integration.InstanceName}' to '{selectedProfile.Name}' (id={selectedProfile.Id})");
+        await db.SaveChangesAsync();
+
+        var observedLibraryQualityProfiles = await db.LibraryItemSourceLinks
+            .Where(x => x.IntegrationId == integration.Id)
+            .Join(db.LibraryItems,
+                link => link.LibraryItemId,
+                item => item.Id,
+                (_, item) => item.QualityProfile)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct()
+            .OrderBy(x => x)
+            .ToListAsync();
+
+        return Results.Ok(new RadarrQualityProfilesResponse(
+            integration.Id,
+            profiles,
+            selectedProfile.Id,
+            selectedProfile.Name,
+            observedLibraryQualityProfiles));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new ErrorResponse($"Failed to save Radarr preferred quality profile: {ex.Message}"));
+    }
+}).RequireAuthorization("AdminOnly");
+
+app.MapPost("/api/integrations/{id:long}/radarr/quality-profiles/sync-mediacloud-profile", async (long id, MediaCloudDbContext db, IHttpClientFactory httpClientFactory, ClaimsPrincipal principal) =>
+{
+    var integration = await db.IntegrationConfigs.FirstOrDefaultAsync(x => x.Id == id);
+    if (integration is null) return Results.NotFound(new ErrorResponse("Integration instance not found."));
+    if (!string.Equals(integration.ServiceKey, "radarr", StringComparison.OrdinalIgnoreCase)) return Results.BadRequest(new ErrorResponse("Quality profile management is supported for Radarr only."));
+
+    try
+    {
+        var preferredProfileId = await GetRadarrPreferredQualityProfileIdAsync(db, integration.Id);
+        var syncedProfile = await SyncRadarrMediaCloudProfileAsync(integration, httpClientFactory, preferredProfileId);
+        var now = DateTimeOffset.UtcNow;
+        await SetRadarrPreferredQualityProfileIdAsync(db, integration.Id, syncedProfile.Id, now);
+        await WriteAuditAsync(db, principal, "radarr_quality_profile_sync", principal.Identity?.Name ?? "admin", $"Synced remote Radarr quality profile 'MediaCloud Profile' for '{integration.InstanceName}' (id={syncedProfile.Id})");
+        await db.SaveChangesAsync();
+
+        var profiles = await FetchRadarrQualityProfilesAsync(integration, httpClientFactory);
+        var observedLibraryQualityProfiles = await db.LibraryItemSourceLinks
+            .Where(x => x.IntegrationId == integration.Id)
+            .Join(db.LibraryItems,
+                link => link.LibraryItemId,
+                item => item.Id,
+                (_, item) => item.QualityProfile)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct()
+            .OrderBy(x => x)
+            .ToListAsync();
+
+        return Results.Ok(new RadarrQualityProfilesResponse(
+            integration.Id,
+            profiles,
+            syncedProfile.Id,
+            syncedProfile.Name,
+            observedLibraryQualityProfiles));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new ErrorResponse($"Failed to sync MediaCloud Profile into Radarr: {ex.Message}"));
+    }
+}).RequireAuthorization("AdminOnly");
+
+app.MapGet("/api/integrations/{id:long}/sonarr/quality-profiles", async (long id, MediaCloudDbContext db, IHttpClientFactory httpClientFactory) =>
+{
+    var integration = await db.IntegrationConfigs.FirstOrDefaultAsync(x => x.Id == id);
+    if (integration is null) return Results.NotFound(new ErrorResponse("Integration instance not found."));
+    if (!string.Equals(integration.ServiceKey, "sonarr", StringComparison.OrdinalIgnoreCase)) return Results.BadRequest(new ErrorResponse("Quality profile management is supported for Sonarr only."));
+
+    try
+    {
+        var profiles = await FetchRadarrQualityProfilesAsync(integration, httpClientFactory);
+        var preferredProfileId = await GetSonarrPreferredQualityProfileIdAsync(db, integration.Id);
+        var preferredProfileName = preferredProfileId.HasValue
+            ? profiles.FirstOrDefault(x => x.Id == preferredProfileId.Value)?.Name ?? string.Empty
+            : string.Empty;
+        var observedLibraryQualityProfiles = await db.LibraryItemSourceLinks
+            .Where(x => x.IntegrationId == integration.Id)
+            .Join(db.LibraryItems,
+                link => link.LibraryItemId,
+                item => item.Id,
+                (_, item) => item.QualityProfile)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct()
+            .OrderBy(x => x)
+            .ToListAsync();
+
+        return Results.Ok(new RadarrQualityProfilesResponse(
+            integration.Id,
+            profiles,
+            preferredProfileId,
+            preferredProfileName,
+            observedLibraryQualityProfiles));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new ErrorResponse($"Failed to load Sonarr quality profiles: {ex.Message}"));
+    }
+}).RequireAuthorization("AdminOnly");
+
+app.MapPut("/api/integrations/{id:long}/sonarr/quality-profiles", async (long id, UpdateRadarrPreferredQualityProfileRequest requestBody, MediaCloudDbContext db, IHttpClientFactory httpClientFactory, ClaimsPrincipal principal) =>
+{
+    var integration = await db.IntegrationConfigs.FirstOrDefaultAsync(x => x.Id == id);
+    if (integration is null) return Results.NotFound(new ErrorResponse("Integration instance not found."));
+    if (!string.Equals(integration.ServiceKey, "sonarr", StringComparison.OrdinalIgnoreCase)) return Results.BadRequest(new ErrorResponse("Quality profile management is supported for Sonarr only."));
+
+    try
+    {
+        var profiles = await FetchRadarrQualityProfilesAsync(integration, httpClientFactory);
+        var selectedProfile = profiles.FirstOrDefault(x => x.Id == requestBody.PreferredProfileId);
+        if (selectedProfile is null)
+        {
+            return Results.BadRequest(new ErrorResponse("Selected Sonarr quality profile does not exist."));
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        await SetSonarrPreferredQualityProfileIdAsync(db, integration.Id, selectedProfile.Id, now);
+        await WriteAuditAsync(db, principal, "sonarr_quality_profile", principal.Identity?.Name ?? "admin", $"Set Sonarr preferred quality profile for '{integration.InstanceName}' to '{selectedProfile.Name}' (id={selectedProfile.Id})");
+        await db.SaveChangesAsync();
+
+        var observedLibraryQualityProfiles = await db.LibraryItemSourceLinks
+            .Where(x => x.IntegrationId == integration.Id)
+            .Join(db.LibraryItems,
+                link => link.LibraryItemId,
+                item => item.Id,
+                (_, item) => item.QualityProfile)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct()
+            .OrderBy(x => x)
+            .ToListAsync();
+
+        return Results.Ok(new RadarrQualityProfilesResponse(
+            integration.Id,
+            profiles,
+            selectedProfile.Id,
+            selectedProfile.Name,
+            observedLibraryQualityProfiles));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new ErrorResponse($"Failed to save Sonarr preferred quality profile: {ex.Message}"));
+    }
+}).RequireAuthorization("AdminOnly");
+
+app.MapPost("/api/integrations/{id:long}/sonarr/quality-profiles/sync-mediacloud-profile", async (long id, MediaCloudDbContext db, IHttpClientFactory httpClientFactory, ClaimsPrincipal principal) =>
+{
+    var integration = await db.IntegrationConfigs.FirstOrDefaultAsync(x => x.Id == id);
+    if (integration is null) return Results.NotFound(new ErrorResponse("Integration instance not found."));
+    if (!string.Equals(integration.ServiceKey, "sonarr", StringComparison.OrdinalIgnoreCase)) return Results.BadRequest(new ErrorResponse("Quality profile management is supported for Sonarr only."));
+
+    try
+    {
+        var preferredProfileId = await GetSonarrPreferredQualityProfileIdAsync(db, integration.Id);
+        var syncedProfile = await SyncRadarrMediaCloudProfileAsync(integration, httpClientFactory, preferredProfileId);
+        var now = DateTimeOffset.UtcNow;
+        await SetSonarrPreferredQualityProfileIdAsync(db, integration.Id, syncedProfile.Id, now);
+        await WriteAuditAsync(db, principal, "sonarr_quality_profile_sync", principal.Identity?.Name ?? "admin", $"Synced remote Sonarr quality profile 'MediaCloud Profile' for '{integration.InstanceName}' (id={syncedProfile.Id})");
+        await db.SaveChangesAsync();
+
+        var profiles = await FetchRadarrQualityProfilesAsync(integration, httpClientFactory);
+        var observedLibraryQualityProfiles = await db.LibraryItemSourceLinks
+            .Where(x => x.IntegrationId == integration.Id)
+            .Join(db.LibraryItems,
+                link => link.LibraryItemId,
+                item => item.Id,
+                (_, item) => item.QualityProfile)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct()
+            .OrderBy(x => x)
+            .ToListAsync();
+
+        return Results.Ok(new RadarrQualityProfilesResponse(
+            integration.Id,
+            profiles,
+            syncedProfile.Id,
+            syncedProfile.Name,
+            observedLibraryQualityProfiles));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new ErrorResponse($"Failed to sync MediaCloud Profile into Sonarr: {ex.Message}"));
+    }
+}).RequireAuthorization("AdminOnly");
+
+app.MapGet("/api/integrations/{id:long}/radarr/naming", async (long id, MediaCloudDbContext db, IHttpClientFactory httpClientFactory) =>
+{
+    var integration = await db.IntegrationConfigs.FirstOrDefaultAsync(x => x.Id == id);
+    if (integration is null) return Results.NotFound(new ErrorResponse("Integration instance not found."));
+    if (!string.Equals(integration.ServiceKey, "radarr", StringComparison.OrdinalIgnoreCase)) return Results.BadRequest(new ErrorResponse("Naming convention management is supported for Radarr only."));
+
+    try
+    {
         var client = httpClientFactory.CreateClient();
         client.Timeout = TimeSpan.FromSeconds(30);
 
-        var uri = $"{integration.BaseUrl.TrimEnd('/')}/api/v3/rootfolder";
+        var uri = $"{integration.BaseUrl.TrimEnd('/')}/api/v3/config/naming";
         using var request = new HttpRequestMessage(HttpMethod.Get, uri);
         ApplyIntegrationAuthHeaders(integration, request);
 
         using var response = await client.SendAsync(request);
         if (!response.IsSuccessStatusCode)
         {
-            return Results.Ok(new IntegrationRemoteRootsResponse(integration.Id, serviceKey, [], $"Failed to fetch root folders (HTTP {(int)response.StatusCode})."));
+            return Results.StatusCode((int)response.StatusCode);
         }
 
         var payload = await response.Content.ReadAsStringAsync();
         using var doc = JsonDocument.Parse(payload);
-        if (doc.RootElement.ValueKind != JsonValueKind.Array)
+        var root = doc.RootElement;
+        if (root.ValueKind != JsonValueKind.Object)
         {
-            return Results.Ok(new IntegrationRemoteRootsResponse(integration.Id, serviceKey, [], "Unexpected root folder payload."));
+            return Results.BadRequest(new ErrorResponse("Unexpected Radarr naming payload."));
         }
 
-        var roots = doc.RootElement
-            .EnumerateArray()
-            .Select(x => GetJsonString(x, "path"))
-            .Where(x => !string.IsNullOrWhiteSpace(x))
-            .Select(x => x!.Trim())
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
-            .ToList();
-
-        return Results.Ok(new IntegrationRemoteRootsResponse(integration.Id, serviceKey, roots, roots.Count == 0 ? "No root folders returned by integration." : string.Empty));
+        return Results.Ok(new RadarrNamingSettingsResponse(
+            integration.Id,
+            GetJsonBool(root, "renameMovies") ?? false,
+            GetJsonBool(root, "replaceIllegalCharacters") ?? true,
+            GetJsonString(root, "colonReplacementFormat") ?? string.Empty,
+            GetJsonString(root, "standardMovieFormat") ?? string.Empty,
+            GetJsonString(root, "movieFolderFormat") ?? string.Empty,
+            GetJsonInt(root, "id") ?? 0));
     }
     catch (Exception ex)
     {
-        return Results.Ok(new IntegrationRemoteRootsResponse(integration.Id, serviceKey, [], $"Failed to discover root folders: {ex.Message}"));
+        return Results.BadRequest(new ErrorResponse($"Failed to load Radarr naming settings: {ex.Message}"));
+    }
+}).RequireAuthorization("AdminOnly");
+
+app.MapPut("/api/integrations/{id:long}/radarr/naming", async (long id, UpdateRadarrNamingSettingsRequest requestBody, MediaCloudDbContext db, IHttpClientFactory httpClientFactory) =>
+{
+    var integration = await db.IntegrationConfigs.FirstOrDefaultAsync(x => x.Id == id);
+    if (integration is null) return Results.NotFound(new ErrorResponse("Integration instance not found."));
+    if (!string.Equals(integration.ServiceKey, "radarr", StringComparison.OrdinalIgnoreCase)) return Results.BadRequest(new ErrorResponse("Naming convention management is supported for Radarr only."));
+    if (string.IsNullOrWhiteSpace(requestBody.StandardMovieFormat)) return Results.BadRequest(new ErrorResponse("Standard movie format is required."));
+    if (string.IsNullOrWhiteSpace(requestBody.MovieFolderFormat)) return Results.BadRequest(new ErrorResponse("Movie folder format is required."));
+
+    try
+    {
+        var client = httpClientFactory.CreateClient();
+        client.Timeout = TimeSpan.FromSeconds(30);
+
+        var uri = $"{integration.BaseUrl.TrimEnd('/')}/api/v3/config/naming";
+        using var request = new HttpRequestMessage(HttpMethod.Put, uri)
+        {
+            Content = JsonContent.Create(new
+            {
+                renameMovies = requestBody.RenameMovies,
+                replaceIllegalCharacters = requestBody.ReplaceIllegalCharacters,
+                colonReplacementFormat = requestBody.ColonReplacementFormat?.Trim() ?? string.Empty,
+                standardMovieFormat = requestBody.StandardMovieFormat.Trim(),
+                movieFolderFormat = requestBody.MovieFolderFormat.Trim(),
+                id = requestBody.ConfigId > 0 ? requestBody.ConfigId : 1
+            })
+        };
+        ApplyIntegrationAuthHeaders(integration, request);
+
+        using var response = await client.SendAsync(request);
+        if (!response.IsSuccessStatusCode)
+        {
+            var responseBody = await response.Content.ReadAsStringAsync();
+            return Results.BadRequest(new ErrorResponse($"Radarr rejected naming update (HTTP {(int)response.StatusCode}). {responseBody}"));
+        }
+
+        var payload = await response.Content.ReadAsStringAsync();
+        using var doc = JsonDocument.Parse(payload);
+        var root = doc.RootElement;
+        if (root.ValueKind != JsonValueKind.Object)
+        {
+            return Results.BadRequest(new ErrorResponse("Unexpected Radarr naming payload after save."));
+        }
+
+        return Results.Ok(new RadarrNamingSettingsResponse(
+            integration.Id,
+            GetJsonBool(root, "renameMovies") ?? requestBody.RenameMovies,
+            GetJsonBool(root, "replaceIllegalCharacters") ?? requestBody.ReplaceIllegalCharacters,
+            GetJsonString(root, "colonReplacementFormat") ?? (requestBody.ColonReplacementFormat?.Trim() ?? string.Empty),
+            GetJsonString(root, "standardMovieFormat") ?? requestBody.StandardMovieFormat.Trim(),
+            GetJsonString(root, "movieFolderFormat") ?? requestBody.MovieFolderFormat.Trim(),
+            GetJsonInt(root, "id") ?? requestBody.ConfigId));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new ErrorResponse($"Failed to update Radarr naming settings: {ex.Message}"));
     }
 }).RequireAuthorization("AdminOnly");
 
@@ -1940,6 +2414,46 @@ app.MapGet("/api/library/items/{id:long}/media-compatibility-recommendation", as
     return Results.Ok(recommendation);
 }).RequireAuthorization();
 
+app.MapPost("/api/library/items/{id:long}/media-compatibility-remediation/queue", async (long id, MediaCloudDbContext db, ClaimsPrincipal principal) =>
+{
+    var item = await db.LibraryItems.FirstOrDefaultAsync(x => x.Id == id);
+    if (item is null)
+    {
+        return Results.NotFound(new ErrorResponse("Library item not found."));
+    }
+
+    var settings = await MediaProfileSettings.LoadCurrentAsync(db, MediaProfilePresetCatalog.BroadPlexCompatibility.Settings);
+    var details = DeserializePlayabilityDetails(item.PlayabilityDetailsJson);
+    var latestDiagnostic = await LatestPlaybackDiagnostic.LoadLatestAsync(db, item.Id);
+    var recommendation = MediaCompatibilityRecommendationEngine.Build(item, details, latestDiagnostic, settings);
+    var actor = principal.Identity?.Name ?? "admin";
+    var result = await MediaCompatibilityQueueManagement.QueuePreviewAsync(db, recommendation, actor, DateTimeOffset.UtcNow);
+
+    await WriteAuditAsync(db, principal, "library_media_compatibility_queue", actor, $"Queued compatibility remediation for library item {item.Id}: queued={result.Queued}, alreadyQueued={result.AlreadyQueued}, jobId={result.JobId}");
+    await db.SaveChangesAsync();
+
+    return Results.Ok(new QueueMediaCompatibilityRemediationResponse(item.Id, result.JobId, result.Queued, result.AlreadyQueued, result.Message));
+}).RequireAuthorization("OperatorOnly");
+
+app.MapPost("/api/library/items/{id:long}/playback-smoke-test", async (long id, MediaPlaybackSmokeTestRequest? request, MediaCloudDbContext db) =>
+{
+    var item = await db.LibraryItems.FirstOrDefaultAsync(x => x.Id == id);
+    if (item is null)
+    {
+        return Results.NotFound(new ErrorResponse("Library item not found."));
+    }
+
+    var settings = await MediaProfileSettings.LoadCurrentAsync(db, MediaProfilePresetCatalog.BroadPlexCompatibility.Settings);
+    var details = DeserializePlayabilityDetails(item.PlayabilityDetailsJson);
+    var latestDiagnostic = await LatestPlaybackDiagnostic.LoadLatestAsync(db, item.Id);
+    var recommendation = MediaCompatibilityRecommendationEngine.Build(item, details, latestDiagnostic, settings);
+    var plan = MediaPlaybackSmokeTestEngine.BuildPlan(item, recommendation, request?.SampleSeconds ?? 45, request?.SeekPercent ?? 35);
+    var response = request?.RunSample == false
+        ? MediaPlaybackSmokeTestEngine.BuildNotRunResponse(plan, "Playback smoke test plan prepared. Run the sample when you want ffmpeg evidence.")
+        : await MediaPlaybackSmokeTestEngine.RunAsync(plan, CancellationToken.None);
+    return Results.Ok(response);
+}).RequireAuthorization("AdminOnly");
+
 app.MapGet("/api/library/items/{id:long}/bazarr-subtitles", async (long id, MediaCloudDbContext db, IHttpClientFactory httpClientFactory) =>
 {
     var item = await db.LibraryItems.FirstOrDefaultAsync(x => x.Id == id);
@@ -2219,7 +2733,54 @@ app.MapPost("/api/library/items/{id:long}/playback-diagnostics/pull", async (lon
     return Results.Ok(response);
 }).RequireAuthorization("AdminOnly");
 
-app.MapGet("/api/library/items/{id:long}/remediation-jobs", async (long id, MediaCloudDbContext db, int? take) =>
+app.MapGet("/api/library/items/{id:long}/watch-history", async (long id, MediaCloudDbContext db, int? take) =>
+{
+    var itemExists = await db.LibraryItems.AnyAsync(x => x.Id == id);
+    if (!itemExists)
+    {
+        return Results.NotFound(new ErrorResponse("Library item not found."));
+    }
+
+    var limit = Math.Clamp(take ?? 50, 1, 200);
+    var rows = await db.WatchHistoryEntries
+        .Where(x => x.LibraryItemId == id)
+        .ToListAsync();
+
+    return Results.Ok(rows
+        .OrderByDescending(x => x.OccurredAtUtc)
+        .Take(limit)
+        .Select(MapWatchHistoryDto)
+        .ToList());
+}).RequireAuthorization();
+
+app.MapGet("/api/library/items/{id:long}/watch-history/summary", async (long id, MediaCloudDbContext db) =>
+{
+    var itemExists = await db.LibraryItems.AnyAsync(x => x.Id == id);
+    if (!itemExists)
+    {
+        return Results.NotFound(new ErrorResponse("Library item not found."));
+    }
+
+    var rows = await db.WatchHistoryEntries
+        .Where(x => x.LibraryItemId == id)
+        .ToListAsync();
+
+    return Results.Ok(MapWatchHistorySummaryDto(StoredWatchHistorySummaryBuilder.Build(id, rows)));
+}).RequireAuthorization();
+
+app.MapPost("/api/library/items/{id:long}/watch-history/pull", async (long id, PullPlaybackDiagnosticsRequest? request, MediaCloudDbContext db, IHttpClientFactory httpClientFactory) =>
+{
+    var item = await db.LibraryItems.FirstOrDefaultAsync(x => x.Id == id);
+    if (item is null)
+    {
+        return Results.NotFound(new ErrorResponse("Library item not found."));
+    }
+
+    var result = await ImportPlaybackEvidenceAsync(item, db, httpClientFactory, request);
+    return Results.Ok(new PullWatchHistoryResponse(item.Id, result.WatchImportedCount, result.WatchUpdatedCount, result.WatchTotalCount, result.UsedTautulli, result.UsedPlex, result.Message));
+}).RequireAuthorization("AdminOnly");
+
+app.MapGet("/api/library/items/{id:long}/remediation-jobs", async (long id, MediaCloudDbContext db, IHttpClientFactory httpClientFactory, int? take) =>
 {
     var itemExists = await db.LibraryItems.AnyAsync(x => x.Id == id);
     if (!itemExists)
@@ -2234,6 +2795,39 @@ app.MapGet("/api/library/items/{id:long}/remediation-jobs", async (long id, Medi
         .OrderByDescending(x => x.RequestedAtUtc)
         .Take(limit)
         .ToList();
+    var item = await db.LibraryItems.FirstAsync(x => x.Id == id);
+    var sourceLinkRows = await db.LibraryItemSourceLinks
+        .Where(x => x.LibraryItemId == id)
+        .ToListAsync();
+    var currentSourceTitle = sourceLinkRows
+        .OrderByDescending(x => x.LastSeenAtUtc)
+        .ThenByDescending(x => x.Id)
+        .Select(x => x.SourceTitle)
+        .FirstOrDefault() ?? string.Empty;
+    var relatedIssueIds = rows
+        .Where(x => x.LibraryIssueId.HasValue)
+        .Select(x => x.LibraryIssueId!.Value)
+        .Distinct()
+        .ToArray();
+    var relatedIssues = relatedIssueIds.Length == 0
+        ? new Dictionary<long, LibraryIssue>()
+        : await db.LibraryIssues
+            .Where(x => relatedIssueIds.Contains(x.Id))
+            .ToDictionaryAsync(x => x.Id);
+
+    var checkedAtUtc = DateTimeOffset.UtcNow;
+    var changed = false;
+    foreach (var row in rows)
+    {
+        changed |= await LibraryRemediationProviderCommandTracker.RefreshAsync(row, db, httpClientFactory, checkedAtUtc);
+        relatedIssues.TryGetValue(row.LibraryIssueId ?? 0, out var relatedIssue);
+        changed |= LibraryRemediationJobLiveState.Refresh(row, item, relatedIssue, currentSourceTitle, checkedAtUtc);
+    }
+
+    if (changed)
+    {
+        await db.SaveChangesAsync();
+    }
 
     return Results.Ok(rows.Select(MapLibraryRemediationJobDto).ToList());
 }).RequireAuthorization("AdminOnly");
@@ -2311,7 +2905,26 @@ app.MapPost("/api/library/items/{id:long}/remediation/search-replacement", async
     var normalizedReason = string.IsNullOrWhiteSpace(request?.Reason) ? "unspecified" : request!.Reason.Trim();
     var normalizedNotes = string.IsNullOrWhiteSpace(request?.Notes) ? string.Empty : request!.Notes.Trim();
     var actor = principal.Identity?.Name ?? "admin";
+    var now = DateTimeOffset.UtcNow;
     var intent = LibraryRemediationPlanner.BuildIntent(normalizedIssueType, request?.Notes);
+    var relatedJobs = await db.LibraryRemediationJobs
+        .Where(x => x.LibraryItemId == item.Id)
+        .ToListAsync();
+    var repeatCandidate = new LibraryRemediationJob
+    {
+        LibraryItemId = item.Id,
+        RequestedAction = intent.RequestedAction,
+        IssueType = intent.IssueType,
+        Reason = normalizedReason,
+        RequestedAtUtc = now
+    };
+    var repeatDecision = LibraryRemediationRepeatGuard.Evaluate(repeatCandidate, relatedJobs.Append(repeatCandidate), now);
+    if (!repeatDecision.Allowed)
+    {
+        await WriteAuditAsync(db, principal, "library_remediation_search_replacement_blocked_duplicate", actor, $"Blocked duplicate replacement search for library item {item.Id}: issueType={intent.IssueType}, reason={normalizedReason}, blockingJobId={repeatDecision.BlockingJobId}, message={repeatDecision.Message}");
+        await db.SaveChangesAsync();
+        return Results.Conflict(new ErrorResponse(repeatDecision.Message));
+    }
     if (!intent.ShouldSearchNow)
     {
         var blockedResult = LibraryRemediationExecution.BuildBlockedResult(item.Id, plan.ServiceKey, plan.DisplayName, plan.CommandName, plan.ExternalItemId, normalizedReason, normalizedNotes, intent.PolicySummary, intent);
@@ -2320,7 +2933,7 @@ app.MapPost("/api/library/items/{id:long}/remediation/search-replacement", async
             .OrderByDescending(x => x.Id)
             .Select(x => (long?)x.Id)
             .FirstOrDefaultAsync();
-        db.LibraryRemediationJobs.Add(LibraryRemediationJobFactory.Create(item.Id, blockedIssueId, intent, blockedResult, null, actor, DateTimeOffset.UtcNow, null));
+        db.LibraryRemediationJobs.Add(LibraryRemediationJobFactory.Create(item.Id, blockedIssueId, plan.IntegrationId, intent, blockedResult, null, actor, DateTimeOffset.UtcNow, null));
         await db.SaveChangesAsync();
         return Results.BadRequest(new ErrorResponse(intent.PolicySummary));
     }
@@ -2330,10 +2943,7 @@ app.MapPost("/api/library/items/{id:long}/remediation/search-replacement", async
         return Results.BadRequest(new ErrorResponse(plan.Message));
     }
 
-    var latestDiagnostic = await db.PlaybackDiagnosticEntries
-        .Where(x => x.LibraryItemId == item.Id)
-        .OrderByDescending(x => x.OccurredAtUtc)
-        .FirstOrDefaultAsync();
+    var latestDiagnostic = await LatestPlaybackDiagnostic.LoadLatestAsync(db, item.Id);
     intent = LibraryRemediationDiagnosticsDecisioning.ApplyLatestDiagnostic(intent, latestDiagnostic);
     intent = LibraryRemediationProfileDecisioning.Apply(intent, item);
     if (!intent.ShouldSearchNow)
@@ -2347,7 +2957,7 @@ app.MapPost("/api/library/items/{id:long}/remediation/search-replacement", async
             .OrderByDescending(x => x.Id)
             .Select(x => (long?)x.Id)
             .FirstOrDefaultAsync();
-        db.LibraryRemediationJobs.Add(LibraryRemediationJobFactory.Create(item.Id, blockedIssueId, intent, blockedResult, null, actor, DateTimeOffset.UtcNow, null));
+        db.LibraryRemediationJobs.Add(LibraryRemediationJobFactory.Create(item.Id, blockedIssueId, plan.IntegrationId, intent, blockedResult, null, actor, DateTimeOffset.UtcNow, null));
         await db.SaveChangesAsync();
         return Results.BadRequest(new ErrorResponse(blockedMessage));
     }
@@ -2377,7 +2987,7 @@ app.MapPost("/api/library/items/{id:long}/remediation/search-replacement", async
         .OrderByDescending(x => x.Id)
         .Select(x => (long?)x.Id)
         .FirstOrDefaultAsync();
-    db.LibraryRemediationJobs.Add(LibraryRemediationJobFactory.Create(item.Id, relatedIssueId, intent, normalizedResult, releaseContext, actor, DateTimeOffset.UtcNow, blacklistOutcome?.Success));
+    db.LibraryRemediationJobs.Add(LibraryRemediationJobFactory.Create(item.Id, relatedIssueId, plan.IntegrationId, intent, normalizedResult, releaseContext, actor, DateTimeOffset.UtcNow, blacklistOutcome?.Success));
     var summary = $"Search replacement for library item {item.Id} ({item.MediaType}) via {normalizedResult.ServiceKey}: success={normalizedResult.Success}, issueType={intent.IssueType}, action={intent.RequestedAction}, confidence={intent.Confidence}, reason={normalizedReason}, notes={normalizedNotes}";
     await WriteAuditAsync(db, principal, "library_remediation_search_replacement", actor, summary);
     await db.SaveChangesAsync();
@@ -2426,10 +3036,10 @@ app.MapPost("/api/library/items/{id:long}/sources/{serviceKey}/sync", async (lon
             item.TmdbId.HasValue && item.TmdbId.Value > 0,
             string.Empty);
 
-        var radarrResult = await EnsureMovieInRadarrAsync(candidate, integration, httpClientFactory);
+        var radarrResult = await EnsureMovieInRadarrAsync(candidate, integration, db, httpClientFactory);
         if (!radarrResult.Success)
         {
-            return Results.Ok(new LibraryItemSourceSyncResponse(item.Id, normalizedService, false, hadBefore, hadBefore, false, $"Radarr sync action failed: {radarrResult.Message}"));
+            return Results.Ok(new LibraryItemSourceSyncResponse(item.Id, normalizedService, false, hadBefore, hadBefore, false, $"Radarr sync action failed: {radarrResult.Message}", null));
         }
 
         attemptedAction = radarrResult.PerformedAction;
@@ -2451,7 +3061,7 @@ app.MapPost("/api/library/items/{id:long}/sources/{serviceKey}/sync", async (lon
         var overseerrResult = await EnsureMovieRequestedInOverseerrAsync(candidate, integration, httpClientFactory);
         if (!overseerrResult.Success)
         {
-            return Results.Ok(new LibraryItemSourceSyncResponse(item.Id, normalizedService, false, hadBefore, hadBefore, false, $"Overseerr sync action failed: {overseerrResult.Message}"));
+            return Results.Ok(new LibraryItemSourceSyncResponse(item.Id, normalizedService, false, hadBefore, hadBefore, false, $"Overseerr sync action failed: {overseerrResult.Message}", null));
         }
 
         attemptedAction = overseerrResult.PerformedAction;
@@ -2475,15 +3085,19 @@ app.MapPost("/api/library/items/{id:long}/sources/{serviceKey}/sync", async (lon
 
     if (!syncOutcome.Success)
     {
-        return Results.Ok(new LibraryItemSourceSyncResponse(item.Id, normalizedService, false, hadBefore, hadBefore, attemptedAction, syncOutcome.Message));
+        return Results.Ok(new LibraryItemSourceSyncResponse(item.Id, normalizedService, false, hadBefore, hadBefore, attemptedAction, syncOutcome.Message, null));
     }
+
+    var syncedAtUtc = DateTimeOffset.UtcNow;
+    await UpsertLibraryItemSourceSyncStateAsync(db, item.Id, integration.Id, syncedAtUtc);
+    await db.SaveChangesAsync();
 
     var hasAfter = await HasSourceLinkForServiceAsync(db, item.Id, normalizedService);
     var message = hasAfter
-        ? $"{IntegrationCatalog.GetName(normalizedService)} link verified after sync."
+        ? $"{IntegrationCatalog.GetName(normalizedService)} sync finished."
         : $"Sync completed, but {IntegrationCatalog.GetName(normalizedService)} link is still missing.";
 
-    return Results.Ok(new LibraryItemSourceSyncResponse(item.Id, normalizedService, hasAfter, hadBefore, hasAfter, attemptedAction, message));
+    return Results.Ok(new LibraryItemSourceSyncResponse(item.Id, normalizedService, hasAfter, hadBefore, hasAfter, attemptedAction, message, syncedAtUtc));
 }).RequireAuthorization("AdminOnly");
 
 app.MapGet("/api/library/items/{id:long}/monitoring", async (long id, MediaCloudDbContext db, IHttpClientFactory httpClientFactory) =>
@@ -2895,10 +3509,12 @@ static LibraryItemDto MapLibraryItemDto(
         effectiveAvailability,
         item.QualityProfile,
         item.SourceUpdatedAtUtc,
+        item.CreatedAtUtc,
         item.UpdatedAtUtc,
         item.PrimaryFilePath,
         localFileExists,
-        sourceServices ?? []);
+        sourceServices ?? [],
+        item.ContentRating);
 }
 
 static LibraryIssueDto MapLibraryIssueDto(LibraryIssue issue)
@@ -2953,6 +3569,51 @@ static PlaybackDiagnosticDto MapPlaybackDiagnosticDto(PlaybackDiagnosticEntry ro
         row.LogSnippet);
 }
 
+static WatchHistoryEntryDto MapWatchHistoryDto(WatchHistoryEntry row)
+{
+    return new WatchHistoryEntryDto(
+        row.Id,
+        row.LibraryItemId,
+        row.SourceService,
+        IntegrationCatalog.GetName(row.SourceService),
+        row.ExternalId,
+        row.OccurredAtUtc,
+        row.ImportedAtUtc,
+        row.StartedAtUtc,
+        row.StoppedAtUtc,
+        row.UserName,
+        row.ClientName,
+        row.Player,
+        row.Product,
+        row.Platform,
+        row.Decision,
+        row.TranscodeDecision,
+        row.VideoDecision,
+        row.AudioDecision,
+        row.SubtitleDecision,
+        row.Container,
+        row.VideoCodec,
+        row.AudioCodec,
+        row.SubtitleCodec,
+        row.QualityProfile,
+        row.ErrorMessage);
+}
+
+static WatchHistorySummaryDto MapWatchHistorySummaryDto(StoredWatchHistorySummary summary)
+    => new(
+        summary.LibraryItemId,
+        summary.TotalCount,
+        summary.DistinctUserCount,
+        summary.DirectPlayCount,
+        summary.TranscodeCount,
+        summary.ErrorCount,
+        summary.LastImportedAtUtc,
+        summary.LastOccurredAtUtc,
+        summary.LastWatchedBy,
+        summary.TopClient,
+        summary.State,
+        summary.Summary);
+
 static LibraryRemediationJobDto MapLibraryRemediationJobDto(LibraryRemediationJob row)
 {
     return new LibraryRemediationJobDto(
@@ -2961,6 +3622,7 @@ static LibraryRemediationJobDto MapLibraryRemediationJobDto(LibraryRemediationJo
         row.LibraryIssueId,
         row.ServiceKey,
         row.ServiceDisplayName,
+        row.IntegrationId,
         row.RequestedAction,
         row.CommandName,
         row.ExternalItemId,
@@ -2983,6 +3645,16 @@ static LibraryRemediationJobDto MapLibraryRemediationJobDto(LibraryRemediationJo
         row.BlacklistStatus,
         row.OutcomeSummary,
         row.ResultMessage,
+        row.ProviderCommandId,
+        row.ProviderCommandStatus,
+        row.ProviderCommandSummary,
+        row.DownloadType,
+        row.ProviderCommandCheckedAtUtc,
+        row.VerificationStatus,
+        row.VerificationSummary,
+        row.VerificationCheckedAtUtc,
+        row.LoopbackStatus,
+        row.LoopbackSummary,
         row.ReleaseSummary,
         row.RequestedBy,
         row.RequestedAtUtc,
@@ -3101,6 +3773,7 @@ static IQueryable<LibraryItem> ApplyLibraryItemSort(IQueryable<LibraryItem> quer
     return normalizedSortBy switch
     {
         "year" => descending ? query.OrderByDescending(x => x.Year).ThenBy(x => x.SortTitle) : query.OrderBy(x => x.Year).ThenBy(x => x.SortTitle),
+        "created" => descending ? query.OrderByDescending(x => x.CreatedAtUtc).ThenBy(x => x.SortTitle) : query.OrderBy(x => x.CreatedAtUtc).ThenBy(x => x.SortTitle),
         "updated" => descending ? query.OrderByDescending(x => x.UpdatedAtUtc).ThenBy(x => x.SortTitle) : query.OrderBy(x => x.UpdatedAtUtc).ThenBy(x => x.SortTitle),
         "runtime" => descending ? query.OrderByDescending(x => x.RuntimeMinutes).ThenBy(x => x.SortTitle) : query.OrderBy(x => x.RuntimeMinutes).ThenBy(x => x.SortTitle),
         _ => descending ? query.OrderByDescending(x => x.SortTitle) : query.OrderBy(x => x.SortTitle)
@@ -3108,7 +3781,11 @@ static IQueryable<LibraryItem> ApplyLibraryItemSort(IQueryable<LibraryItem> quer
 }
 
 static bool RequiresClientSideLibraryItemSort(string? sortBy)
-    => string.Equals((sortBy ?? string.Empty).Trim(), "updated", StringComparison.OrdinalIgnoreCase);
+{
+    var normalized = (sortBy ?? string.Empty).Trim();
+    return string.Equals(normalized, "updated", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(normalized, "created", StringComparison.OrdinalIgnoreCase);
+}
 
 static IEnumerable<LibraryItem> ApplyLibraryItemSortInMemory(IEnumerable<LibraryItem> rows, string? sortBy, string? sortDir)
 {
@@ -3118,6 +3795,7 @@ static IEnumerable<LibraryItem> ApplyLibraryItemSortInMemory(IEnumerable<Library
     return normalizedSortBy switch
     {
         "year" => descending ? rows.OrderByDescending(x => x.Year).ThenBy(x => x.SortTitle) : rows.OrderBy(x => x.Year).ThenBy(x => x.SortTitle),
+        "created" => descending ? rows.OrderByDescending(x => x.CreatedAtUtc).ThenBy(x => x.SortTitle) : rows.OrderBy(x => x.CreatedAtUtc).ThenBy(x => x.SortTitle),
         "updated" => descending ? rows.OrderByDescending(x => x.UpdatedAtUtc).ThenBy(x => x.SortTitle) : rows.OrderBy(x => x.UpdatedAtUtc).ThenBy(x => x.SortTitle),
         "runtime" => descending ? rows.OrderByDescending(x => x.RuntimeMinutes).ThenBy(x => x.SortTitle) : rows.OrderBy(x => x.RuntimeMinutes).ThenBy(x => x.SortTitle),
         _ => descending ? rows.OrderByDescending(x => x.SortTitle) : rows.OrderBy(x => x.SortTitle)
@@ -3169,7 +3847,57 @@ static async Task<IntegrationSyncOutcome> ExecuteIntegrationSyncAsync(
 static string NormalizeIntegrationSyncScope(string? mediaScope)
     => string.Equals(mediaScope, "tv", StringComparison.OrdinalIgnoreCase) ? "tv" : "movies";
 
-static async Task<Dictionary<int, string>> FetchRadarrQualityProfileNamesAsync(IntegrationConfig integration, IHttpClientFactory httpClientFactory)
+static IReadOnlyList<string> GetRadarrMinimumAvailabilityOptions() => ["announced", "inCinemas", "released", "preDB"];
+
+static async Task<List<RadarrTagOptionResponse>> FetchRadarrTagsAsync(IntegrationConfig integration, IHttpClientFactory httpClientFactory)
+{
+    var client = httpClientFactory.CreateClient();
+    client.Timeout = TimeSpan.FromSeconds(30);
+    using var request = new HttpRequestMessage(HttpMethod.Get, $"{integration.BaseUrl.TrimEnd('/')}/api/v3/tag");
+    ApplyIntegrationAuthHeaders(integration, request);
+
+    using var response = await client.SendAsync(request);
+    if (!response.IsSuccessStatusCode)
+    {
+        return [];
+    }
+
+    using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+    if (doc.RootElement.ValueKind != JsonValueKind.Array)
+    {
+        return [];
+    }
+
+    return doc.RootElement
+        .EnumerateArray()
+        .Select(tag => new
+        {
+            Id = GetJsonInt(tag, "id"),
+            Label = GetJsonString(tag, "label")
+        })
+        .Where(x => x.Id.HasValue && !string.IsNullOrWhiteSpace(x.Label))
+        .Select(x => new RadarrTagOptionResponse(x.Id!.Value, x.Label!.Trim()))
+        .OrderBy(x => x.Label, StringComparer.OrdinalIgnoreCase)
+        .ToList();
+}
+
+static async Task<RadarrTagsResponse> LoadRadarrTagsAsync(MediaCloudDbContext db, IntegrationConfig integration, IHttpClientFactory httpClientFactory)
+{
+    var tags = await FetchRadarrTagsAsync(integration, httpClientFactory);
+    var selectedTagIds = await GetRadarrPreferredTagIdsAsync(db, integration.Id);
+    var selectedTagLabels = tags
+        .Where(x => selectedTagIds.Contains(x.Id))
+        .Select(x => x.Label)
+        .ToList();
+
+    return new RadarrTagsResponse(
+        integration.Id,
+        tags,
+        selectedTagIds,
+        selectedTagLabels);
+}
+
+static async Task<List<JsonObject>> FetchRadarrQualityProfileDocumentsAsync(IntegrationConfig integration, IHttpClientFactory httpClientFactory)
 {
     var client = httpClientFactory.CreateClient();
     client.Timeout = TimeSpan.FromSeconds(30);
@@ -3180,30 +3908,183 @@ static async Task<Dictionary<int, string>> FetchRadarrQualityProfileNamesAsync(I
     using var response = await client.SendAsync(request);
     if (!response.IsSuccessStatusCode)
     {
-        return new Dictionary<int, string>();
+        return [];
     }
 
     var payload = await response.Content.ReadAsStringAsync();
     using var document = JsonDocument.Parse(payload);
     if (document.RootElement.ValueKind != JsonValueKind.Array)
     {
-        return new Dictionary<int, string>();
+        return [];
     }
 
-    var profiles = new Dictionary<int, string>();
+    var profiles = new List<JsonObject>();
     foreach (var profile in document.RootElement.EnumerateArray())
     {
-        var id = GetJsonInt(profile, "id");
-        var name = GetJsonString(profile, "name");
-        if (!id.HasValue || string.IsNullOrWhiteSpace(name))
+        if (JsonNode.Parse(profile.GetRawText()) is JsonObject obj)
         {
-            continue;
+            profiles.Add(obj);
         }
-
-        profiles[id.Value] = name;
     }
 
     return profiles;
+}
+
+static async Task<List<RadarrQualityProfileOptionResponse>> FetchRadarrQualityProfilesAsync(IntegrationConfig integration, IHttpClientFactory httpClientFactory)
+{
+    var profiles = await FetchRadarrQualityProfileDocumentsAsync(integration, httpClientFactory);
+    return profiles
+        .Select(profile => new
+        {
+            Id = profile["id"]?.GetValue<int?>(),
+            Name = profile["name"]?.GetValue<string>()
+        })
+        .Where(x => x.Id.HasValue && !string.IsNullOrWhiteSpace(x.Name))
+        .Select(x => new RadarrQualityProfileOptionResponse(x.Id!.Value, x.Name!))
+        .OrderBy(x => x.Name, StringComparer.OrdinalIgnoreCase)
+        .ToList();
+}
+
+static async Task<RadarrQualityProfileOptionResponse> SyncRadarrMediaCloudProfileAsync(IntegrationConfig integration, IHttpClientFactory httpClientFactory, int? preferredProfileId)
+{
+    const string mediaCloudProfileName = "MediaCloud Profile";
+    var profiles = await FetchRadarrQualityProfileDocumentsAsync(integration, httpClientFactory);
+    if (profiles.Count == 0)
+    {
+        throw new InvalidOperationException("Radarr returned no quality profiles to clone.");
+    }
+
+    var existingProfile = profiles.FirstOrDefault(x => string.Equals(x["name"]?.GetValue<string>(), mediaCloudProfileName, StringComparison.OrdinalIgnoreCase));
+    var templateProfile = preferredProfileId.HasValue
+        ? profiles.FirstOrDefault(x => x["id"]?.GetValue<int?>() == preferredProfileId.Value)
+        : null;
+
+    templateProfile ??= existingProfile;
+    templateProfile ??= profiles.FirstOrDefault(x => !string.Equals(x["name"]?.GetValue<string>(), mediaCloudProfileName, StringComparison.OrdinalIgnoreCase));
+    templateProfile ??= profiles[0];
+
+    var payloadObject = (templateProfile.DeepClone() as JsonObject) ?? throw new InvalidOperationException("Failed to clone Radarr quality profile template.");
+    payloadObject["name"] = mediaCloudProfileName;
+
+    HttpMethod method;
+    string uri;
+    if (existingProfile is not null)
+    {
+        var existingId = existingProfile["id"]?.GetValue<int?>();
+        if (!existingId.HasValue)
+        {
+            throw new InvalidOperationException("Existing MediaCloud Profile is missing a Radarr id.");
+        }
+
+        payloadObject["id"] = existingId.Value;
+        method = HttpMethod.Put;
+        uri = $"{integration.BaseUrl.TrimEnd('/')}/api/v3/qualityprofile/{existingId.Value}";
+    }
+    else
+    {
+        payloadObject["id"] = 0;
+        method = HttpMethod.Post;
+        uri = $"{integration.BaseUrl.TrimEnd('/')}/api/v3/qualityprofile";
+    }
+
+    var client = httpClientFactory.CreateClient();
+    client.Timeout = TimeSpan.FromSeconds(30);
+    using var request = new HttpRequestMessage(method, uri)
+    {
+        Content = new StringContent(payloadObject.ToJsonString(), Encoding.UTF8, "application/json")
+    };
+    ApplyIntegrationAuthHeaders(integration, request);
+
+    using var response = await client.SendAsync(request);
+    if (!response.IsSuccessStatusCode)
+    {
+        var error = await response.Content.ReadAsStringAsync();
+        throw new InvalidOperationException($"Radarr sync returned HTTP {(int)response.StatusCode}: {error}");
+    }
+
+    var responseText = await response.Content.ReadAsStringAsync();
+    if (JsonNode.Parse(responseText) is not JsonObject result)
+    {
+        throw new InvalidOperationException("Radarr returned an unexpected quality profile payload.");
+    }
+
+    var syncedId = result["id"]?.GetValue<int?>();
+    var syncedName = result["name"]?.GetValue<string>();
+    if (!syncedId.HasValue || string.IsNullOrWhiteSpace(syncedName))
+    {
+        throw new InvalidOperationException("Radarr did not return a valid synced quality profile.");
+    }
+
+    return new RadarrQualityProfileOptionResponse(syncedId.Value, syncedName);
+}
+
+static async Task<Dictionary<int, string>> FetchRadarrQualityProfileNamesAsync(IntegrationConfig integration, IHttpClientFactory httpClientFactory)
+    => (await FetchRadarrQualityProfilesAsync(integration, httpClientFactory)).ToDictionary(x => x.Id, x => x.Name);
+
+static async Task<RadarrDefaultAddPolicyResponse> LoadRadarrDefaultAddPolicyAsync(MediaCloudDbContext db, IntegrationConfig integration, IHttpClientFactory httpClientFactory)
+{
+    var qualityProfiles = await FetchRadarrQualityProfilesAsync(integration, httpClientFactory);
+    var remoteRoots = await FetchIntegrationRemoteRootsAsync(integration, httpClientFactory);
+    var preferredQualityProfileId = await GetRadarrPreferredQualityProfileIdAsync(db, integration.Id);
+    var preferredRootFolder = await GetRadarrPreferredRootFolderAsync(db, integration.Id);
+    var minimumAvailability = await GetRadarrMinimumAvailabilityAsync(db, integration.Id);
+    var monitored = await GetRadarrMonitoredDefaultAsync(db, integration.Id);
+
+    var selectedQualityProfileId = preferredQualityProfileId.HasValue && qualityProfiles.Any(x => x.Id == preferredQualityProfileId.Value)
+        ? preferredQualityProfileId.Value
+        : qualityProfiles.FirstOrDefault()?.Id;
+    var selectedQualityProfileName = selectedQualityProfileId.HasValue
+        ? qualityProfiles.FirstOrDefault(x => x.Id == selectedQualityProfileId.Value)?.Name ?? string.Empty
+        : string.Empty;
+    var selectedRootFolder = !string.IsNullOrWhiteSpace(preferredRootFolder) && remoteRoots.Contains(preferredRootFolder, StringComparer.OrdinalIgnoreCase)
+        ? preferredRootFolder
+        : remoteRoots.FirstOrDefault() ?? string.Empty;
+    var selectedMinimumAvailability = GetRadarrMinimumAvailabilityOptions().Contains(minimumAvailability ?? string.Empty, StringComparer.OrdinalIgnoreCase)
+        ? minimumAvailability!
+        : "released";
+
+    return new RadarrDefaultAddPolicyResponse(
+        integration.Id,
+        remoteRoots,
+        qualityProfiles,
+        selectedRootFolder,
+        selectedQualityProfileId,
+        selectedQualityProfileName,
+        selectedMinimumAvailability,
+        monitored,
+        GetRadarrMinimumAvailabilityOptions());
+}
+
+static async Task<List<string>> FetchIntegrationRemoteRootsAsync(IntegrationConfig integration, IHttpClientFactory httpClientFactory)
+{
+    var service = (integration.ServiceKey ?? string.Empty).Trim().ToLowerInvariant();
+    if (service is not ("radarr" or "sonarr" or "lidarr")) return [];
+
+    var client = httpClientFactory.CreateClient();
+    client.Timeout = TimeSpan.FromSeconds(30);
+    using var request = new HttpRequestMessage(HttpMethod.Get, $"{integration.BaseUrl.TrimEnd('/')}/api/v3/rootfolder");
+    ApplyIntegrationAuthHeaders(integration, request);
+
+    using var response = await client.SendAsync(request);
+    if (!response.IsSuccessStatusCode)
+    {
+        return [];
+    }
+
+    using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+    if (doc.RootElement.ValueKind != JsonValueKind.Array)
+    {
+        return [];
+    }
+
+    return doc.RootElement
+        .EnumerateArray()
+        .Select(x => GetJsonString(x, "path"))
+        .Where(x => !string.IsNullOrWhiteSpace(x))
+        .Select(x => x!.Trim())
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+        .ToList();
 }
 
 static async Task<SonarrCollectionFetchResult> FetchSonarrCollectionBySeriesAsync(
@@ -3597,6 +4478,7 @@ static async Task<IntegrationSyncOutcome> SyncPlexMoviesAsync(
 
                 var title = GetXmlAttr(video, "title") ?? "Unknown";
                 var sortTitle = GetXmlAttr(video, "titleSort") ?? title;
+                var contentRating = GetXmlAttr(video, "contentRating") ?? string.Empty;
                 var year = int.TryParse(GetXmlAttr(video, "year"), out var parsedYear) ? parsedYear : (int?)null;
                 var runtimeMinutes = ParsePlexDurationMinutes(GetXmlAttr(video, "duration"));
                 var summary = GetXmlAttr(video, "summary") ?? string.Empty;
@@ -3623,6 +4505,7 @@ static async Task<IntegrationSyncOutcome> SyncPlexMoviesAsync(
                 if (tmdbId.HasValue) item.TmdbId = tmdbId;
                 if (!string.IsNullOrWhiteSpace(imdbId)) item.ImdbId = imdbId;
                 item.PlexRatingKey = ratingKey;
+                item.ContentRating = contentRating;
                 ApplyPreferredDescription(item, "plex", summary);
                 item.IsAvailable = true;
                 item.SourceUpdatedAtUtc = updatedAt;
@@ -3707,6 +4590,7 @@ static async Task<IntegrationSyncOutcome> SyncPlexTelevisionAsync(
 
                 var title = GetXmlAttr(show, "title") ?? "Unknown";
                 var sortTitle = GetXmlAttr(show, "titleSort") ?? title;
+                var contentRating = GetXmlAttr(show, "contentRating") ?? string.Empty;
                 var year = int.TryParse(GetXmlAttr(show, "year"), out var parsedYear) ? parsedYear : (int?)null;
                 var runtimeMinutes = ParsePlexDurationMinutes(GetXmlAttr(show, "duration"));
                 var summary = GetXmlAttr(show, "summary") ?? string.Empty;
@@ -3741,6 +4625,7 @@ static async Task<IntegrationSyncOutcome> SyncPlexTelevisionAsync(
                 item.TmdbId = tmdbId;
                 item.ImdbId = imdbId;
                 item.PlexRatingKey = ratingKey;
+                item.ContentRating = contentRating;
                 ApplyPreferredDescription(item, "plex", summary);
                 item.IsAvailable = true;
                 item.SourceUpdatedAtUtc = updatedAt;
@@ -4647,6 +5532,157 @@ static bool ParseBoolOrDefault(string? raw, bool fallback)
            || raw.Equals("on", StringComparison.OrdinalIgnoreCase);
 }
 
+static string GetRadarrPreferredRootFolderKey(long integrationId)
+    => $"integrations:{integrationId}:radarr:preferred-root-folder";
+
+static string GetRadarrMinimumAvailabilityKey(long integrationId)
+    => $"integrations:{integrationId}:radarr:minimum-availability";
+
+static string GetRadarrMonitoredDefaultKey(long integrationId)
+    => $"integrations:{integrationId}:radarr:monitored-default";
+
+static string GetRadarrPreferredTagIdsKey(long integrationId)
+    => $"integrations:{integrationId}:radarr:preferred-tag-ids";
+
+static string GetRadarrPreferredQualityProfileIdKey(long integrationId)
+    => $"integrations:{integrationId}:radarr:preferred-quality-profile-id";
+
+static string GetSonarrPreferredQualityProfileIdKey(long integrationId)
+    => $"integrations:{integrationId}:sonarr:preferred-quality-profile-id";
+
+static async Task<List<int>> GetRadarrPreferredTagIdsAsync(MediaCloudDbContext db, long integrationId)
+{
+    var key = GetRadarrPreferredTagIdsKey(integrationId);
+    var raw = await db.AppConfigEntries.Where(x => x.Key == key).Select(x => x.Value).FirstOrDefaultAsync();
+    if (string.IsNullOrWhiteSpace(raw)) return [];
+
+    return raw
+        .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        .Select(value => int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed) ? parsed : (int?)null)
+        .Where(value => value.HasValue && value.Value > 0)
+        .Select(value => value!.Value)
+        .Distinct()
+        .OrderBy(value => value)
+        .ToList();
+}
+
+static async Task SetRadarrPreferredTagIdsAsync(MediaCloudDbContext db, long integrationId, IReadOnlyCollection<int> selectedTagIds, DateTimeOffset now)
+{
+    var key = GetRadarrPreferredTagIdsKey(integrationId);
+    var setting = await db.AppConfigEntries.FirstOrDefaultAsync(x => x.Key == key);
+    if (setting is null)
+    {
+        setting = new AppConfigEntry { Key = key };
+        db.AppConfigEntries.Add(setting);
+    }
+
+    setting.Value = string.Join(',', selectedTagIds.OrderBy(x => x));
+    setting.UpdatedAtUtc = now;
+}
+
+static async Task<int?> GetRadarrPreferredQualityProfileIdAsync(MediaCloudDbContext db, long integrationId)
+{
+    var key = GetRadarrPreferredQualityProfileIdKey(integrationId);
+    var raw = await db.AppConfigEntries.Where(x => x.Key == key).Select(x => x.Value).FirstOrDefaultAsync();
+    return int.TryParse(raw, out var parsed) ? parsed : null;
+}
+
+static async Task SetRadarrPreferredQualityProfileIdAsync(MediaCloudDbContext db, long integrationId, int preferredProfileId, DateTimeOffset now)
+{
+    var key = GetRadarrPreferredQualityProfileIdKey(integrationId);
+    var setting = await db.AppConfigEntries.FirstOrDefaultAsync(x => x.Key == key);
+    if (setting is null)
+    {
+        setting = new AppConfigEntry { Key = key };
+        db.AppConfigEntries.Add(setting);
+    }
+
+    setting.Value = preferredProfileId.ToString(CultureInfo.InvariantCulture);
+    setting.UpdatedAtUtc = now;
+}
+
+static async Task<int?> GetSonarrPreferredQualityProfileIdAsync(MediaCloudDbContext db, long integrationId)
+{
+    var key = GetSonarrPreferredQualityProfileIdKey(integrationId);
+    var raw = await db.AppConfigEntries.Where(x => x.Key == key).Select(x => x.Value).FirstOrDefaultAsync();
+    return int.TryParse(raw, out var parsed) ? parsed : null;
+}
+
+static async Task SetSonarrPreferredQualityProfileIdAsync(MediaCloudDbContext db, long integrationId, int preferredProfileId, DateTimeOffset now)
+{
+    var key = GetSonarrPreferredQualityProfileIdKey(integrationId);
+    var setting = await db.AppConfigEntries.FirstOrDefaultAsync(x => x.Key == key);
+    if (setting is null)
+    {
+        setting = new AppConfigEntry { Key = key };
+        db.AppConfigEntries.Add(setting);
+    }
+
+    setting.Value = preferredProfileId.ToString(CultureInfo.InvariantCulture);
+    setting.UpdatedAtUtc = now;
+}
+
+static async Task<string?> GetRadarrPreferredRootFolderAsync(MediaCloudDbContext db, long integrationId)
+{
+    var key = GetRadarrPreferredRootFolderKey(integrationId);
+    return await db.AppConfigEntries.Where(x => x.Key == key).Select(x => x.Value).FirstOrDefaultAsync();
+}
+
+static async Task SetRadarrPreferredRootFolderAsync(MediaCloudDbContext db, long integrationId, string rootFolderPath, DateTimeOffset now)
+{
+    var key = GetRadarrPreferredRootFolderKey(integrationId);
+    var setting = await db.AppConfigEntries.FirstOrDefaultAsync(x => x.Key == key);
+    if (setting is null)
+    {
+        setting = new AppConfigEntry { Key = key };
+        db.AppConfigEntries.Add(setting);
+    }
+
+    setting.Value = rootFolderPath;
+    setting.UpdatedAtUtc = now;
+}
+
+static async Task<string?> GetRadarrMinimumAvailabilityAsync(MediaCloudDbContext db, long integrationId)
+{
+    var key = GetRadarrMinimumAvailabilityKey(integrationId);
+    return await db.AppConfigEntries.Where(x => x.Key == key).Select(x => x.Value).FirstOrDefaultAsync();
+}
+
+static async Task SetRadarrMinimumAvailabilityAsync(MediaCloudDbContext db, long integrationId, string minimumAvailability, DateTimeOffset now)
+{
+    var key = GetRadarrMinimumAvailabilityKey(integrationId);
+    var setting = await db.AppConfigEntries.FirstOrDefaultAsync(x => x.Key == key);
+    if (setting is null)
+    {
+        setting = new AppConfigEntry { Key = key };
+        db.AppConfigEntries.Add(setting);
+    }
+
+    setting.Value = minimumAvailability;
+    setting.UpdatedAtUtc = now;
+}
+
+static async Task<bool> GetRadarrMonitoredDefaultAsync(MediaCloudDbContext db, long integrationId)
+{
+    var key = GetRadarrMonitoredDefaultKey(integrationId);
+    var raw = await db.AppConfigEntries.Where(x => x.Key == key).Select(x => x.Value).FirstOrDefaultAsync();
+    return ParseBoolOrDefault(raw, true);
+}
+
+static async Task SetRadarrMonitoredDefaultAsync(MediaCloudDbContext db, long integrationId, bool monitored, DateTimeOffset now)
+{
+    var key = GetRadarrMonitoredDefaultKey(integrationId);
+    var setting = await db.AppConfigEntries.FirstOrDefaultAsync(x => x.Key == key);
+    if (setting is null)
+    {
+        setting = new AppConfigEntry { Key = key };
+        db.AppConfigEntries.Add(setting);
+    }
+
+    setting.Value = monitored ? "true" : "false";
+    setting.UpdatedAtUtc = now;
+}
+
 static async Task<bool?> GetMovieDesiredMonitoringAsync(MediaCloudDbContext db, long libraryItemId)
 {
     var key = GetMovieDesiredMonitoringKey(libraryItemId);
@@ -4901,6 +5937,7 @@ static async Task<IReadOnlyList<LibraryItemSourceStatusDto>> GetTelevisionSource
     var links = await db.LibraryItemSourceLinks
         .Where(x => x.LibraryItemId == item.Id)
         .ToListAsync();
+    var syncStateMap = await GetLibraryItemSourceSyncStateMapAsync(db, item.Id);
 
     return TelevisionSourceCoverage.BuildRows(item, integrations, links)
         .Select(row => new LibraryItemSourceStatusDto(
@@ -4917,7 +5954,10 @@ static async Task<IReadOnlyList<LibraryItemSourceStatusDto>> GetTelevisionSource
             null,
             false,
             null,
-            false))
+            false,
+            row.IntegrationId.HasValue && syncStateMap.TryGetValue(row.IntegrationId.Value, out var lastSyncedAtUtc)
+                ? lastSyncedAtUtc
+                : null))
         .ToList();
 }
 
@@ -4925,6 +5965,7 @@ static async Task<IReadOnlyList<LibraryItemSourceStatusDto>> GetMovieSourceStatu
 {
     var services = new[] { "plex", "radarr", "overseerr" };
     var rows = new List<LibraryItemSourceStatusDto>();
+    var syncStateMap = await GetLibraryItemSourceSyncStateMapAsync(db, item.Id);
 
     var radarrIntegration = await GetEnabledIntegrationByServiceAsync(db, "radarr");
     var overseerrIntegration = await GetEnabledIntegrationByServiceAsync(db, "overseerr");
@@ -5005,6 +6046,9 @@ static async Task<IReadOnlyList<LibraryItemSourceStatusDto>> GetMovieSourceStatu
         }
 
         var canSync = integration is not null && (service == "plex" || (item.TmdbId.HasValue && item.TmdbId.Value > 0));
+        var lastSyncedAtUtc = integration is not null && syncStateMap.TryGetValue(integration.Id, out var persistedLastSyncedAtUtc)
+            ? persistedLastSyncedAtUtc
+            : null;
         rows.Add(new LibraryItemSourceStatusDto(
             service,
             IntegrationCatalog.GetName(service),
@@ -5019,7 +6063,8 @@ static async Task<IReadOnlyList<LibraryItemSourceStatusDto>> GetMovieSourceStatu
             service == "overseerr" ? overseerrState.Exists : null,
             supportsMonitoringSync,
             monitoringSynced,
-            autoSync));
+            autoSync,
+            lastSyncedAtUtc));
     }
 
     return rows;
@@ -5287,11 +6332,14 @@ static async Task<LibraryRemediationReleaseContext> BuildRemediationReleaseConte
     MediaCloudDbContext db,
     IHttpClientFactory httpClientFactory)
 {
-    var sourceTitle = await db.LibraryItemSourceLinks
+    var sourceTitle = (await db.LibraryItemSourceLinks
         .Where(x => x.LibraryItemId == item.Id && x.IntegrationId == (plan.IntegrationId ?? x.IntegrationId))
+        .Select(x => new { x.SourceTitle, x.LastSeenAtUtc, x.Id })
+        .ToListAsync())
         .OrderByDescending(x => x.LastSeenAtUtc)
+        .ThenByDescending(x => x.Id)
         .Select(x => x.SourceTitle)
-        .FirstOrDefaultAsync();
+        .FirstOrDefault();
 
     var integration = plan.IntegrationId.HasValue
         ? await db.IntegrationConfigs.FirstOrDefaultAsync(x => x.Id == plan.IntegrationId.Value && x.Enabled)
@@ -5443,14 +6491,14 @@ static async Task<LibraryItemRemediationResponse> ExecuteRadarrSearchReplacement
         return new LibraryItemRemediationResponse(item.Id, false, plan.ServiceKey, plan.DisplayName, plan.CommandName, null, false, string.Empty, string.Empty, "MediaCloud could not resolve the Radarr movie ID for this item.");
     }
 
-    var (success, responseMessage) = await QueueArrCommandAsync(
+    var queueResult = await QueueArrCommandAsync(
         integration,
         "/api/v3/command",
         new { name = "MoviesSearch", movieIds = new[] { radarrMovieId.Value } },
         httpClientFactory,
         $"Queued Radarr replacement search for movie ID {radarrMovieId.Value}.");
 
-    return new LibraryItemRemediationResponse(item.Id, success, plan.ServiceKey, plan.DisplayName, plan.CommandName, radarrMovieId, lookedUpRemotely, string.Empty, string.Empty, responseMessage);
+    return new LibraryItemRemediationResponse(item.Id, queueResult.Success, plan.ServiceKey, plan.DisplayName, plan.CommandName, radarrMovieId, lookedUpRemotely, string.Empty, string.Empty, queueResult.Message, null, string.Empty, queueResult.ProviderCommandId, queueResult.ProviderCommandStatus, queueResult.ProviderCommandSummary);
 }
 
 static async Task<LibraryItemRemediationResponse> ExecuteSonarrSearchReplacementAsync(
@@ -5468,14 +6516,14 @@ static async Task<LibraryItemRemediationResponse> ExecuteSonarrSearchReplacement
         ? new { name = "SeriesSearch", seriesId = plan.ExternalItemId.Value }
         : new { name = "EpisodeSearch", episodeIds = new[] { plan.ExternalItemId.Value } };
 
-    var (success, responseMessage) = await QueueArrCommandAsync(
+    var queueResult = await QueueArrCommandAsync(
         integration,
         "/api/v3/command",
         payload,
         httpClientFactory,
         $"Queued Sonarr replacement search for {plan.CommandName} target {plan.ExternalItemId.Value}.");
 
-    return new LibraryItemRemediationResponse(item.Id, success, plan.ServiceKey, plan.DisplayName, plan.CommandName, plan.ExternalItemId, false, string.Empty, string.Empty, responseMessage);
+    return new LibraryItemRemediationResponse(item.Id, queueResult.Success, plan.ServiceKey, plan.DisplayName, plan.CommandName, plan.ExternalItemId, false, string.Empty, string.Empty, queueResult.Message, null, string.Empty, queueResult.ProviderCommandId, queueResult.ProviderCommandStatus, queueResult.ProviderCommandSummary);
 }
 
 static async Task<LibraryItemRemediationResponse> ExecuteLidarrSearchReplacementAsync(
@@ -5489,14 +6537,14 @@ static async Task<LibraryItemRemediationResponse> ExecuteLidarrSearchReplacement
         return new LibraryItemRemediationResponse(item.Id, false, plan.ServiceKey, plan.DisplayName, plan.CommandName, null, false, string.Empty, string.Empty, plan.Message);
     }
 
-    var (success, responseMessage) = await QueueArrCommandAsync(
+    var queueResult = await QueueArrCommandAsync(
         integration,
         "/api/v1/command",
         new { name = "AlbumSearch", albumIds = new[] { plan.ExternalItemId.Value } },
         httpClientFactory,
         $"Queued Lidarr replacement search for album ID {plan.ExternalItemId.Value}.");
 
-    return new LibraryItemRemediationResponse(item.Id, success, plan.ServiceKey, plan.DisplayName, plan.CommandName, plan.ExternalItemId, false, string.Empty, string.Empty, responseMessage);
+    return new LibraryItemRemediationResponse(item.Id, queueResult.Success, plan.ServiceKey, plan.DisplayName, plan.CommandName, plan.ExternalItemId, false, string.Empty, string.Empty, queueResult.Message, null, string.Empty, queueResult.ProviderCommandId, queueResult.ProviderCommandStatus, queueResult.ProviderCommandSummary);
 }
 
 static async Task<int?> TryLookupRadarrMovieIdAsync(LibraryItem item, IntegrationConfig integration, IHttpClientFactory httpClientFactory)
@@ -5533,7 +6581,7 @@ static async Task<int?> TryLookupRadarrMovieIdAsync(LibraryItem item, Integratio
     }
 }
 
-static async Task<(bool Success, string Message)> QueueArrCommandAsync(
+static async Task<LibraryRemediationQueuedCommandResult> QueueArrCommandAsync(
     IntegrationConfig integration,
     string endpointPath,
     object payload,
@@ -5548,16 +6596,16 @@ static async Task<(bool Success, string Message)> QueueArrCommandAsync(
     };
     ApplyIntegrationAuthHeaders(integration, request);
     using var response = await client.SendAsync(request);
+    var body = await response.Content.ReadAsStringAsync();
     if (response.IsSuccessStatusCode)
     {
-        return (true, successMessage);
+        return LibraryRemediationProviderCommandTracker.BuildQueuedResult(true, successMessage, body);
     }
 
-    var body = await response.Content.ReadAsStringAsync();
     var message = string.IsNullOrWhiteSpace(body)
         ? $"{integration.ServiceKey} remediation command failed with HTTP {(int)response.StatusCode}."
         : body[..Math.Min(250, body.Length)];
-    return (false, message);
+    return new(false, message, null, string.Empty, string.Empty);
 }
 
 static async Task<RadarrMovieState> FetchRadarrMovieStateAsync(int? tmdbId, IntegrationConfig? radarr, IHttpClientFactory httpClientFactory)
@@ -5795,7 +6843,7 @@ static async Task<(int Scanned, int Updated, int Failed, List<string> Errors)> E
     return (scanned, updated, failed, errors);
 }
 
-static async Task<ExternalBackfillActionResult> EnsureMovieInRadarrAsync(PlexBackfillCandidateDto candidate, IntegrationConfig radarr, IHttpClientFactory httpClientFactory)
+static async Task<ExternalBackfillActionResult> EnsureMovieInRadarrAsync(PlexBackfillCandidateDto candidate, IntegrationConfig radarr, MediaCloudDbContext db, IHttpClientFactory httpClientFactory)
 {
     if (!candidate.TmdbId.HasValue || candidate.TmdbId.Value <= 0)
     {
@@ -5820,54 +6868,29 @@ static async Task<ExternalBackfillActionResult> EnsureMovieInRadarrAsync(PlexBac
         }
     }
 
-    var qualityProfileId = 1;
-    using (var qpRequest = new HttpRequestMessage(HttpMethod.Get, $"{radarr.BaseUrl.TrimEnd('/')}/api/v3/qualityprofile"))
-    {
-        ApplyIntegrationAuthHeaders(radarr, qpRequest);
-        using var qpResponse = await client.SendAsync(qpRequest);
-        if (qpResponse.IsSuccessStatusCode)
-        {
-            var body = await qpResponse.Content.ReadAsStringAsync();
-            using var doc = JsonDocument.Parse(body);
-            if (doc.RootElement.ValueKind == JsonValueKind.Array && doc.RootElement.GetArrayLength() > 0)
-            {
-                qualityProfileId = doc.RootElement[0].GetProperty("id").GetInt32();
-            }
-        }
-    }
-
-    string? rootFolderPath = null;
-    using (var rfRequest = new HttpRequestMessage(HttpMethod.Get, $"{radarr.BaseUrl.TrimEnd('/')}/api/v3/rootfolder"))
-    {
-        ApplyIntegrationAuthHeaders(radarr, rfRequest);
-        using var rfResponse = await client.SendAsync(rfRequest);
-        if (rfResponse.IsSuccessStatusCode)
-        {
-            var body = await rfResponse.Content.ReadAsStringAsync();
-            using var doc = JsonDocument.Parse(body);
-            if (doc.RootElement.ValueKind == JsonValueKind.Array && doc.RootElement.GetArrayLength() > 0)
-            {
-                rootFolderPath = doc.RootElement[0].GetProperty("path").GetString();
-            }
-        }
-    }
+    var defaultAddPolicy = await LoadRadarrDefaultAddPolicyAsync(db, radarr, httpClientFactory);
+    var qualityProfileId = defaultAddPolicy.QualityProfileId ?? 1;
+    var rootFolderPath = defaultAddPolicy.RootFolderPath;
 
     if (string.IsNullOrWhiteSpace(rootFolderPath))
     {
         return new ExternalBackfillActionResult(false, false, "No Radarr root folder configured.");
     }
 
+    var radarrTags = await LoadRadarrTagsAsync(db, radarr, httpClientFactory);
+
     var payload = new
     {
         title = candidate.Title,
-        qualityProfileId,
+        qualityProfileId = defaultAddPolicy.QualityProfileId ?? qualityProfileId,
         titleSlug = candidate.Title?.ToLowerInvariant().Replace(' ', '-'),
         images = Array.Empty<object>(),
         tmdbId = candidate.TmdbId.Value,
         year = candidate.Year,
-        rootFolderPath,
-        monitored = true,
-        minimumAvailability = "released",
+        rootFolderPath = defaultAddPolicy.RootFolderPath,
+        monitored = defaultAddPolicy.Monitored,
+        minimumAvailability = defaultAddPolicy.MinimumAvailability,
+        tags = radarrTags.SelectedTagIds,
         addOptions = new { searchForMovie = false }
     };
 
@@ -5954,11 +6977,19 @@ static void ApplyIntegrationAuthHeaders(IntegrationConfig integration, HttpReque
 
 async Task<PullPlaybackDiagnosticsResponse> PullPlaybackDiagnosticsAsync(LibraryItem item, MediaCloudDbContext db, IHttpClientFactory httpClientFactory, PullPlaybackDiagnosticsRequest? request)
 {
+    var result = await ImportPlaybackEvidenceAsync(item, db, httpClientFactory, request);
+    return new PullPlaybackDiagnosticsResponse(item.Id, result.DiagnosticImportedCount, result.DiagnosticUpdatedCount, result.DiagnosticTotalCount, result.UsedTautulli, result.UsedPlex, result.Message);
+}
+
+async Task<PullPlaybackEvidenceImportResult> ImportPlaybackEvidenceAsync(LibraryItem item, MediaCloudDbContext db, IHttpClientFactory httpClientFactory, PullPlaybackDiagnosticsRequest? request)
+{
     var hoursBack = Math.Clamp(request?.HoursBack ?? 48, 1, 24 * 14);
     var maxItems = Math.Clamp(request?.MaxItems ?? 10, 1, 50);
     var includeServerLogs = request?.IncludeServerLogs ?? true;
-    var imported = 0;
-    var updated = 0;
+    var diagnosticImported = 0;
+    var diagnosticUpdated = 0;
+    var watchImported = 0;
+    var watchUpdated = 0;
     var usedTautulli = false;
     var usedPlex = false;
 
@@ -6026,11 +7057,41 @@ async Task<PullPlaybackDiagnosticsResponse> PullPlaybackDiagnosticsAsync(Library
                 LogSnippet = logSnippet,
                 RawPayloadJson = stream.RawJson
             });
-            if (wasUpdate) updated++; else imported++;
+            if (wasUpdate) diagnosticUpdated++; else diagnosticImported++;
+
+            var watchWasUpdate = await UpsertWatchHistoryEntryAsync(db, new WatchHistoryEntry
+            {
+                LibraryItemId = item.Id,
+                IntegrationId = tautulli.Id,
+                SourceService = "tautulli",
+                ExternalId = session.ExternalId,
+                OccurredAtUtc = session.OccurredAtUtc,
+                ImportedAtUtc = DateTimeOffset.UtcNow,
+                StartedAtUtc = session.StartedAtUtc,
+                StoppedAtUtc = session.StoppedAtUtc,
+                UserName = session.UserName,
+                ClientName = session.ClientName,
+                Player = session.Player,
+                Product = session.Product,
+                Platform = session.Platform,
+                Decision = session.Decision,
+                TranscodeDecision = stream.TranscodeDecision,
+                VideoDecision = stream.VideoDecision,
+                AudioDecision = stream.AudioDecision,
+                SubtitleDecision = stream.SubtitleDecision,
+                Container = stream.Container,
+                VideoCodec = stream.VideoCodec,
+                AudioCodec = stream.AudioCodec,
+                SubtitleCodec = stream.SubtitleCodec,
+                QualityProfile = stream.QualityProfile,
+                ErrorMessage = PbxFirstNonEmpty(session.ErrorMessage, stream.ErrorMessage),
+                RawPayloadJson = stream.RawJson
+            });
+            if (watchWasUpdate) watchUpdated++; else watchImported++;
         }
     }
 
-    if (imported == 0 && updated == 0)
+    if (diagnosticImported == 0 && diagnosticUpdated == 0)
     {
         var plex = await db.IntegrationConfigs
             .Where(x => x.Enabled && x.ServiceKey == "plex")
@@ -6090,21 +7151,50 @@ async Task<PullPlaybackDiagnosticsResponse> PullPlaybackDiagnosticsAsync(Library
                     LogSnippet = string.Empty,
                     RawPayloadJson = session.RawPayload
                 });
-                if (wasUpdate) updated++; else imported++;
+                if (wasUpdate) diagnosticUpdated++; else diagnosticImported++;
+
+                var watchWasUpdate = await UpsertWatchHistoryEntryAsync(db, new WatchHistoryEntry
+                {
+                    LibraryItemId = item.Id,
+                    IntegrationId = plex.Id,
+                    SourceService = "plex",
+                    ExternalId = session.ExternalId,
+                    OccurredAtUtc = session.OccurredAtUtc,
+                    ImportedAtUtc = DateTimeOffset.UtcNow,
+                    UserName = session.UserName,
+                    ClientName = session.ClientName,
+                    Player = session.Player,
+                    Product = session.Product,
+                    Platform = session.Platform,
+                    Decision = session.Decision,
+                    TranscodeDecision = session.TranscodeDecision,
+                    VideoDecision = session.VideoDecision,
+                    AudioDecision = session.AudioDecision,
+                    SubtitleDecision = session.SubtitleDecision,
+                    Container = session.Container,
+                    VideoCodec = session.VideoCodec,
+                    AudioCodec = session.AudioCodec,
+                    SubtitleCodec = session.SubtitleCodec,
+                    QualityProfile = session.QualityProfile,
+                    ErrorMessage = string.Empty,
+                    RawPayloadJson = session.RawPayload
+                });
+                if (watchWasUpdate) watchUpdated++; else watchImported++;
             }
         }
     }
 
     await db.SaveChangesAsync();
 
-    var totalCount = await db.PlaybackDiagnosticEntries.CountAsync(x => x.LibraryItemId == item.Id);
+    var diagnosticTotalCount = await db.PlaybackDiagnosticEntries.CountAsync(x => x.LibraryItemId == item.Id);
+    var watchTotalCount = await db.WatchHistoryEntries.CountAsync(x => x.LibraryItemId == item.Id);
     var sourceMessage = usedTautulli
         ? "Pulled historical playback diagnostics from Tautulli."
         : usedPlex
             ? "No Tautulli history found; checked active Plex sessions only."
             : "No Plex or Tautulli playback integration is configured for diagnostics.";
 
-    return new PullPlaybackDiagnosticsResponse(item.Id, imported, updated, totalCount, usedTautulli, usedPlex, sourceMessage);
+    return new PullPlaybackEvidenceImportResult(item.Id, diagnosticImported, diagnosticUpdated, diagnosticTotalCount, watchImported, watchUpdated, watchTotalCount, usedTautulli, usedPlex, sourceMessage);
 }
 
 async Task<List<TautulliHistoryItem>> FetchTautulliHistoryAsync(IntegrationConfig integration, IHttpClientFactory httpClientFactory, string ratingKey, string expectedTitle, int? expectedYear, string mediaType, int hoursBack, int maxItems)
@@ -6345,6 +7435,40 @@ async Task<bool> UpsertPlaybackDiagnosticEntryAsync(MediaCloudDbContext db, Play
     existing.SuspectedCause = candidate.SuspectedCause;
     existing.ErrorMessage = candidate.ErrorMessage;
     existing.LogSnippet = candidate.LogSnippet;
+    existing.RawPayloadJson = candidate.RawPayloadJson;
+    return true;
+}
+
+async Task<bool> UpsertWatchHistoryEntryAsync(MediaCloudDbContext db, WatchHistoryEntry candidate)
+{
+    var existing = await db.WatchHistoryEntries.FirstOrDefaultAsync(x => x.LibraryItemId == candidate.LibraryItemId && x.SourceService == candidate.SourceService && x.ExternalId == candidate.ExternalId);
+    if (existing is null)
+    {
+        db.WatchHistoryEntries.Add(candidate);
+        return false;
+    }
+
+    existing.IntegrationId = candidate.IntegrationId;
+    existing.OccurredAtUtc = candidate.OccurredAtUtc;
+    existing.ImportedAtUtc = candidate.ImportedAtUtc;
+    existing.StartedAtUtc = candidate.StartedAtUtc;
+    existing.StoppedAtUtc = candidate.StoppedAtUtc;
+    existing.UserName = candidate.UserName;
+    existing.ClientName = candidate.ClientName;
+    existing.Player = candidate.Player;
+    existing.Product = candidate.Product;
+    existing.Platform = candidate.Platform;
+    existing.Decision = candidate.Decision;
+    existing.TranscodeDecision = candidate.TranscodeDecision;
+    existing.VideoDecision = candidate.VideoDecision;
+    existing.AudioDecision = candidate.AudioDecision;
+    existing.SubtitleDecision = candidate.SubtitleDecision;
+    existing.Container = candidate.Container;
+    existing.VideoCodec = candidate.VideoCodec;
+    existing.AudioCodec = candidate.AudioCodec;
+    existing.SubtitleCodec = candidate.SubtitleCodec;
+    existing.QualityProfile = candidate.QualityProfile;
+    existing.ErrorMessage = candidate.ErrorMessage;
     existing.RawPayloadJson = candidate.RawPayloadJson;
     return true;
 }
@@ -7371,11 +8495,15 @@ public record PlexBackfillApplyResponse(int TotalPlexMovies, int MissingRadarrCo
 public record IntegrationSyncStateDto(long IntegrationId, DateTimeOffset? LastAttemptedAtUtc, DateTimeOffset? LastSuccessfulAtUtc, string LastCursor, string LastEtag, string LastError, int ConsecutiveFailureCount, DateTimeOffset UpdatedAtUtc);
 public record DashboardSourceTruthIntegrationDto(long IntegrationId, string ServiceKey, string DisplayName, string InstanceName, bool Enabled, string RoleSummary, int SourceLinkCount, DateTimeOffset? LastAttemptedAtUtc, DateTimeOffset? LastSuccessfulAtUtc, string LastError, int ConsecutiveFailureCount);
 public record DashboardSourceTruthResponse(IReadOnlyList<DashboardSourceTruthIntegrationDto> Integrations);
-public record LibraryItemDto(long Id, string CanonicalKey, string MediaType, string DisplayTitle, string Title, string SortTitle, int? Year, int? TmdbId, int? TvdbId, string ImdbId, string PlexRatingKey, string Description, string DescriptionSourceService, double? RuntimeMinutes, double? ActualRuntimeMinutes, IReadOnlyList<string> AudioLanguages, IReadOnlyList<string> SubtitleLanguages, string PlayabilityScore, string PlayabilitySummary, DateTimeOffset? PlayabilityCheckedAtUtc, IReadOnlyList<string> PlayabilityReasons, string PlayabilityVideoCodec, IReadOnlyList<string> PlayabilityAudioCodecs, IReadOnlyList<string> PlayabilitySubtitleCodecs, bool IsAvailable, string QualityProfile, DateTimeOffset? SourceUpdatedAtUtc, DateTimeOffset UpdatedAtUtc, string PrimaryFilePath, bool LocalFileExists, IReadOnlyList<string> SourceServices);
+public record LibraryItemDto(long Id, string CanonicalKey, string MediaType, string DisplayTitle, string Title, string SortTitle, int? Year, int? TmdbId, int? TvdbId, string ImdbId, string PlexRatingKey, string Description, string DescriptionSourceService, double? RuntimeMinutes, double? ActualRuntimeMinutes, IReadOnlyList<string> AudioLanguages, IReadOnlyList<string> SubtitleLanguages, string PlayabilityScore, string PlayabilitySummary, DateTimeOffset? PlayabilityCheckedAtUtc, IReadOnlyList<string> PlayabilityReasons, string PlayabilityVideoCodec, IReadOnlyList<string> PlayabilityAudioCodecs, IReadOnlyList<string> PlayabilitySubtitleCodecs, bool IsAvailable, string QualityProfile, DateTimeOffset? SourceUpdatedAtUtc, DateTimeOffset CreatedAtUtc, DateTimeOffset UpdatedAtUtc, string PrimaryFilePath, bool LocalFileExists, IReadOnlyList<string> SourceServices, string ContentRating);
 public record LibraryItemRuntimeProbeResponse(long Id, string MediaType, string Title, string PrimaryFilePath, bool FileExists, bool Success, double? ActualRuntimeMinutes, string Message, int? ProbeExitCode, string ProbeError, string PlayabilityScore, string PlayabilitySummary, DateTimeOffset? PlayabilityCheckedAtUtc);
 public record PlaybackDiagnosticDto(long Id, long LibraryItemId, string SourceService, string SourceDisplayName, string ExternalId, DateTimeOffset OccurredAtUtc, DateTimeOffset ImportedAtUtc, DateTimeOffset? StartedAtUtc, DateTimeOffset? StoppedAtUtc, string UserName, string ClientName, string Player, string Product, string Platform, string Decision, string TranscodeDecision, string VideoDecision, string AudioDecision, string SubtitleDecision, string Container, string VideoCodec, string AudioCodec, string SubtitleCodec, string QualityProfile, string HealthLabel, string Summary, string SuspectedCause, string ErrorMessage, string LogSnippet);
 public record PullPlaybackDiagnosticsRequest(int HoursBack = 48, int MaxItems = 10, bool IncludeServerLogs = true);
 public record PullPlaybackDiagnosticsResponse(long LibraryItemId, int ImportedCount, int UpdatedCount, int TotalCount, bool UsedTautulli, bool UsedPlex, string Message);
+public record WatchHistoryEntryDto(long Id, long LibraryItemId, string SourceService, string SourceDisplayName, string ExternalId, DateTimeOffset OccurredAtUtc, DateTimeOffset ImportedAtUtc, DateTimeOffset? StartedAtUtc, DateTimeOffset? StoppedAtUtc, string UserName, string ClientName, string Player, string Product, string Platform, string Decision, string TranscodeDecision, string VideoDecision, string AudioDecision, string SubtitleDecision, string Container, string VideoCodec, string AudioCodec, string SubtitleCodec, string QualityProfile, string ErrorMessage);
+public record PullWatchHistoryResponse(long LibraryItemId, int ImportedCount, int UpdatedCount, int TotalCount, bool UsedTautulli, bool UsedPlex, string Message);
+public record WatchHistorySummaryDto(long LibraryItemId, int TotalCount, int DistinctUserCount, int DirectPlayCount, int TranscodeCount, int ErrorCount, DateTimeOffset? LastImportedAtUtc, DateTimeOffset? LastOccurredAtUtc, string LastWatchedBy, string TopClient, string State, string Summary);
+internal record PullPlaybackEvidenceImportResult(long LibraryItemId, int DiagnosticImportedCount, int DiagnosticUpdatedCount, int DiagnosticTotalCount, int WatchImportedCount, int WatchUpdatedCount, int WatchTotalCount, bool UsedTautulli, bool UsedPlex, string Message);
 public record TautulliHistoryItem(string ExternalId, string RatingKey, DateTimeOffset OccurredAtUtc, DateTimeOffset? StartedAtUtc, DateTimeOffset? StoppedAtUtc, string UserName, string ClientName, string Player, string Product, string Platform, string Decision, string ErrorMessage, string DisplayTitle, string ParentTitle, string GrandparentTitle, int? MediaIndex, int? ParentMediaIndex, string OriginallyAvailableAt);
 public record TautulliStreamDetails(string Decision, string TranscodeDecision, string VideoDecision, string AudioDecision, string SubtitleDecision, string Container, string VideoCodec, string AudioCodec, string SubtitleCodec, string QualityProfile, string ErrorMessage, string RawJson);
 public record PlexLiveSessionDetails(string ExternalId, DateTimeOffset OccurredAtUtc, string UserName, string ClientName, string Player, string Product, string Platform, string Decision, string TranscodeDecision, string VideoDecision, string AudioDecision, string SubtitleDecision, string Container, string VideoCodec, string AudioCodec, string SubtitleCodec, string QualityProfile, string RawPayload);
@@ -7389,12 +8517,12 @@ public record SonarrCollectionFetchResult(bool Success, string ErrorMessage, Lis
 public record SonarrSeriesContext(string Title, string SortTitle, int? Year, int? TvdbId, int? TmdbId, string ImdbId, string QualityProfile);
 public record LibraryItemSourceTitleInfo(long LibraryItemId, string ServiceKey, string InstanceName, string SourceTitle, string SourceSortTitle);
 public record LibraryItemSourceLinkDto(long Id, long LibraryItemId, long IntegrationId, string ServiceKey, string InstanceName, string SourceTitle, string SourceSortTitle, string ExternalId, string ExternalType, DateTimeOffset? ExternalUpdatedAtUtc, DateTimeOffset LastSeenAtUtc, bool IsDeletedAtSource);
-public record LibraryItemSourceStatusDto(string ServiceKey, string DisplayName, long? IntegrationId, string InstanceName, bool HasSourceLink, bool CanSync, string Note, bool? RadarrMonitored, bool? DesiredMonitored, bool? MonitoringDrift, bool? OverseerrInMedia, bool SupportsMonitoringSync, bool? MonitoringSynced, bool AutoSyncEnabled);
-public record LibraryItemSourceSyncResponse(long LibraryItemId, string ServiceKey, bool Success, bool HadSourceLinkBefore, bool HasSourceLinkAfter, bool AttemptedCreateAction, string Message);
+public record LibraryItemSourceStatusDto(string ServiceKey, string DisplayName, long? IntegrationId, string InstanceName, bool HasSourceLink, bool CanSync, string Note, bool? RadarrMonitored, bool? DesiredMonitored, bool? MonitoringDrift, bool? OverseerrInMedia, bool SupportsMonitoringSync, bool? MonitoringSynced, bool AutoSyncEnabled, DateTimeOffset? LastSyncedAtUtc);
+public record LibraryItemSourceSyncResponse(long LibraryItemId, string ServiceKey, bool Success, bool HadSourceLinkBefore, bool HasSourceLinkAfter, bool AttemptedCreateAction, string Message, DateTimeOffset? SyncedAtUtc);
 public record SearchReplacementRequest(string Reason, string Notes, string? IssueType = null);
 public record LibraryRemediationIntentDto(string IssueType, string RequestedAction, string ReasonCategory, string Confidence, bool ShouldSearchNow, bool ShouldBlacklistCurrentRelease, bool NeedsManualReview, bool NotesRecordedOnly, bool ApprovalRequired = false, string ApprovalReason = "", string PolicySummary = "", string NotesHandling = "", string ProfileDecision = "", string ProfileSummary = "", string PolicyState = "", string NextActionSummary = "");
-public record LibraryItemRemediationResponse(long LibraryItemId, bool Success, string ServiceKey, string ServiceDisplayName, string CommandName, int? ExternalItemId, bool LookedUpRemotely, string Reason, string Notes, string Message, LibraryRemediationIntentDto? Intent = null, string SearchStatusHint = "");
-public record LibraryRemediationJobDto(long Id, long LibraryItemId, long? LibraryIssueId, string ServiceKey, string ServiceDisplayName, string RequestedAction, string CommandName, int? ExternalItemId, string IssueType, string Reason, string Notes, string ReasonCategory, string Confidence, bool ShouldSearchNow, bool ShouldBlacklistCurrentRelease, bool NeedsManualReview, bool NotesRecordedOnly, bool LookedUpRemotely, string PolicySummary, string NotesHandling, string ProfileDecision, string ProfileSummary, string Status, string SearchStatus, string BlacklistStatus, string OutcomeSummary, string ResultMessage, string ReleaseSummary, string RequestedBy, DateTimeOffset RequestedAtUtc, DateTimeOffset? FinishedAtUtc, DateTimeOffset? LastCheckedAtUtc);
+public record LibraryItemRemediationResponse(long LibraryItemId, bool Success, string ServiceKey, string ServiceDisplayName, string CommandName, int? ExternalItemId, bool LookedUpRemotely, string Reason, string Notes, string Message, LibraryRemediationIntentDto? Intent = null, string SearchStatusHint = "", int? ProviderCommandId = null, string ProviderCommandStatus = "", string ProviderCommandSummary = "");
+public record LibraryRemediationJobDto(long Id, long LibraryItemId, long? LibraryIssueId, string ServiceKey, string ServiceDisplayName, long? IntegrationId, string RequestedAction, string CommandName, int? ExternalItemId, string IssueType, string Reason, string Notes, string ReasonCategory, string Confidence, bool ShouldSearchNow, bool ShouldBlacklistCurrentRelease, bool NeedsManualReview, bool NotesRecordedOnly, bool LookedUpRemotely, string PolicySummary, string NotesHandling, string ProfileDecision, string ProfileSummary, string Status, string SearchStatus, string BlacklistStatus, string OutcomeSummary, string ResultMessage, int? ProviderCommandId, string ProviderCommandStatus, string ProviderCommandSummary, string DownloadType, DateTimeOffset? ProviderCommandCheckedAtUtc, string VerificationStatus, string VerificationSummary, DateTimeOffset? VerificationCheckedAtUtc, string LoopbackStatus, string LoopbackSummary, string ReleaseSummary, string RequestedBy, DateTimeOffset RequestedAtUtc, DateTimeOffset? FinishedAtUtc, DateTimeOffset? LastCheckedAtUtc);
 public record SetDesiredMonitoringRequest(bool DesiredMonitored);
 public record UpdateMonitoringSettingsRequest(bool ManagedByMediaCloud, bool AutoSyncEnabled);
 public record MonitoringSettingsResponse(bool ManagedByMediaCloud, bool AutoSyncEnabled);
@@ -7409,6 +8537,16 @@ public record LibraryJumpResponse(bool Found, string Token, int PageIndex, long?
 public record LibraryIssueDto(long Id, long LibraryItemId, string IssueType, string Severity, string Status, string Summary, string SuggestedAction, string DetailsJson, DateTimeOffset FirstDetectedAtUtc, DateTimeOffset LastDetectedAtUtc, DateTimeOffset? ResolvedAtUtc, string LibraryItemTitle, string MediaType);
 public record UserSummaryResponse(Guid Id, string Username, string Role, DateTimeOffset CreatedAtUtc);
 public record UserAuditLogResponse(long Id, DateTimeOffset OccurredAtUtc, Guid? ActorUserId, string ActorUsername, Guid TargetUserId, string TargetUsername, string Action, string Summary);
+public record RadarrNamingSettingsResponse(long IntegrationId, bool RenameMovies, bool ReplaceIllegalCharacters, string ColonReplacementFormat, string StandardMovieFormat, string MovieFolderFormat, int ConfigId);
+public record UpdateRadarrNamingSettingsRequest(bool RenameMovies, bool ReplaceIllegalCharacters, string ColonReplacementFormat, string StandardMovieFormat, string MovieFolderFormat, int ConfigId);
+public record RadarrTagOptionResponse(int Id, string Label);
+public record RadarrTagsResponse(long IntegrationId, IReadOnlyList<RadarrTagOptionResponse> Tags, IReadOnlyList<int> SelectedTagIds, IReadOnlyList<string> SelectedTagLabels);
+public record UpdateRadarrTagsRequest(IReadOnlyList<int> SelectedTagIds);
+public record RadarrQualityProfileOptionResponse(int Id, string Name);
+public record RadarrQualityProfilesResponse(long IntegrationId, IReadOnlyList<RadarrQualityProfileOptionResponse> Profiles, int? PreferredProfileId, string PreferredProfileName, IReadOnlyList<string> ObservedLibraryQualityProfiles);
+public record UpdateRadarrPreferredQualityProfileRequest(int PreferredProfileId);
+public record RadarrDefaultAddPolicyResponse(long IntegrationId, IReadOnlyList<string> AvailableRootFolders, IReadOnlyList<RadarrQualityProfileOptionResponse> AvailableQualityProfiles, string RootFolderPath, int? QualityProfileId, string QualityProfileName, string MinimumAvailability, bool Monitored, IReadOnlyList<string> MinimumAvailabilityOptions);
+public record UpdateRadarrDefaultAddPolicyRequest(string RootFolderPath, int QualityProfileId, string MinimumAvailability, bool Monitored);
 public record ErrorResponse(string Error);
 public record SuccessResponse(bool Success);
 

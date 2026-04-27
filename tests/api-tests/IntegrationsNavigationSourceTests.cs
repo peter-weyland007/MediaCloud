@@ -15,7 +15,7 @@ public sealed class IntegrationsNavigationSourceTests
     }
 
     [Fact]
-    public void Integrations_landing_page_exists_as_top_level_panel_directory()
+    public void Integrations_landing_page_exists_as_top_level_control_plane()
     {
         var repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../../"));
         var pagePath = Path.GetFullPath(Path.Combine(repoRoot, "apps/web/Components/Pages/Integrations.razor"));
@@ -23,9 +23,10 @@ public sealed class IntegrationsNavigationSourceTests
 
         Assert.Contains("@page \"/integrations\"", content);
         Assert.Contains("Integration control plane", content);
-        Assert.Contains("/settings/integrations", content);
-        Assert.Contains("@foreach (var group in GroupInstancesByService())", content);
-        Assert.Contains("href=\"@($\"/integrations/{group.ServiceKey}\")\"", content);
+        Assert.Contains("SET UP INTEGRATIONS", content);
+        Assert.Contains("@foreach (var item in FilteredInstances())", content);
+        Assert.Contains("Href=\"@($\"/integrations/{item.ServiceKey}\")\"", content);
+        Assert.DoesNotContain("/settings/integrations", content);
     }
 
     [Fact]
@@ -38,7 +39,8 @@ public sealed class IntegrationsNavigationSourceTests
         Assert.Contains("@page \"/integrations/{ServiceKey}\"", content);
         Assert.Contains("Service instances", content);
         Assert.Contains("Back to integrations", content);
-        Assert.Contains("Open connection settings", content);
+        Assert.Contains("Manage connections", content);
+        Assert.DoesNotContain("/settings/integrations", content);
         Assert.Contains("TestIntegrationAsync(item)", content);
     }
 }

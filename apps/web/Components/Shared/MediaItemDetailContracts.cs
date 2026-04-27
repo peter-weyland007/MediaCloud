@@ -32,7 +32,8 @@ public record MediaItemDetailDto(
     DateTimeOffset UpdatedAtUtc,
     string PrimaryFilePath,
     bool LocalFileExists,
-    IReadOnlyList<string> SourceServices);
+    IReadOnlyList<string> SourceServices,
+    string ContentRating);
 
 public record LibraryItemSourceLinkDto(
     long Id,

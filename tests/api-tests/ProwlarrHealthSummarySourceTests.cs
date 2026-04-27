@@ -44,16 +44,16 @@ public sealed class ProwlarrHealthSummarySourceTests
     }
 
     [Fact]
-    public void Settings_integrations_page_renders_prowlarr_operational_counts()
+    public void Integration_service_detail_page_renders_prowlarr_operational_counts()
     {
         var repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../../"));
-        var pagePath = Path.GetFullPath(Path.Combine(repoRoot, "apps/web/Components/Pages/SettingsIntegrations.razor"));
+        var pagePath = Path.GetFullPath(Path.Combine(repoRoot, "apps/web/Components/Pages/IntegrationServiceDetails.razor"));
         var content = File.ReadAllText(pagePath);
 
-        Assert.Contains("Configured indexers", content);
-        Assert.Contains("Unavailable indexers", content);
-        Assert.Contains("Application links", content);
-        Assert.Contains("Health issues", content);
+        Assert.Contains("CONFIGURED INDEXERS", content);
+        Assert.Contains("UNAVAILABLE INDEXERS", content);
+        Assert.Contains("APPLICATION LINKS", content);
+        Assert.Contains("HEALTH ISSUES", content);
         Assert.Contains("item.ProwlarrSummary", content);
         Assert.Contains("Operational", content);
     }

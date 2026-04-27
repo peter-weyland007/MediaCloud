@@ -3,6 +3,7 @@
 @inject HttpClient Http
 @inject ISnackbar Snackbar
 @inject AuthorizedApiRequestFactory RequestFactory
+@inject IJSRuntime JSRuntime
 @using web.Components.Shared
 
 <PageTitle>@(_item?.DisplayTitle is { Length: > 0 } title ? $"{title} · Movie Details" : "Movie Details")</PageTitle>
@@ -23,29 +24,79 @@ else
                        Title="@_item.DisplayTitle"
                        Subtitle="@($"{_item.Year} · {_item.MediaType}")" />
 
-    <section class="movie-detail-top-grid">
-        <section class="card" style="margin-top:1rem;">
-            <p class="card-label">OVERVIEW</p>
-            @if (string.IsNullOrWhiteSpace(_item.Description))
-            {
-                <p class="card-note">No description is currently available for this movie.</p>
-            }
-            else
-            {
-                <p style="margin:0.35rem 0 0; line-height:1.55; color:#e2e8f0; white-space:pre-wrap;">@_item.Description</p>
-            }
-        </section>
+    <section class="movie-detail-tabs-shell" style="margin-top:1rem;">
+        <MudTabs Class="movie-detail-tabs" Position="Position.Left" Rounded="true" @bind-ActivePanelIndex="_activeMovieDetailTabIndex">
+            <MudTabPanel Text="Overview">
+                <div class="movie-overview-hero">
+                    <div class="movie-overview-facts-row">
+                        <span>@BuildOverviewYearAndRatingSummary()</span>
+                        <span>@BuildOverviewRuntimeSummary()</span>
+                    </div>
 
-        <section class="card movie-detail-source-panel" style="margin-top:1rem;">
+                    <div class="movie-overview-meta-grid">
+                        <div class="movie-overview-meta-item movie-overview-meta-item--full-width">
+                            <p class="movie-overview-meta-label">Path</p>
+                            <p class="movie-overview-meta-value">@BuildOverviewPathSummary()</p>
+                        </div>
+                        <div class="movie-overview-meta-item">
+                            <p class="movie-overview-meta-label">Profile</p>
+                            <p class="movie-overview-meta-value">@DisplayValue(_item.QualityProfile)</p>
+                        </div>
+                        <div class="movie-overview-meta-item">
+                            <p class="movie-overview-meta-label">Playability</p>
+                            <p class="movie-overview-meta-value">@DisplayValue(_item.PlayabilityScore)</p>
+                        </div>
+                        <div class="movie-overview-meta-item">
+                            <p class="movie-overview-meta-label">Sources</p>
+                            <p class="movie-overview-meta-value">@BuildOverviewSourceServicesSummary()</p>
+                        </div>
+                        <div class="movie-overview-meta-item">
+                            <p class="movie-overview-meta-label">Availability</p>
+                            <p class="movie-overview-meta-value movie-overview-status @GetOverviewStatusClass()">@GetOverviewStatusLabel()</p>
+                        </div>
+                        <div class="movie-overview-meta-break" aria-hidden="true"></div>
+                        <div class="movie-overview-meta-item movie-overview-meta-item--full-width">
+                            <div class="movie-overview-language-row">
+                                <div class="movie-overview-meta-item">
+                                    <p class="movie-overview-meta-label">Audio</p>
+                                    <p class="movie-overview-meta-value">@FormatList(_item.AudioLanguages)</p>
+                                </div>
+                                <div class="movie-overview-meta-item">
+                                    <p class="movie-overview-meta-label">Subtitle Languages</p>
+                                    <p class="movie-overview-meta-value">@FormatList(_item.SubtitleLanguages)</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="movie-overview-meta-item">
+                            <p class="movie-overview-meta-label">TMDB</p>
+                            <p class="movie-overview-meta-value">@DisplayValue(_item.TmdbId?.ToString())</p>
+                        </div>
+                        <div class="movie-overview-meta-item">
+                            <p class="movie-overview-meta-label">IMDb</p>
+                            <p class="movie-overview-meta-value">@DisplayValue(_item.ImdbId)</p>
+                        </div>
+                    </div>
+
+                    <div class="movie-overview-summary-block">
+                        <p class="movie-overview-meta-label">Overview</p>
+                        @if (string.IsNullOrWhiteSpace(_item.Description))
+                        {
+                            <p class="card-note">No description is currently available for this movie.</p>
+                        }
+                        else
+                        {
+                            <p class="movie-overview-summary-text">@_item.Description</p>
+                        }
+                    </div>
+                </div>
+            </MudTabPanel>
+            <MudTabPanel Text="Source Services">
+        <section class="movie-detail-source-panel" style="margin-top:1rem;">
             <div style="display:flex; justify-content:space-between; gap:0.75rem; align-items:start; flex-wrap:wrap;">
                 <div>
                     <p class="card-label">SOURCE SERVICES</p>
                     <p class="card-note" style="margin:0.35rem 0 0;">Sync a specific source for this movie, then refresh the detail metrics immediately.</p>
                 </div>
-                @if (!string.IsNullOrWhiteSpace(_sourcePanelStatusMessage))
-                {
-                    <span class="card-note">@_sourcePanelStatusMessage</span>
-                }
             </div>
 
             @if (_sourceStatuses.Count == 0)
@@ -75,9 +126,10 @@ else
                                                Variant="Variant.Filled"
                                                Color="Color.Primary"
                                                Size="Size.Small"
+                                               Style="min-width:7rem;"
                                                OnClick='() => SyncSourceAsync(source)'
                                                Disabled='@(!source.CanSync || _syncingServices.Contains(source.ServiceKey))'>@(_syncingServices.Contains(source.ServiceKey) ? "Syncing..." : "SYNC")</MudButton>
-                                    <span class="card-note" style="display:block; margin:0; text-align:right; white-space:nowrap; font-size:0.72rem;">Last synced: @(effectiveSyncedAtUtc.HasValue ? effectiveSyncedAtUtc.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss") : "—")</span>
+                                    <span class="card-note" style="display:block; margin:0; text-align:right; white-space:nowrap; font-size:0.72rem;">Last synced: @FormatLastSyncedTimestamp(effectiveSyncedAtUtc)</span>
                                 </div>
                             </div>
 
@@ -103,199 +155,425 @@ else
                 </div>
             }
         </section>
-    </section>
-
+            </MudTabPanel>
+            <MudTabPanel Text="File & Identifiers">
     <MediaItemDetailBody Item="_item"
                          OverviewEmptyText="No description is currently available for this movie."
                          AnalyzeButtonLabel="Analyze file"
                          IsAnalyzing="_probingRuntime"
                          ShowOverviewSection="false"
                          ShowSourceServicesSummary="false"
+                         FlattenMetricsPanel="true"
+                         AnalyzeButtonBelowPrimaryFile="true"
                          OnAnalyze="@ProbeRuntimeNowAsync" />
-
+            </MudTabPanel>
+            <MudTabPanel Text="Subtitles">
     <BazarrSubtitlePanel LibraryItemId="@_item.Id" />
+            </MudTabPanel>
+            <MudTabPanel Text="File Remediation">
+                @RenderRemediationV2SimpleContent()
+            </MudTabPanel>
+            <MudTabPanel Text="Media File Issues">
+    <section class="movie-issues-scroll-shell">
+        <div>
+            <p class="card-label">MEDIA FILE ISSUES</p>
+            <p class="card-note">Open: @OpenIssueCount · Resolved: @ResolvedIssueCount</p>
+        </div>
 
-    <section class="card" style="margin-top:1rem;">
-        <button type="button"
-                class="movie-issues-toggle"
-                @onclick="ToggleCompatibilityPanel"
-                aria-expanded="@_compatibilityExpanded"
-                aria-controls="movie-compatibility-panel">
-            <span>
-                <span class="card-label" style="display:block;">PROFILE MATCH MATRIX</span>
-                <span class="card-note">Target vs file table for playback fit.</span>
-                @if (_compatibilityRecommendation is not null)
-                {
-                    <span class="card-note" style="display:block; margin-top:0.2rem;">Preset: @_compatibilityRecommendation.ActivePresetName</span>
-                }
-            </span>
-            <span class="movie-issues-chevron">@(_compatibilityExpanded ? "▾" : "▸")</span>
-        </button>
+        <div id="movie-issues-panel" class="movie-issues-panel-fill" style="display:grid; gap:1rem;">
+            <div style="display:grid; gap:0.75rem; padding-top:0.15rem; border-top:1px solid rgba(51,65,85,0.65);">
+                <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:0.75rem;">
+                    <div class="form-group" style="margin:0;">
+                        <label for="movie-issue-type">Issue type</label>
+                        <InputSelect id="movie-issue-type" class="input" @bind-Value="_issueForm.IssueType">
+                            @foreach (var option in IssueTypeOptions)
+                            {
+                                <option value="@option.Value">@option.Label</option>
+                            }
+                        </InputSelect>
+                    </div>
+                    <div class="form-group" style="margin:0;">
+                        <label for="movie-issue-status">Status</label>
+                        <InputSelect id="movie-issue-status" class="input" @bind-Value="_issueForm.Status">
+                            <option value="Open">Open</option>
+                            <option value="Resolved">Resolved</option>
+                        </InputSelect>
+                    </div>
+                    <div class="form-group" style="margin:0; display:flex; flex-direction:column; justify-content:flex-end;">
+                        <label>Severity</label>
+                        <span class="card-note">Auto-set from issue type after save.</span>
+                    </div>
+                </div>
 
-        @if (_compatibilityExpanded)
-        {
-            <div id="movie-compatibility-panel" style="margin-top:1rem; display:grid; gap:0.85rem;">
-                @if (_compatibilityLoading)
+                <div class="form-group" style="margin:0;">
+                    <label for="movie-issue-summary">Summary</label>
+                    <InputText id="movie-issue-summary" class="input" @bind-Value="_issueForm.Summary" />
+                </div>
+
+                <div style="display:flex; justify-content:space-between; gap:0.75rem; flex-wrap:wrap; align-items:start;">
+                    <div>
+                        @if (!string.IsNullOrWhiteSpace(_issuesStatusMessage))
+                        {
+                            <p class="card-note" style="margin:0;">@_issuesStatusMessage</p>
+                        }
+                    </div>
+                    <MudButton Class="media-btn media-btn--primary"
+                               Variant="Variant.Filled"
+                               Color="Color.Primary"
+                               Size="Size.Small"
+                               OnClick="CreateIssueAsync"
+                               Disabled="@_savingIssue">@(_savingIssue ? "Saving..." : "Save issue")</MudButton>
+                </div>
+            </div>
+
+            <div style="display:grid; gap:0.75rem;">
+                @if (_issuesLoading)
                 {
-                    <p class="card-note">Loading preset comparison…</p>
+                    <p class="card-note">Loading issue history…</p>
                 }
-                else if (!string.IsNullOrWhiteSpace(_compatibilityStatusMessage))
+                else if (_issues.Count == 0)
                 {
-                    <p class="card-note">@_compatibilityStatusMessage</p>
-                }
-                else if (_compatibilityRecommendation is null || _compatibilityRecommendation.ComparisonRows.Count == 0)
-                {
-                    <p class="card-note">No preset comparison is available until MediaCloud has analyzed this file.</p>
+                    <p class="card-note">No issues have been recorded for this media file yet.</p>
                 }
                 else
                 {
-                    <div class="movie-compatibility-table-wrap">
-                        <table class="movie-compatibility-table">
-                            <thead>
-                                <tr>
-                                    <th scope="col">Trait</th>
-                                    <th scope="col">Target</th>
-                                    <th scope="col">File</th>
-                                    <th scope="col">Fit</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                @foreach (var row in _compatibilityRecommendation.ComparisonRows)
-                                {
-                                    <tr>
-                                        <th scope="row">@row.Label</th>
-                                        <td>@row.SelectedProfileValue</td>
-                                        <td>@row.InspectedValue</td>
-                                        <td>
-                                            <span class="movie-compatibility-status @GetCompatibilityStatusClass(row.Status)">@GetCompatibilityStatusLabel(row.Status)</span>
-                                        </td>
-                                    </tr>
-                                }
-                            </tbody>
-                        </table>
-                    </div>
-                }
-            </div>
-        }
-    </section>
-
-    <section class="card" style="margin-top:1rem;">
-        <button type="button"
-                class="movie-issues-toggle"
-                @onclick="ToggleIssuesPanel"
-                aria-expanded="@_issuesExpanded"
-                aria-controls="movie-issues-panel">
-            <span>
-                <span class="card-label" style="display:block;">MEDIA FILE ISSUES</span>
-                <span class="card-note">Open: @OpenIssueCount · Resolved: @ResolvedIssueCount</span>
-            </span>
-            <span class="movie-issues-chevron">@(_issuesExpanded ? "▾" : "▸")</span>
-        </button>
-
-        @if (_issuesExpanded)
-        {
-            <div id="movie-issues-panel" style="margin-top:1rem; display:grid; gap:1rem;">
-                <div style="display:grid; gap:0.75rem; padding-top:0.15rem; border-top:1px solid rgba(51,65,85,0.65);">
-                    <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:0.75rem;">
-                        <div class="form-group" style="margin:0;">
-                            <label for="movie-issue-type">Issue type</label>
-                            <InputSelect id="movie-issue-type" class="input" @bind-Value="_issueForm.IssueType">
-                                @foreach (var option in IssueTypeOptions)
-                                {
-                                    <option value="@option.Value">@option.Label</option>
-                                }
-                            </InputSelect>
-                        </div>
-                        <div class="form-group" style="margin:0;">
-                            <label for="movie-issue-status">Status</label>
-                            <InputSelect id="movie-issue-status" class="input" @bind-Value="_issueForm.Status">
-                                <option value="Open">Open</option>
-                                <option value="Resolved">Resolved</option>
-                            </InputSelect>
-                        </div>
-                        <div class="form-group" style="margin:0; display:flex; flex-direction:column; justify-content:flex-end;">
-                            <label>Severity</label>
-                            <span class="card-note">Auto-set from issue type after save.</span>
-                        </div>
-                    </div>
-
-                    <div class="form-group" style="margin:0;">
-                        <label for="movie-issue-summary">Summary</label>
-                        <InputText id="movie-issue-summary" class="input" @bind-Value="_issueForm.Summary" />
-                    </div>
-
-                    <div style="display:flex; justify-content:space-between; gap:0.75rem; flex-wrap:wrap; align-items:start;">
-                        <div>
-                            @if (!string.IsNullOrWhiteSpace(_issuesStatusMessage))
-                            {
-                                <p class="card-note" style="margin:0;">@_issuesStatusMessage</p>
-                            }
-                        </div>
-                        <MudButton Class="media-btn media-btn--primary"
-                                   Variant="Variant.Filled"
-                                   Color="Color.Primary"
-                                   Size="Size.Small"
-                                   OnClick="CreateIssueAsync"
-                                   Disabled="@_savingIssue">@(_savingIssue ? "Saving..." : "Save issue")</MudButton>
-                    </div>
-                </div>
-
-                <div style="display:grid; gap:0.75rem;">
-                    @if (_issuesLoading)
+                    @foreach (var issue in _issues)
                     {
-                        <p class="card-note">Loading issue history…</p>
-                    }
-                    else if (_issues.Count == 0)
-                    {
-                        <p class="card-note">No issues have been recorded for this media file yet.</p>
-                    }
-                    else
-                    {
-                        @foreach (var issue in _issues)
-                        {
-                            <div style="border:1px solid rgba(51,65,85,0.85); border-radius:0.75rem; padding:0.8rem; background:rgba(15,23,42,0.65); display:grid; gap:0.5rem;">
-                                <div style="display:grid; grid-template-columns:minmax(0, 1fr) auto; gap:0.75rem; align-items:start;">
-                                    <div style="display:grid; gap:0.35rem; min-width:0;">
-                                        <div style="display:flex; gap:0.45rem; align-items:center; flex-wrap:wrap;">
-                                            <strong>@GetIssueTypeLabel(issue.IssueType)</strong>
-                                            <span style="@GetIssueStatusBadgeStyle(issue.Status)">@issue.Status</span>
-                                            <span style="@GetIssueSeverityBadgeStyle(issue.Severity)">@issue.Severity</span>
-                                        </div>
-                                        <span>@issue.Summary</span>
-                                        @if (!string.IsNullOrWhiteSpace(issue.IssueNotes))
-                                        {
-                                            <span class="card-note">@issue.IssueNotes</span>
-                                        }
+                        <div style="border:1px solid rgba(51,65,85,0.85); border-radius:0.75rem; padding:0.8rem; background:rgba(15,23,42,0.65); display:grid; gap:0.5rem;">
+                            <div style="display:grid; grid-template-columns:minmax(0, 1fr) auto; gap:0.75rem; align-items:start;">
+                                <div style="display:grid; gap:0.35rem; min-width:0;">
+                                    <div style="display:flex; gap:0.45rem; align-items:center; flex-wrap:wrap;">
+                                        <strong>@GetIssueTypeLabel(issue.IssueType)</strong>
+                                        <span style="@GetIssueStatusBadgeStyle(issue.Status)">@issue.Status</span>
+                                        <span style="@GetIssueSeverityBadgeStyle(issue.Severity)">@issue.Severity</span>
                                     </div>
+                                    <span>@issue.Summary</span>
+                                    @if (!string.IsNullOrWhiteSpace(issue.IssueNotes))
+                                    {
+                                        <span class="card-note">@issue.IssueNotes</span>
+                                    }
+                                </div>
 
-                                    <div style="display:flex; flex-direction:column; gap:0.2rem; align-items:flex-end; min-width:0;">
-                                        @if (string.Equals(issue.Status, "Open", StringComparison.OrdinalIgnoreCase))
-                                        {
-                                            <MudButton Class="media-btn media-btn--primary"
-                                                       Variant="Variant.Filled"
-                                                       Color="Color.Primary"
-                                                       Size="Size.Small"
-                                                       OnClick='() => ResolveIssueAsync(issue)'
-                                                       Disabled="@_resolvingIssueIds.Contains(issue.Id)">@(_resolvingIssueIds.Contains(issue.Id) ? "Resolving..." : "Resolve")</MudButton>
-                                        }
-                                        <span class="card-note" style="display:block; margin:0; text-align:right; white-space:nowrap; font-size:0.72rem;">Reported: @FormatIssueTimestamp(issue.ReportedAtUtc ?? issue.FirstDetectedAtUtc)</span>
-                                        <span class="card-note" style="display:block; margin:0; text-align:right; white-space:nowrap; font-size:0.72rem;">Updated: @FormatIssueTimestamp(issue.LastDetectedAtUtc)</span>
-                                        @if (issue.ResolvedAtUtc.HasValue)
-                                        {
-                                            <span class="card-note" style="display:block; margin:0; text-align:right; white-space:nowrap; font-size:0.72rem;">Resolved: @FormatIssueTimestamp(issue.ResolvedAtUtc.Value)</span>
-                                        }
-                                    </div>
+                                <div style="display:flex; flex-direction:column; gap:0.2rem; align-items:flex-end; min-width:0;">
+                                    @if (string.Equals(issue.Status, "Open", StringComparison.OrdinalIgnoreCase))
+                                    {
+                                        <MudButton Class="media-btn media-btn--primary"
+                                                   Variant="Variant.Filled"
+                                                   Color="Color.Primary"
+                                                   Size="Size.Small"
+                                                   OnClick='() => ResolveIssueAsync(issue)'
+                                                   Disabled="@_resolvingIssueIds.Contains(issue.Id)">@(_resolvingIssueIds.Contains(issue.Id) ? "Resolving..." : "Resolve")</MudButton>
+                                    }
+                                    <span class="card-note" style="display:block; margin:0; text-align:right; white-space:nowrap; font-size:0.72rem;">Reported: @FormatIssueTimestamp(issue.ReportedAtUtc ?? issue.FirstDetectedAtUtc)</span>
+                                    <span class="card-note" style="display:block; margin:0; text-align:right; white-space:nowrap; font-size:0.72rem;">Updated: @FormatIssueTimestamp(issue.LastDetectedAtUtc)</span>
+                                    @if (issue.ResolvedAtUtc.HasValue)
+                                    {
+                                        <span class="card-note" style="display:block; margin:0; text-align:right; white-space:nowrap; font-size:0.72rem;">Resolved: @FormatIssueTimestamp(issue.ResolvedAtUtc.Value)</span>
+                                    }
                                 </div>
                             </div>
-                        }
+                        </div>
                     }
-                </div>
+                }
             </div>
-        }
+        </div>
+    </section>
+            </MudTabPanel>
+        </MudTabs>
     </section>
 }
-
 <style>
+    .movie-overview-hero {
+        display: grid;
+        gap: 1.15rem;
+        padding: 0.25rem 0.15rem 0.35rem;
+    }
+
+    .movie-overview-facts-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.85rem 1rem;
+        align-items: center;
+        color: #e5e7eb;
+        font-size: 0.98rem;
+    }
+
+    .movie-overview-pill {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0.16rem 0.58rem;
+        border: 1px solid rgba(148,163,184,0.38);
+        border-radius: 999px;
+        color: #f8fafc;
+        font-size: 0.74rem;
+        font-weight: 700;
+        letter-spacing: 0.03em;
+        text-transform: uppercase;
+        background: rgba(15,23,42,0.55);
+    }
+
+    .movie-overview-meta-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+        gap: 1rem 1.35rem;
+    }
+
+    .movie-overview-meta-item {
+        display: grid;
+        gap: 0.22rem;
+        min-width: 0;
+    }
+
+    .movie-overview-meta-item--full-width {
+        grid-column: 1 / -1;
+    }
+
+    .movie-overview-meta-break {
+        grid-column: 1 / -1;
+        height: 0;
+    }
+
+    .movie-overview-language-row {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 1rem 1.35rem;
+    }
+
+    .movie-overview-language-row .movie-overview-meta-item {
+        gap: 0.22rem;
+    }
+
+    .movie-overview-meta-label {
+        margin: 0;
+        color: #94a3b8;
+        font-size: 0.72rem;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+    }
+
+    .movie-overview-meta-value {
+        margin: 0;
+        color: #f8fafc;
+        font-size: 1rem;
+        line-height: 1.45;
+        word-break: break-word;
+    }
+
+    .movie-overview-status {
+        position: relative;
+        padding-left: 0.8rem;
+    }
+
+    .movie-overview-status::before {
+        content: "";
+        position: absolute;
+        left: 0;
+        top: 0.18rem;
+        bottom: 0.18rem;
+        width: 0.22rem;
+        border-radius: 999px;
+        background: rgba(148,163,184,0.7);
+    }
+
+    .movie-overview-status--good::before {
+        background: #22c55e;
+    }
+
+    .movie-overview-status--warn::before {
+        background: #f59e0b;
+    }
+
+    .movie-overview-summary-block {
+        display: grid;
+        gap: 0.45rem;
+        max-width: 70rem;
+    }
+
+    .movie-overview-summary-text {
+        margin: 0;
+        color: #e5e7eb;
+        line-height: 1.7;
+        font-size: 1.02rem;
+        white-space: pre-wrap;
+    }
+
+    .movie-detail-tabs-shell {
+        width: 100%;
+    }
+
+    .movie-detail-tabs {
+        margin-top: 0.25rem;
+    }
+
+    .movie-detail-tabs .mud-tabs-toolbar {
+        gap: 1rem;
+    }
+
+    .movie-detail-tabs .mud-tabs-tabbar {
+        background: transparent !important;
+        border: none;
+        border-right: 1px solid rgba(51,65,85,0.4);
+        border-radius: 0;
+        padding: 0;
+        padding-right: 0.5rem;
+        min-width: 13rem;
+        box-shadow: none !important;
+    }
+
+    .movie-detail-tabs .mud-tabs-tabbar-content,
+    .movie-detail-tabs .mud-tabs-toolbar,
+    .movie-detail-tabs .mud-tabs-tabbar-wrapper {
+        background: transparent !important;
+        box-shadow: none !important;
+    }
+
+    .movie-detail-tabs .mud-tab {
+        justify-content: flex-start;
+        text-align: left;
+        border-radius: 8px;
+        margin-bottom: 0.2rem;
+        min-height: 2.35rem;
+        padding: 0.55rem 0.8rem;
+        color: #cbd5e1;
+        border: 1px solid transparent;
+        text-transform: none;
+        letter-spacing: 0;
+        font-weight: 600;
+    }
+
+    .movie-detail-tabs .mud-tab:hover {
+        background: #1f2937;
+        border-color: #334155;
+    }
+
+    .movie-detail-tabs .mud-tab.mud-tab-active {
+        background: #1d4ed8;
+        color: #ffffff;
+        border-color: transparent;
+    }
+
+    .movie-detail-tabs .mud-tab-slider {
+        display: none;
+    }
+
+    .movie-detail-tabs .mud-tabs-panels {
+        padding: 0 0 0 1rem;
+    }
+
+    .movie-remediation-scroll-shell {
+        margin-top: 1rem;
+        display: grid;
+        gap: 1rem;
+        max-height: calc(100vh - 13rem);
+        overflow-y: auto;
+        overflow-x: hidden;
+        padding-right: 0.35rem;
+        scrollbar-gutter: stable;
+        overscroll-behavior: contain;
+    }
+
+    .movie-remediation-card--focus {
+        box-shadow: 0 0 0 1px rgba(59,130,246,0.35), 0 0 0 4px rgba(59,130,246,0.12);
+        transition: box-shadow 0.2s ease;
+    }
+
+    .movie-remediation-status-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.4rem;
+        align-items: center;
+    }
+
+    .movie-remediation-status-pill {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        white-space: nowrap;
+        padding: 0.16rem 0.56rem;
+        border-radius: 999px;
+        font-size: 0.7rem;
+        line-height: 1;
+        font-weight: 700;
+        border: 1px solid rgba(148,163,184,0.35);
+        background: rgba(51,65,85,0.35);
+        color: #e2e8f0;
+    }
+
+    .movie-remediation-status-pill--good {
+        background: rgba(34,197,94,0.18);
+        color: #bbf7d0;
+        border-color: rgba(34,197,94,0.45);
+    }
+
+    .movie-remediation-status-pill--warn {
+        background: rgba(245,158,11,0.18);
+        color: #fde68a;
+        border-color: rgba(245,158,11,0.45);
+    }
+
+    .movie-remediation-status-pill--danger {
+        background: rgba(239,68,68,0.18);
+        color: #fecaca;
+        border-color: rgba(239,68,68,0.48);
+    }
+
+    .movie-remediation-status-pill--info {
+        background: rgba(59,130,246,0.18);
+        color: #bfdbfe;
+        border-color: rgba(59,130,246,0.45);
+    }
+
+    .movie-remediation-status-pill--muted {
+        background: rgba(100,116,139,0.18);
+        color: #cbd5e1;
+        border-color: rgba(100,116,139,0.4);
+    }
+
+    .movie-remediation-why-grid {
+
+        grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+        gap: 0.9rem;
+        align-items: start;
+    }
+
+    .movie-remediation-why-notes {
+        border: 1px solid rgba(51,65,85,0.65);
+        border-radius: 0.75rem;
+        padding: 0.85rem;
+        background: rgba(2,6,23,0.28);
+        min-width: 0;
+        display: grid;
+        gap: 0.75rem;
+        align-content: start;
+    }
+
+    .movie-remediation-why-compare {
+        min-width: 0;
+        display: grid;
+        align-content: start;
+    }
+
+    .movie-issues-scroll-shell {
+        margin-top: 1rem;
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
+        max-height: calc(100vh - 13rem);
+        overflow-y: auto;
+        overflow-x: hidden;
+        padding-right: 0.35rem;
+        scrollbar-gutter: stable;
+        overscroll-behavior: contain;
+    }
+
+    .movie-issues-panel-fill {
+        flex: 1 1 auto;
+        min-height: 0;
+        align-content: start;
+    }
+
     .movie-detail-top-grid {
         display: grid;
         grid-template-columns: minmax(0, 1fr) minmax(20rem, 36rem);
@@ -416,8 +694,250 @@ else
         border-color: rgba(148, 163, 184, 0.3);
     }
 
+    .movie-remediation-stepper {
+        padding: 0.35rem 0.25rem 0;
+    }
+
+    .movie-remediation-stepper .mud-stepper-nav {
+        gap: 0.2rem;
+        align-items: center;
+    }
+
+    .movie-remediation-stepper .mud-step {
+        min-width: 0;
+    }
+
+    .movie-remediation-stepper .mud-step-label {
+        gap: 0.55rem;
+        align-items: center;
+    }
+
+    .movie-remediation-stepper .mud-step-label-content-title {
+        color: #e5eefc !important;
+        font-size: 0.98rem !important;
+        line-height: 1.2;
+        font-weight: 700 !important;
+        letter-spacing: 0.01em;
+    }
+
+    .movie-remediation-stepper .mud-step-label-active .mud-step-label-content-title {
+        color: #ffffff !important;
+    }
+
+    .movie-remediation-stepper .mud-step-label-icon {
+        background: rgba(30, 41, 59, 0.95);
+        color: #f8fafc;
+        border: 1px solid rgba(148, 163, 184, 0.42);
+        min-width: 2rem;
+        min-height: 2rem;
+    }
+
+    .movie-remediation-stepper .mud-step-label-active .mud-step-label-icon {
+        background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);
+        border-color: rgba(196, 181, 253, 0.8);
+        color: white;
+        box-shadow: 0 0 0 1px rgba(124, 58, 237, 0.2);
+    }
+
+    .movie-remediation-stepper .mud-stepper-nav-connector {
+        margin: 0 0.15rem;
+    }
+
+    .movie-remediation-stepper .mud-stepper-nav-connector-line {
+        height: 2px;
+        background: rgba(148, 163, 184, 0.38);
+    }
+
+    .movie-remediation-stepper .mud-stepper-content {
+        margin-top: 1rem;
+        padding: 1rem 1rem 0;
+        border-top: 1px solid rgba(71, 85, 105, 0.55);
+    }
+
+    .smoke-test-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 0.75rem;
+        align-items: stretch;
+    }
+
+    .smoke-panel {
+        border: 1px solid rgba(51,65,85,0.85);
+        border-radius: 0.75rem;
+        padding: 0.9rem;
+        background: rgba(15,23,42,0.65);
+        display: grid;
+        gap: 0.75rem;
+        min-width: 0;
+        height: 100%;
+        align-content: start;
+    }
+
+    .smoke-panel-header {
+        display: flex;
+        justify-content: space-between;
+        gap: 0.75rem;
+        flex-wrap: wrap;
+        align-items: start;
+    }
+
+    .smoke-summary-title {
+        margin: 0;
+        color: #f8fafc;
+        font-size: 1.05rem;
+        font-weight: 700;
+        line-height: 1.35;
+    }
+
+    .smoke-summary-text {
+        margin: 0;
+        color: #cbd5e1;
+        line-height: 1.55;
+    }
+
+    .smoke-kicker {
+        margin: 0;
+        font-size: 0.76rem;
+        font-weight: 700;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+        color: #93c5fd;
+    }
+
+    .smoke-status-row {
+        display: flex;
+        gap: 0.45rem;
+        align-items: center;
+        flex-wrap: wrap;
+    }
+
+    .smoke-callout {
+        border-radius: 0.75rem;
+        border: 1px solid rgba(71,85,105,0.8);
+        background: rgba(15,23,42,0.78);
+        padding: 0.85rem 0.95rem;
+        display: grid;
+        gap: 0.35rem;
+    }
+
+    .smoke-callout--danger {
+        border-color: rgba(239,68,68,0.42);
+        background: rgba(69,10,10,0.22);
+    }
+
+    .smoke-callout--success {
+        border-color: rgba(34,197,94,0.38);
+        background: rgba(20,83,45,0.22);
+    }
+
+    .smoke-callout--warning {
+        border-color: rgba(245,158,11,0.4);
+        background: rgba(120,53,15,0.22);
+    }
+
+    .smoke-key-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 0.65rem;
+    }
+
+    .smoke-key-card {
+        border: 1px solid rgba(51,65,85,0.72);
+        border-radius: 0.7rem;
+        background: rgba(2,6,23,0.35);
+        padding: 0.75rem 0.8rem;
+        display: grid;
+        gap: 0.28rem;
+    }
+
+    .smoke-key-label {
+        margin: 0;
+        font-size: 0.72rem;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        color: #94a3b8;
+        font-weight: 700;
+    }
+
+    .smoke-key-value {
+        margin: 0;
+        color: #f8fafc;
+        font-weight: 600;
+        line-height: 1.45;
+    }
+
+    .smoke-list {
+        margin: 0;
+        padding-left: 1.1rem;
+        color: #e2e8f0;
+        display: grid;
+        gap: 0.38rem;
+    }
+
+    .smoke-list li {
+        line-height: 1.5;
+    }
+
+    .smoke-fact-list {
+        display: grid;
+        gap: 0.45rem;
+    }
+
+    .smoke-fact-line {
+        margin: 0;
+        color: #e2e8f0;
+        line-height: 1.55;
+    }
+
+    .smoke-fact-line strong {
+        color: #f8fafc;
+    }
+
+    .smoke-tech-box {
+        border-top: 1px solid rgba(51,65,85,0.6);
+        padding-top: 0.7rem;
+        display: grid;
+        gap: 0.35rem;
+    }
+
+    .smoke-tech-path {
+        margin: 0;
+        color: #93c5fd;
+        word-break: break-word;
+        font-size: 0.92rem;
+        line-height: 1.5;
+    }
+
+    .smoke-error {
+        margin: 0;
+        color: #fecaca;
+        line-height: 1.5;
+    }
+
     @@media (max-width: 920px) {
+        .movie-overview-meta-grid {
+            grid-template-columns: 1fr;
+        }
+
+        .movie-overview-language-row {
+            grid-template-columns: 1fr;
+        }
+
+        .movie-detail-tabs .mud-tabs-tabbar {
+            border-right: none;
+            padding-right: 0;
+            min-width: 0;
+        }
+
+        .movie-detail-tabs .mud-tabs-panels {
+            padding-left: 0;
+        }
+
         .movie-detail-top-grid {
+            grid-template-columns: 1fr;
+        }
+
+        .movie-remediation-why-grid {
             grid-template-columns: 1fr;
         }
 
@@ -428,6 +948,11 @@ else
         .movie-compatibility-table {
             min-width: 0;
         }
+
+        .smoke-test-grid,
+        .smoke-key-grid {
+            grid-template-columns: 1fr;
+        }
     }
 </style>
 
@@ -436,17 +961,27 @@ else
 
     private bool _loading = true;
     private bool _probingRuntime;
-    private bool _issuesExpanded;
+    private const int FileRemediationTabIndex = 4;
+
     private bool _issuesLoading;
     private bool _savingIssue;
     private bool _compatibilityLoading;
-    private bool _compatibilityExpanded;
     private string _statusMessage = string.Empty;
-    private string _sourcePanelStatusMessage = string.Empty;
     private string _issuesStatusMessage = string.Empty;
     private string _compatibilityStatusMessage = string.Empty;
     private MediaItemDetailDto? _item;
     private MediaCompatibilityRecommendationResponse? _compatibilityRecommendation;
+    private readonly List<LibraryRemediationJobDto> _compatibilityJobs = [];
+    private MediaPlaybackSmokeTestResponse? _playbackSmokeTest;
+    private bool _runningPlaybackSmokeTest;
+    private bool _queueingCompatibilityAction;
+    private bool _requestingBetterFile;
+    private bool _refreshingRemediationHistory;
+    private DateTimeOffset? _remediationHistoryRefreshedAtUtc;
+    private bool _remediationV2ShowAllComparisons;
+    private int _activeMovieDetailTabIndex = FileRemediationTabIndex;
+    private string _playbackSmokeTestStatusMessage = string.Empty;
+    private string _compatibilityQueueStatusMessage = string.Empty;
     private readonly List<LibraryIssueDto> _issues = [];
     private readonly List<LibraryItemSourceStatusDto> _sourceStatuses = [];
     private readonly List<LibraryItemSourceLinkDto> _sourceLinks = [];
@@ -472,18 +1007,272 @@ else
     protected override Task OnParametersSetAsync()
         => LoadItemAsync();
 
+    private RenderFragment RenderRemediationV2SimpleContent() => @<section class="movie-remediation-scroll-shell">
+        <div style="display:grid; gap:1rem;">
+            <p class="card-note">A simple answer-first view for end users.</p>
+
+            <div style="display:grid; grid-template-columns:1fr 1fr 2fr; gap:0.75rem; align-items:stretch;">
+                <div style="border:1px solid rgba(51,65,85,0.65); border-radius:0.75rem; padding:0.8rem; background:rgba(2,6,23,0.35); display:grid; gap:0.3rem; align-content:start; height:100%;">
+                    <p class="card-label">REMEDIATION STEPS</p>
+                    <table style="width:100%; border-collapse:collapse; align-self:start;">
+                        <thead>
+                            <tr style="border-bottom:1px solid rgba(51,65,85,0.55);">
+                                <th scope="col" style="text-align:left; padding:0 0 0.45rem; color:#94a3b8; font-size:0.7rem; font-weight:700; letter-spacing:0.04em; text-transform:uppercase;">Step</th>
+                                <th scope="col" style="text-align:right; padding:0 0 0.45rem; color:#94a3b8; font-size:0.7rem; font-weight:700; letter-spacing:0.04em; text-transform:uppercase;">Action</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @{ var actionSteps = GetRemediationV2ActionSteps(); }
+                            @for (var index = 0; index < actionSteps.Count; index++)
+                            {
+                                var step = actionSteps[index];
+                                <tr style="@(index < actionSteps.Count - 1 ? "border-bottom:1px solid rgba(30,41,59,0.6);" : string.Empty)">
+                                    <td style="padding:0.65rem 0.65rem 0.65rem 0; vertical-align:top;">
+                                        <div style="display:flex; align-items:flex-start; gap:0.45rem; min-height:2rem;">
+                                            <span aria-hidden="true" style="color:@(step.Completed ? "#86efac" : step.IsCurrent ? "#93c5fd" : "#64748b"); font-size:0.9rem; line-height:1.35; width:1rem; flex:0 0 1rem; text-align:center;">@(step.Completed ? "☑" : "☐")</span>
+                                            <span class="card-note" style="color:@(step.Completed ? "#94a3b8" : step.IsCurrent ? "#e2e8f0" : "#cbd5e1"); text-decoration:@(step.Completed ? "line-through" : "none"); line-height:1.35;">@step.Label</span>
+                                        </div>
+                                    </td>
+                                    <td style="padding:0.65rem 0 0.65rem 0.65rem; vertical-align:top; text-align:right;">
+                                        @if (!step.Completed && step.IsCurrent && string.Equals(step.Label, "Analyze this file", StringComparison.Ordinal))
+                                        {
+                                            <MudButton Variant="Variant.Text"
+                                                       Color="Color.Info"
+                                                       Size="Size.Small"
+                                                       Style="min-width:auto; padding:0; text-transform:none; font-weight:600;"
+                                                       OnClick="ScanDetectMetricsAsync"
+                                                       Disabled="@_probingRuntime">@(_probingRuntime ? "Scanning..." : "Run scan")</MudButton>
+                                        }
+                                        else if (!step.Completed && step.IsCurrent && string.Equals(step.Label, "Queue a compatibility fix", StringComparison.Ordinal))
+                                        {
+                                            <MudButton Variant="Variant.Text"
+                                                       Color="Color.Info"
+                                                       Size="Size.Small"
+                                                       Style="min-width:auto; padding:0; text-transform:none; font-weight:600;"
+                                                       OnClick="QueueCompatibilityActionAsync"
+                                                       Disabled="@_queueingCompatibilityAction">@(_queueingCompatibilityAction ? "Queueing..." : "Queue fix")</MudButton>
+                                        }
+                                        else if (step.Completed)
+                                        {
+                                            <span class="card-note" style="color:#94a3b8;">Done</span>
+                                        }
+                                        else if (string.Equals(step.Label, "Review the profile comparison", StringComparison.Ordinal))
+                                        {
+                                            <MudButton Variant="Variant.Text"
+                                                       Color="Color.Info"
+                                                       Size="Size.Small"
+                                                       Style="min-width:auto; padding:0; text-transform:none; font-weight:600;"
+                                                       OnClick="FocusProfileComparisonAsync">View comparison</MudButton>
+                                        }
+                                        else if (step.IsCurrent && string.Equals(step.Label, "Choose which action to take", StringComparison.Ordinal))
+                                        {
+                                            <div style="display:flex; flex-direction:column; gap:0.45rem; align-items:stretch; min-width:12rem; margin-left:auto;">
+                                                <MudButton Variant="Variant.Filled"
+                                                           Color="Color.Primary"
+                                                           Size="Size.Small"
+                                                           Style="text-transform:none;"
+                                                           OnClick="RequestBetterFileAsync"
+                                                           Disabled="@_requestingBetterFile">@(_requestingBetterFile ? "Requesting..." : "Request better file")</MudButton>
+                                                <MudButton Variant="Variant.Outlined"
+                                                           Color="Color.Default"
+                                                           Size="Size.Small"
+                                                           Style="text-transform:none;"
+                                                           OnClick="LeaveAsIsAsync"
+                                                           Disabled="@_requestingBetterFile">Leave as-is</MudButton>
+                                                <MudButton Variant="Variant.Outlined"
+                                                           Color="Color.Warning"
+                                                           Size="Size.Small"
+                                                           Style="text-transform:none;"
+                                                           OnClick="ConvertAnywayAsync"
+                                                           Disabled="@_requestingBetterFile">Convert anyway</MudButton>
+                                            </div>
+                                        }
+                                        else if (step.IsCurrent && step.Label.StartsWith("Wait", StringComparison.Ordinal))
+                                        {
+                                            <span class="card-note" style="color:#93c5fd;">In progress</span>
+                                        }
+                                        else if (step.IsCurrent && string.Equals(step.Label, "Verify playback after the fix finishes", StringComparison.Ordinal))
+                                        {
+                                            <span class="card-note" style="color:#93c5fd;">After fix</span>
+                                        }
+                                        else
+                                        {
+                                            <span class="card-note" style="color:#64748b;">—</span>
+                                        }
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+                <div id="remediation-v2-profile-comparison" style="border:1px solid rgba(51,65,85,0.65); border-radius:0.75rem; padding:0.8rem; background:rgba(2,6,23,0.35); display:grid; gap:0.1rem; align-content:start; height:100%;">
+                    <p class="card-label">PROFILE COMPARISON</p>
+                    @if (_compatibilityRecommendation is null)
+                    {
+                        <p class="card-note">MediaCloud needs to analyze this file first.</p>
+                    }
+                    else if (GetRemediationV2ProfileComparisonRows().Count == 0)
+                    {
+                        <p class="card-note">This file already matches the preferred playback profile.</p>
+                    }
+                    else
+                    {
+                        <div style="display:grid; gap:0.1rem; align-content:start;">
+                            <table style="width:100%; border-collapse:collapse; table-layout:fixed; align-self:start;">
+                                <thead>
+                                    <tr style="border-bottom:1px solid rgba(51,65,85,0.55);">
+                                        <th scope="col" style="text-align:left; padding:0 0.6rem 0.45rem 0; color:#94a3b8; font-size:0.7rem; font-weight:700; letter-spacing:0.04em; text-transform:uppercase; width:40%;">Item</th>
+                                        <th scope="col" style="text-align:left; padding:0 0.6rem 0.45rem 0; color:#94a3b8; font-size:0.7rem; font-weight:700; letter-spacing:0.04em; text-transform:uppercase; width:30%;">Actual</th>
+                                        <th scope="col" style="text-align:left; padding:0 0 0.45rem; color:#94a3b8; font-size:0.7rem; font-weight:700; letter-spacing:0.04em; text-transform:uppercase; width:30%;">Preferred</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @{ var comparisonRows = GetVisibleRemediationV2ProfileComparisonRows(); }
+                                    @for (var index = 0; index < comparisonRows.Count; index++)
+                                    {
+                                        var row = comparisonRows[index];
+                                        <tr style="@(index < comparisonRows.Count - 1 ? "border-bottom:1px solid rgba(30,41,59,0.6);" : string.Empty)">
+                                            <td style="padding:0.35rem 0.6rem 0.35rem 0; vertical-align:top; color:#e2e8f0; font-weight:600; line-height:1.35;">@row.Label</td>
+                                            <td style="padding:0.35rem 0.6rem 0.35rem 0; vertical-align:top; color:#e2e8f0; line-height:1.35;">@FormatRemediationV2ComparisonValue(row.Label, row.InspectedValue)</td>
+                                            <td style="padding:0.35rem 0; vertical-align:top; color:#94a3b8; line-height:1.35;">@FormatRemediationV2ComparisonValue(row.Label, row.SelectedProfileValue)</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+
+                            @if (ShouldShowRemediationV2ProfileComparisonExpandAction())
+                            {
+                                <button type="button"
+                                        @onclick="ToggleRemediationV2ProfileComparisonExpand"
+                                        style="justify-self:start; border:none; background:none; color:#93c5fd; padding:0; font-size:0.82rem; font-weight:600; cursor:pointer; text-decoration:underline;">
+                                    @(_remediationV2ShowAllComparisons ? "Show less" : "Show more...")
+                                </button>
+                            }
+                        </div>
+                    }
+                </div>
+                <div style="border:1px solid rgba(51,65,85,0.65); border-radius:0.75rem; padding:0.8rem; background:rgba(2,6,23,0.35); display:grid; gap:0.55rem; align-content:start; height:100%;">
+                    <div style="display:grid; gap:0.2rem;">
+                        <p class="card-label">REMEDIATION STATUS</p>
+                        <p class="smoke-summary-title">@GetRemediationV2StatusLabel()</p>
+                    </div>
+                    <div style="display:grid; gap:0.3rem; padding-top:0.55rem; border-top:1px solid rgba(51,65,85,0.55);">
+                        <p class="card-label">BEST ACTION</p>
+                        <p class="card-note" style="color:#e2e8f0; font-weight:600;">@GetRemediationV2BestActionLabel()</p>
+                    </div>
+                    <div style="display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:0.75rem; padding-top:0.55rem; border-top:1px solid rgba(51,65,85,0.55);">
+                        <div style="display:grid; gap:0.3rem;">
+                            <p class="card-label">CURRENT FILE RISK</p>
+                            <p class="card-note">@GetRemediationV2CurrentFileRiskLabel()</p>
+                        </div>
+                        <div style="display:grid; gap:0.3rem;">
+                            <p class="card-label">CONVERSION RISK</p>
+                            <p class="card-note">@GetRemediationV2ConversionRiskLabel()</p>
+                        </div>
+                    </div>
+                    <div style="display:grid; gap:0.3rem; padding-top:0.55rem; border-top:1px solid rgba(51,65,85,0.55);">
+                        <p class="card-label">WHY</p>
+                        <p class="card-note">@GetRemediationV2WhySummary()</p>
+                    </div>
+                </div>
+            </div>
+
+            <div style="border:1px solid rgba(51,65,85,0.85); border-radius:0.75rem; padding:0.9rem; background:rgba(15,23,42,0.65); display:grid; gap:0.55rem;">
+                <div style="display:flex; justify-content:space-between; align-items:center; gap:0.75rem; flex-wrap:wrap;">
+                    <div style="display:grid; gap:0.2rem;">
+                        <p class="card-label">RECENT REMEDIATION HISTORY</p>
+                        <p class="card-note">The latest actions MediaCloud has already taken for this movie.</p>
+                        @if (_remediationHistoryRefreshedAtUtc.HasValue)
+                        {
+                            <p class="card-note">Last refreshed: @FormatIssueTimestamp(_remediationHistoryRefreshedAtUtc.Value)</p>
+                        }
+                    </div>
+                    <MudButton Variant="Variant.Text"
+                               Color="Color.Info"
+                               Size="Size.Small"
+                               Style="min-width:auto; padding:0; text-transform:none; font-weight:600;"
+                               OnClick="RefreshRemediationHistoryAsync"
+                               Disabled="@_refreshingRemediationHistory">@(_refreshingRemediationHistory ? "Refreshing..." : "Refresh status")</MudButton>
+                </div>
+                @if (_compatibilityJobs.Count == 0)
+                {
+                    <p class="card-note">No remediation actions have been recorded for this movie yet.</p>
+                }
+                else
+                {
+                    @foreach (var job in GetRecentRemediationHistoryJobs(3))
+                    {
+                        <div style="border-top:1px solid rgba(51,65,85,0.45); padding-top:0.55rem; display:grid; gap:0.35rem;">
+                            <p class="card-note"><strong>@DisplayValue(job.ServiceDisplayName)</strong> · @GetRemediationHistoryActionLabel(job)</p>
+                            <div class="movie-remediation-status-row">
+                                <span class="card-note">Status:</span>
+                                <MudTooltip Arrow="true" Placement="Placement.Top" Text="@GetRemediationHistoryStatusDefinition(job)">
+                                    <span class="movie-remediation-status-pill @GetRemediationHistoryStatusPillClass(job.Status)">@DisplayValue(job.Status)</span>
+                                </MudTooltip>
+                                <span class="card-note">Requested:</span>
+                                <span class="card-note">@FormatIssueTimestamp(job.RequestedAtUtc)</span>
+                            </div>
+                            <div class="movie-remediation-status-row">
+                                <span class="card-note">Integration step:</span>
+                                <MudTooltip Arrow="true" Placement="Placement.Top" Text="@GetRemediationHistoryIntegrationStepDefinition(job)">
+                                    <span class="movie-remediation-status-pill @GetRemediationHistoryStatusPillClass(job.SearchStatus)">@DisplayValue(job.SearchStatus)</span>
+                                </MudTooltip>
+                                <span class="card-note">Verification:</span>
+                                <MudTooltip Arrow="true" Placement="Placement.Top" Text="@GetRemediationHistoryVerificationDefinition(job)">
+                                    <span class="movie-remediation-status-pill @GetRemediationHistoryStatusPillClass(job.VerificationStatus)">@DisplayValue(job.VerificationStatus)</span>
+                                </MudTooltip>
+                            </div>
+                            @if (!string.IsNullOrWhiteSpace(job.ProviderCommandStatus))
+                            {
+                                <div class="movie-remediation-status-row">
+                                    <span class="card-note">Provider state:</span>
+                                    <MudTooltip Arrow="true" Placement="Placement.Top" Text="@GetRemediationHistoryProviderStateDefinition(job)">
+                                        <span class="movie-remediation-status-pill @GetRemediationHistoryStatusPillClass(job.ProviderCommandStatus)">@DisplayValue(job.ProviderCommandStatus)</span>
+                                    </MudTooltip>
+                                </div>
+                            }
+                            <div class="movie-remediation-status-row">
+                                <span class="card-note">Download type:</span>
+                                <MudTooltip Arrow="true" Placement="Placement.Top" Text="@GetRemediationHistoryDownloadTypeDefinition(job)">
+                                    <span class="movie-remediation-status-pill @GetRemediationHistoryDownloadTypePillClass(job)">@GetRemediationHistoryDownloadTypeLabel(job)</span>
+                                </MudTooltip>
+                            </div>
+                            @if (!string.IsNullOrWhiteSpace(job.OutcomeSummary))
+                            {
+                                <p class="card-note">Outcome: @DisplayValue(job.OutcomeSummary)</p>
+                            }
+                            else if (!string.IsNullOrWhiteSpace(job.ResultMessage))
+                            {
+                                <p class="card-note">Result: @DisplayValue(job.ResultMessage)</p>
+                            }
+                        </div>
+                    }
+                }
+            </div>
+
+
+            @if (!string.IsNullOrWhiteSpace(_statusMessage))
+            {
+                <p class="card-note">@_statusMessage</p>
+            }
+        </div>
+    </section>;
+
     private async Task LoadItemAsync(bool clearStatusMessage = true)
     {
         _loading = true;
         if (clearStatusMessage)
         {
             _statusMessage = string.Empty;
-            _sourcePanelStatusMessage = string.Empty;
         }
 
         _item = null;
+        _playbackSmokeTest = null;
+        _playbackSmokeTestStatusMessage = string.Empty;
+        _compatibilityQueueStatusMessage = string.Empty;
         _sourceStatuses.Clear();
         _sourceLinks.Clear();
+        _compatibilityJobs.Clear();
 
         try
         {
@@ -503,6 +1292,7 @@ else
             await LoadSourcePanelAsync();
             await LoadIssuesAsync();
             await LoadCompatibilityRecommendationAsync();
+            await LoadCompatibilityJobsAsync();
         }
         finally
         {
@@ -585,6 +1375,142 @@ else
         }
     }
 
+    private async Task LoadCompatibilityJobsAsync()
+    {
+        try
+        {
+            using var request = await RequestFactory.CreateAsync(HttpMethod.Get, $"/api/library/items/{Id}/remediation-jobs?take=20");
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                return;
+            }
+
+            var payload = await response.Content.ReadFromJsonAsync<List<LibraryRemediationJobDto>>() ?? [];
+            _compatibilityJobs.Clear();
+            _compatibilityJobs.AddRange(payload
+                .OrderByDescending(x => x.RequestedAtUtc)
+                .ThenByDescending(x => x.Id));
+            _remediationHistoryRefreshedAtUtc = DateTimeOffset.Now;
+        }
+        catch
+        {
+            _compatibilityJobs.Clear();
+        }
+    }
+
+    private async Task RefreshRemediationHistoryAsync()
+    {
+        _refreshingRemediationHistory = true;
+        try
+        {
+            await LoadCompatibilityJobsAsync();
+            Snackbar.Add("Remediation history refreshed.", Severity.Info);
+        }
+        catch
+        {
+            Snackbar.Add("Failed to refresh remediation history.", Severity.Error);
+        }
+        finally
+        {
+            _refreshingRemediationHistory = false;
+        }
+    }
+
+    private async Task QueueCompatibilityActionAsync()
+    {
+        if (_item is null || string.IsNullOrWhiteSpace(GetRecommendedCommandPreview()))
+        {
+            return;
+        }
+
+        _queueingCompatibilityAction = true;
+        _compatibilityQueueStatusMessage = string.Empty;
+        try
+        {
+            using var request = await RequestFactory.CreateAsync(HttpMethod.Post, $"/api/library/items/{_item.Id}/media-compatibility-remediation/queue");
+            using var response = await Http.SendAsync(request);
+            var payload = await response.Content.ReadFromJsonAsync<QueueMediaCompatibilityRemediationResponse>();
+            if (!response.IsSuccessStatusCode || payload is null)
+            {
+                _compatibilityQueueStatusMessage = $"Failed to queue ffmpeg action (HTTP {(int)response.StatusCode}).";
+                Snackbar.Add(_compatibilityQueueStatusMessage, Severity.Error);
+                return;
+            }
+
+            _compatibilityQueueStatusMessage = payload.Message;
+            Snackbar.Add(payload.Message, payload.AlreadyQueued ? Severity.Info : Severity.Success);
+            await LoadCompatibilityJobsAsync();
+        }
+        catch
+        {
+            _compatibilityQueueStatusMessage = "Failed to queue ffmpeg action.";
+            Snackbar.Add(_compatibilityQueueStatusMessage, Severity.Error);
+        }
+        finally
+        {
+            _queueingCompatibilityAction = false;
+        }
+    }
+
+    private async Task RequestBetterFileAsync()
+    {
+        if (_item is null)
+        {
+            return;
+        }
+
+        _requestingBetterFile = true;
+        _compatibilityQueueStatusMessage = string.Empty;
+        try
+        {
+            var notes = $"Approved from Remediation v2 because file is outside the preferred playback profile. {GetRemediationV2WhySummary()}";
+            using var request = await RequestFactory.CreateAsync(HttpMethod.Post, $"/api/library/items/{_item.Id}/remediation/search-replacement");
+            request.Content = JsonContent.Create(new SearchReplacementRequest("request_better_file", notes, "media_compatibility"));
+
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                var error = await response.Content.ReadFromJsonAsync<ErrorResponse>();
+                _compatibilityQueueStatusMessage = string.IsNullOrWhiteSpace(error?.Error)
+                    ? $"Failed to request a better file (HTTP {(int)response.StatusCode})."
+                    : error.Error;
+                Snackbar.Add(_compatibilityQueueStatusMessage, Severity.Error);
+                return;
+            }
+
+            var payload = await response.Content.ReadFromJsonAsync<LibraryItemRemediationResponse>();
+            _compatibilityQueueStatusMessage = string.IsNullOrWhiteSpace(payload?.Message)
+                ? "Replacement search approved. MediaCloud asked the source service for a better file."
+                : payload.Message;
+            Snackbar.Add(_compatibilityQueueStatusMessage, Severity.Success);
+            await LoadCompatibilityJobsAsync();
+        }
+        catch
+        {
+            _compatibilityQueueStatusMessage = "Failed to request a better file.";
+            Snackbar.Add(_compatibilityQueueStatusMessage, Severity.Error);
+        }
+        finally
+        {
+            _requestingBetterFile = false;
+        }
+    }
+
+    private Task LeaveAsIsAsync()
+    {
+        _compatibilityQueueStatusMessage = "Left as-is for now. MediaCloud did not queue a fix or request a replacement.";
+        Snackbar.Add(_compatibilityQueueStatusMessage, Severity.Info);
+        return Task.CompletedTask;
+    }
+
+    private Task ConvertAnywayAsync()
+    {
+        _compatibilityQueueStatusMessage = "Manual conversion review is still required here. Use the operator remediation panel if you want to force a one-off conversion.";
+        Snackbar.Add(_compatibilityQueueStatusMessage, Severity.Warning);
+        return Task.CompletedTask;
+    }
+
     private async Task ProbeRuntimeNowAsync()
     {
         if (_item is null)
@@ -617,8 +1543,47 @@ else
         }
     }
 
-    private void ToggleIssuesPanel()
-        => _issuesExpanded = !_issuesExpanded;
+    private async Task ScanDetectMetricsAsync()
+        => await ProbeRuntimeNowAsync();
+
+    private async Task RunPlaybackSmokeTestAsync()
+    {
+        if (_item is null)
+        {
+            return;
+        }
+
+        _runningPlaybackSmokeTest = true;
+        _playbackSmokeTestStatusMessage = string.Empty;
+        try
+        {
+            using var request = await RequestFactory.CreateAsync(HttpMethod.Post, $"/api/library/items/{_item.Id}/playback-smoke-test");
+            request.Content = JsonContent.Create(new MediaPlaybackSmokeTestRequest());
+            using var response = await Http.SendAsync(request);
+            var payload = await response.Content.ReadFromJsonAsync<MediaPlaybackSmokeTestResponse>();
+            if (!response.IsSuccessStatusCode || payload is null)
+            {
+                _playbackSmokeTestStatusMessage = $"Playback smoke test failed (HTTP {(int)response.StatusCode}).";
+                Snackbar.Add(_playbackSmokeTestStatusMessage, Severity.Error);
+                return;
+            }
+
+            _playbackSmokeTest = payload;
+            _playbackSmokeTestStatusMessage = payload.SampleSummary;
+            Snackbar.Add(
+                payload.SampleSucceeded ? "Playback smoke test sample succeeded." : payload.SampleAttempted ? "Playback smoke test sample failed." : "Playback smoke test plan prepared.",
+                payload.SampleSucceeded ? Severity.Success : payload.SampleAttempted ? Severity.Warning : Severity.Info);
+        }
+        catch
+        {
+            _playbackSmokeTestStatusMessage = "Playback smoke test failed.";
+            Snackbar.Add(_playbackSmokeTestStatusMessage, Severity.Error);
+        }
+        finally
+        {
+            _runningPlaybackSmokeTest = false;
+        }
+    }
 
     private async Task CreateIssueAsync()
     {
@@ -711,7 +1676,6 @@ else
         }
 
         _syncingServices.Add(source.ServiceKey);
-        _sourcePanelStatusMessage = $"Syncing {_item.DisplayTitle} from {source.DisplayName}...";
 
         try
         {
@@ -719,21 +1683,21 @@ else
             using var response = await Http.SendAsync(request);
             if (!response.IsSuccessStatusCode)
             {
-                _sourcePanelStatusMessage = $"{source.DisplayName} sync failed (HTTP {(int)response.StatusCode}).";
-                Snackbar.Add(_sourcePanelStatusMessage, Severity.Error);
+                Snackbar.Add($"{source.DisplayName} sync failed (HTTP {(int)response.StatusCode}).", Severity.Error);
                 return;
             }
 
             var payload = await response.Content.ReadFromJsonAsync<LibraryItemSourceSyncResponse>();
-            _sourceSyncRanAtByService[source.ServiceKey] = payload?.SyncedAtUtc;
-            _sourcePanelStatusMessage = payload?.Message ?? $"{source.DisplayName} sync finished.";
-            Snackbar.Add(_sourcePanelStatusMessage, payload?.Success == true ? Severity.Success : Severity.Warning);
+            if (payload?.SyncedAtUtc is { } syncedAtUtc)
+            {
+                _sourceSyncRanAtByService[source.ServiceKey] = syncedAtUtc;
+            }
+            Snackbar.Add(payload?.Message ?? $"{source.DisplayName} sync finished.", payload?.Success == true ? Severity.Success : Severity.Warning);
             await LoadItemAsync(clearStatusMessage: false);
         }
         catch
         {
-            _sourcePanelStatusMessage = $"{source.DisplayName} sync failed.";
-            Snackbar.Add(_sourcePanelStatusMessage, Severity.Error);
+            Snackbar.Add($"{source.DisplayName} sync failed.", Severity.Error);
         }
         finally
         {
@@ -746,6 +1710,340 @@ else
             .Where(x => string.Equals(x.ServiceKey, source.ServiceKey, StringComparison.OrdinalIgnoreCase)
                 && (source.IntegrationId is null || x.IntegrationId == source.IntegrationId.Value))
             .ToList();
+
+    private static string FormatRuntime(double? minutes)
+    {
+        if (!minutes.HasValue)
+        {
+            return "—";
+        }
+
+        var totalMinutes = (int)Math.Round(minutes.Value, MidpointRounding.AwayFromZero);
+        var hours = totalMinutes / 60;
+        var remainingMinutes = totalMinutes % 60;
+
+        if (hours <= 0)
+        {
+            return $"{remainingMinutes}m";
+        }
+
+        if (remainingMinutes <= 0)
+        {
+            return $"{hours}h";
+        }
+
+        return $"{hours}h {remainingMinutes}m";
+    }
+
+    private static string FormatList(IReadOnlyList<string>? values)
+        => values is { Count: > 0 } ? string.Join(", ", values.Where(x => !string.IsNullOrWhiteSpace(x))) : "—";
+
+    private static string DisplayValue(string? value)
+        => string.IsNullOrWhiteSpace(value) ? "—" : value;
+
+    private static string FormatRemediationV2ComparisonValue(string? label, string? value)
+    {
+        var display = DisplayValue(value);
+        if (display == "—")
+        {
+            return display;
+        }
+
+        return (label ?? string.Empty).Trim().ToLowerInvariant() switch
+        {
+            "container" => NormalizeContainerDisplayValue(display),
+            "video codec" => NormalizeCodecDisplayValue(display),
+            "subtitles" => NormalizeSubtitleDisplayValue(display),
+            _ => display
+        };
+    }
+
+    private static string NormalizeContainerDisplayValue(string value)
+        => value.Trim().ToLowerInvariant() switch
+        {
+            "matroska,webm" => "MKV",
+            "matroska/webm" => "MKV",
+            "matroska" => "MKV",
+            "mkv" => "MKV",
+            "mov,mp4,m4a,3gp,3g2,mj2" => "MP4",
+            "mp4" => "MP4",
+            "iso" => "ISO",
+            _ => value.ToUpperInvariant()
+        };
+
+    private static string NormalizeCodecDisplayValue(string value)
+        => value.Trim().ToLowerInvariant() switch
+        {
+            "h264" => "H.264",
+            "avc" => "H.264",
+            "hevc" => "HEVC",
+            "h265" => "H.265",
+            "aac" => "AAC",
+            _ => value.ToUpperInvariant()
+        };
+
+    private static string NormalizeSubtitleDisplayValue(string value)
+        => value.Trim().ToLowerInvariant() switch
+        {
+            "hdmv_pgs_subtitle" => "PGS",
+            "pgs" => "PGS",
+            "dvd_subtitle" => "VobSub",
+            "vobsub" => "VobSub",
+            "mov_text" => "Text",
+            "text subtitles only" => "Text subtitles only",
+            "image subtitles allowed" => "Image subtitles allowed",
+            "text preferred" => "Text preferred",
+            "none detected" => "None detected",
+            _ => value.ToUpperInvariant()
+        };
+
+    private static string FormatLastSyncedTimestamp(DateTimeOffset? value)
+        => value.HasValue && value.Value.Year > 1900
+            ? value.Value.ToLocalTime().ToString("MMM d, yyyy h:mm tt")
+            : "—";
+
+    private static string FormatBoolLabel(bool? value)
+        => value.HasValue ? (value.Value ? "Yes" : "No") : "—";
+
+    private string BuildOverviewRuntimeSummary()
+    {
+        var actual = FormatRuntime(_item?.ActualRuntimeMinutes);
+        var reported = FormatRuntime(_item?.RuntimeMinutes);
+
+        if (actual != "—")
+        {
+            return actual;
+        }
+
+        return reported;
+    }
+
+    private string BuildOverviewYearAndRatingSummary()
+    {
+        var year = DisplayValue(_item?.Year?.ToString());
+        var rating = DisplayValue(_item?.ContentRating);
+
+        return rating == "—"
+            ? year
+            : $"{year} · {rating}";
+    }
+
+    private string BuildOverviewPathSummary()
+    {
+        var path = _item?.PrimaryFilePath;
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return "—";
+        }
+
+        var directory = System.IO.Path.GetDirectoryName(path);
+        return string.IsNullOrWhiteSpace(directory) ? path : directory;
+    }
+
+    private string GetOverviewStatusLabel()
+        => _item?.LocalFileExists == true || _item?.IsAvailable == true
+            ? "Downloaded"
+            : "Unavailable";
+
+    private string GetOverviewStatusClass()
+        => _item?.LocalFileExists == true || _item?.IsAvailable == true
+            ? "movie-overview-status--good"
+            : "movie-overview-status--warn";
+
+    private string BuildOverviewSourceServicesSummary()
+        => _item?.SourceServices is { Count: > 0 }
+            ? string.Join(", ", _item.SourceServices)
+            : "—";
+
+    private static string FormatSecondsLabel(int seconds)
+        => $"{seconds} sec";
+
+    private static string GetSmokeTestExecutionLabel(MediaPlaybackSmokeTestResponse smokeTest)
+        => smokeTest.SampleSucceeded
+            ? "Sample created"
+            : smokeTest.SampleAttempted
+                ? "Sample failed"
+                : "Plan only";
+
+    private static string GetSmokeTestCalloutClass(MediaPlaybackSmokeTestResponse smokeTest)
+        => smokeTest.SampleSucceeded
+            ? "smoke-callout--success"
+            : smokeTest.SampleAttempted
+                ? "smoke-callout--danger"
+                : "smoke-callout--warning";
+
+    private static string GetSmokeTestOutcomeHeadline(MediaPlaybackSmokeTestResponse smokeTest)
+    {
+        if (smokeTest.SampleSucceeded && string.Equals(smokeTest.VerdictSeverity, "danger", StringComparison.OrdinalIgnoreCase))
+        {
+            return "The test worked, but the original file still looks like a poor broad-compatibility match.";
+        }
+
+        if (smokeTest.SampleSucceeded)
+        {
+            return "The smoke test worked and MediaCloud created a short sample successfully.";
+        }
+
+        if (smokeTest.SampleAttempted)
+        {
+            return "MediaCloud tried to create a sample, but the smoke test did not finish cleanly.";
+        }
+
+        return "MediaCloud prepared the smoke test but has not run it yet.";
+    }
+
+    private static string GetSmokeTestOperatorPlainLanguage(MediaPlaybackSmokeTestResponse smokeTest)
+    {
+        if (smokeTest.SampleSucceeded && string.Equals(smokeTest.VerdictSeverity, "danger", StringComparison.OrdinalIgnoreCase))
+        {
+            return "The ffmpeg path is working, so the tool can create a sample. The warning is about the original file format, not the smoke-test pipeline.";
+        }
+
+        if (smokeTest.SampleSucceeded)
+        {
+            return "MediaCloud proved it can process this file into a short sample. Use the compatibility recommendation below to decide whether the original file is good enough to keep as-is.";
+        }
+
+        if (smokeTest.SampleAttempted)
+        {
+            return "This is still an execution problem. Fix the error first, then trust any compatibility recommendation tied to the sample output.";
+        }
+
+        return "No sample evidence yet. Run the test to separate toolchain problems from actual playback compatibility problems.";
+    }
+
+    private static string GetSmokeTestExecutionSummary(MediaPlaybackSmokeTestResponse smokeTest)
+        => smokeTest.SampleSucceeded
+            ? $"Success — MediaCloud created a {smokeTest.SampleSeconds}-second sample."
+            : smokeTest.SampleAttempted
+                ? $"Failed — MediaCloud could not create the {smokeTest.SampleSeconds}-second sample."
+                : "Prepared only — no sample has been generated yet.";
+
+    private static string GetSmokeTestGeneralFitLabel(MediaPlaybackSmokeTestResponse smokeTest)
+        => string.IsNullOrWhiteSpace(smokeTest.RecommendationTitle)
+            ? DisplayValue(smokeTest.LikelyDecision)
+            : smokeTest.RecommendationTitle;
+
+    private static string GetSmokeTestBasicTakeaway(MediaPlaybackSmokeTestResponse smokeTest)
+    {
+        if (string.Equals(smokeTest.VerdictSeverity, "danger", StringComparison.OrdinalIgnoreCase))
+        {
+            return "This file may still play on some clients, but it is outside your safer all-purpose target.";
+        }
+
+        if (string.Equals(smokeTest.VerdictSeverity, "warning", StringComparison.OrdinalIgnoreCase))
+        {
+            return "This file is close, but MediaCloud still sees enough mismatch to keep an eye on it.";
+        }
+
+        return "This file looks close to the active target profile.";
+    }
+
+    private static string GetSmokeTestNextStep(MediaPlaybackSmokeTestResponse smokeTest)
+    {
+        if (!smokeTest.SampleSucceeded && smokeTest.SampleAttempted)
+        {
+            return "Fix the test failure first so you know whether you are dealing with a real compatibility issue or just a broken sample path.";
+        }
+
+        if (string.Equals(smokeTest.VerdictSeverity, "danger", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Keep it if your real client already behaves well, or plan a replacement/full transcode if you want broader device safety.";
+        }
+
+        if (string.Equals(smokeTest.VerdictSeverity, "warning", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Monitor real playback on the target client before deciding whether remediation is worth it.";
+        }
+
+        return "No urgent action needed unless real playback issues show up.";
+    }
+
+    private string BuildSmokeTestCurrentTraitsSummary()
+        => JoinSmokeValues(
+            GetCompatibilityComparisonValue("Container", selectedProfile: false),
+            GetCompatibilityComparisonValue("Video codec", selectedProfile: false),
+            GetCompatibilityComparisonValue("Audio", selectedProfile: false));
+
+    private string BuildSmokeTestPreferredTargetSummary()
+        => JoinSmokeValues(
+            GetCompatibilityComparisonValue("Container", selectedProfile: true),
+            GetCompatibilityComparisonValue("Video codec", selectedProfile: true),
+            GetCompatibilityComparisonValue("Audio", selectedProfile: true));
+
+    private static string GetSmokeTestRecommendationSummary(MediaPlaybackSmokeTestResponse smokeTest)
+        => string.IsNullOrWhiteSpace(smokeTest.RecommendationTitle)
+            ? "MediaCloud has not classified the mismatch yet."
+            : smokeTest.RecommendationTitle;
+
+    private IEnumerable<string> GetSmokeTestPlainLanguageReasons(MediaPlaybackSmokeTestResponse smokeTest)
+    {
+        var translated = (smokeTest.Reasons ?? [])
+            .Where(reason => !string.IsNullOrWhiteSpace(reason))
+            .Select(TranslateSmokeTestReason)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(4)
+            .ToList();
+
+        if (translated.Count > 0)
+        {
+            return translated;
+        }
+
+        if (!string.IsNullOrWhiteSpace(smokeTest.WhySummary))
+        {
+            return [smokeTest.WhySummary];
+        }
+
+        return ["MediaCloud detected a mismatch between the current file and the preferred playback target."];
+    }
+
+    private static string TranslateSmokeTestReason(string reason)
+    {
+        var normalized = reason.Trim();
+        if (normalized.Contains("MKV/Matroska", StringComparison.OrdinalIgnoreCase))
+        {
+            return "The file is packaged as MKV. Your preferred target leans toward MP4 because it usually works on more devices with less drama.";
+        }
+
+        if (normalized.Contains("HEVC", StringComparison.OrdinalIgnoreCase))
+        {
+            return "The video uses HEVC/x265. Your preferred target leans toward H.264 because it is the safer broad-compatibility codec.";
+        }
+
+        if (normalized.Contains("10-bit", StringComparison.OrdinalIgnoreCase))
+        {
+            return "The video is 10-bit, which is outside the safer target profile you selected.";
+        }
+
+        if (normalized.Contains("subtitle", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Subtitle format may force extra conversion work on some clients.";
+        }
+
+        return normalized;
+    }
+
+    private string GetCompatibilityComparisonValue(string label, bool selectedProfile)
+    {
+        var row = _compatibilityRecommendation?.ComparisonRows.FirstOrDefault(x => string.Equals(x.Label, label, StringComparison.OrdinalIgnoreCase));
+        var value = selectedProfile ? row?.SelectedProfileValue : row?.InspectedValue;
+        return DisplayValue(value);
+    }
+
+    private static string JoinSmokeValues(params string[] values)
+    {
+        var filtered = values.Where(value => !string.IsNullOrWhiteSpace(value) && value != "—").ToArray();
+        return filtered.Length == 0 ? "—" : string.Join(" • ", filtered);
+    }
+
+    private static string GetSmokeTestVerdictStyle(string? severity)
+        => severity?.Trim().ToLowerInvariant() switch
+        {
+            "success" => "display:inline-flex; align-items:center; gap:0.35rem; padding:0.18rem 0.55rem; border-radius:999px; background:rgba(22,163,74,0.18); color:#86efac; font-size:0.72rem; font-weight:700; text-transform:uppercase; letter-spacing:0.04em;",
+            "warning" => "display:inline-flex; align-items:center; gap:0.35rem; padding:0.18rem 0.55rem; border-radius:999px; background:rgba(245,158,11,0.18); color:#fcd34d; font-size:0.72rem; font-weight:700; text-transform:uppercase; letter-spacing:0.04em;",
+            _ => "display:inline-flex; align-items:center; gap:0.35rem; padding:0.18rem 0.55rem; border-radius:999px; background:rgba(239,68,68,0.18); color:#fca5a5; font-size:0.72rem; font-weight:700; text-transform:uppercase; letter-spacing:0.04em;"
+        };
 
     private static string BuildMatchedItemLabel(LibraryItemSourceLinkDto source)
     {
@@ -819,6 +2117,527 @@ else
             : baseStyle + "background:rgba(34,197,94,0.18); color:#bbf7d0; border:1px solid rgba(34,197,94,0.45);";
     }
 
+    private static readonly string[] StreamInventoryComparisonOrder =
+    [
+        "Container",
+        "Video codec",
+        "Resolution",
+        "10-bit video",
+        "Audio",
+        "Subtitles",
+        "Bitrate"
+    ];
+
+    private static readonly string[] RemediationV2ProfileComparisonOrder =
+    [
+        "Container",
+        "Video codec",
+        "Audio",
+        "Subtitles",
+        "Resolution",
+        "Bitrate",
+        "10-bit video"
+    ];
+
+    private IReadOnlyList<MediaCompatibilityComparisonRowResponse> GetStreamInventoryComparisonRows()
+        => StreamInventoryComparisonOrder
+            .Select(label => _compatibilityRecommendation?.ComparisonRows.FirstOrDefault(row => string.Equals(row.Label, label, StringComparison.OrdinalIgnoreCase)))
+            .Where(row => row is not null)
+            .Cast<MediaCompatibilityComparisonRowResponse>()
+            .ToArray();
+
+    private IReadOnlyList<MediaCompatibilityComparisonRowResponse> GetCompatibilityMismatchRows()
+        => (_compatibilityRecommendation?.ComparisonRows ?? [])
+            .Where(IsMeaningfulCompatibilityMismatch)
+            .ToArray();
+
+    private IReadOnlyList<MediaCompatibilityComparisonRowResponse> GetRemediationV2ProfileComparisonRows()
+    {
+        var comparisonRows = _compatibilityRecommendation?.ComparisonRows ?? [];
+        if (comparisonRows.Count == 0)
+        {
+            return [];
+        }
+
+        return comparisonRows
+            .Where(row => ShouldShowPreferredHint(row)
+                || string.Equals((row.Status ?? string.Empty).Trim(), "Outside profile", StringComparison.OrdinalIgnoreCase)
+                || string.Equals((row.Status ?? string.Empty).Trim(), "Disc image", StringComparison.OrdinalIgnoreCase))
+            .OrderBy(row =>
+            {
+                var index = Array.IndexOf(RemediationV2ProfileComparisonOrder, row.Label);
+                return index < 0 ? int.MaxValue : index;
+            })
+            .ThenBy(row => row.Label, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    private IReadOnlyList<MediaCompatibilityComparisonRowResponse> GetVisibleRemediationV2ProfileComparisonRows()
+    {
+        var rows = GetRemediationV2ProfileComparisonRows();
+        return _remediationV2ShowAllComparisons
+            ? rows
+            : rows.Take(3).ToArray();
+    }
+
+    private bool ShouldShowRemediationV2ProfileComparisonExpandAction()
+        => GetRemediationV2ProfileComparisonRows().Count > 3;
+
+    private void ToggleRemediationV2ProfileComparisonExpand()
+        => _remediationV2ShowAllComparisons = !_remediationV2ShowAllComparisons;
+
+    private static bool IsMeaningfulCompatibilityMismatch(MediaCompatibilityComparisonRowResponse row)
+    {
+        if (row is null)
+        {
+            return false;
+        }
+
+        var status = (row.Status ?? string.Empty).Trim().ToLowerInvariant();
+        if (status is "outside profile" or "disc image")
+        {
+            return true;
+        }
+
+        return !string.Equals(DisplayValue(row.InspectedValue), DisplayValue(row.SelectedProfileValue), StringComparison.OrdinalIgnoreCase);
+    }
+
+    private string GetRecommendedActionSummary()
+        => string.IsNullOrWhiteSpace(_compatibilityRecommendation?.RecommendationTitle)
+            ? "Scan detect metrics first so MediaCloud can classify the file."
+            : _compatibilityRecommendation!.RecommendationTitle;
+
+    private string GetRecommendedCommandPreview()
+        => !string.IsNullOrWhiteSpace(_compatibilityRecommendation?.CommandPreview)
+            ? _compatibilityRecommendation!.CommandPreview
+            : _compatibilityRecommendation?.ManualCommandPreview ?? string.Empty;
+
+    private string GetRemediationV2StatusLabel()
+    {
+        if (_compatibilityJobs.Any(x => string.Equals(x.Status, "Running", StringComparison.OrdinalIgnoreCase)))
+        {
+            return "Being fixed";
+        }
+
+        if (_compatibilityJobs.Any(x => string.Equals(x.Status, "Queued", StringComparison.OrdinalIgnoreCase)))
+        {
+            return "Queued for fix";
+        }
+
+        if (_compatibilityRecommendation is null)
+        {
+            return "Needs scan";
+        }
+
+        return _compatibilityRecommendation.SafeToQueue
+            ? "Needs attention"
+            : "Needs review";
+    }
+
+    private string GetRemediationV2ProblemSummary()
+    {
+        if (_compatibilityRecommendation is null)
+        {
+            return "MediaCloud has not analyzed this file yet.";
+        }
+
+        var mismatch = GetCompatibilityMismatchRows().FirstOrDefault();
+        if (mismatch is null)
+        {
+            return "MediaCloud did not find a major compatibility mismatch.";
+        }
+
+        return mismatch.Label switch
+        {
+            "Container" => "The file packaging does not match your preferred playback target.",
+            "Video codec" => "The video format is outside your preferred playback target.",
+            "Audio" => "The audio format is outside your preferred playback target.",
+            "Subtitles" => "The subtitle setup is outside your preferred playback target.",
+            _ => $"{mismatch.Label} is outside your preferred playback target."
+        };
+    }
+
+    private IReadOnlyList<RemediationV2ChecklistStep> GetRemediationV2ActionSteps()
+    {
+        var hasRecommendation = _compatibilityRecommendation is not null;
+        var hasQueuedJob = _compatibilityJobs.Any(x => string.Equals(x.Status, "Queued", StringComparison.OrdinalIgnoreCase));
+        var hasRunningJob = _compatibilityJobs.Any(x => string.Equals(x.Status, "Running", StringComparison.OrdinalIgnoreCase));
+        var hasAnyFixJob = hasQueuedJob || hasRunningJob || _compatibilityJobs.Any(x =>
+            string.Equals(x.Status, "Completed", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(x.Status, "Succeeded", StringComparison.OrdinalIgnoreCase));
+
+        if (!hasRecommendation)
+        {
+            return
+            [
+                new("Analyze this file", false, true),
+                new("Review the profile comparison", false, false)
+            ];
+        }
+
+        if (GetRemediationV2ProfileComparisonRows().Count == 0)
+        {
+            return
+            [
+                new("Analyze this file", true, false),
+                new("No action needed", false, true)
+            ];
+        }
+
+        if (hasRunningJob)
+        {
+            return
+            [
+                new("Analyze this file", true, false),
+                new("Queue a compatibility fix", true, false),
+                new("Wait for the current fix to finish", false, true)
+            ];
+        }
+
+        if (hasQueuedJob)
+        {
+            return
+            [
+                new("Analyze this file", true, false),
+                new("Queue a compatibility fix", true, false),
+                new("Wait for the queued fix to run", false, true)
+            ];
+        }
+
+        if (_compatibilityRecommendation.SafeToQueue)
+        {
+            return
+            [
+                new("Analyze this file", true, false),
+                new("Queue a compatibility fix", hasAnyFixJob, !hasAnyFixJob),
+                new("Verify playback after the fix finishes", false, false)
+            ];
+        }
+
+        return
+        [
+            new("Analyze this file", true, false),
+            new("Review the profile comparison", false, false),
+            new("Choose which action to take", false, true)
+        ];
+    }
+
+    private string GetRemediationV2BestActionLabel()
+    {
+        if (_compatibilityRecommendation is null)
+        {
+            return "Analyze file";
+        }
+
+        if (_compatibilityJobs.Any(x => string.Equals(x.Status, "Running", StringComparison.OrdinalIgnoreCase)))
+        {
+            return "Let the current fix finish";
+        }
+
+        if (_compatibilityJobs.Any(x => string.Equals(x.Status, "Queued", StringComparison.OrdinalIgnoreCase)))
+        {
+            return "Let the queued fix run";
+        }
+
+        return string.IsNullOrWhiteSpace(_compatibilityRecommendation.BestActionLabel)
+            ? (_compatibilityRecommendation.SafeToQueue ? "Convert this file" : "Review manually")
+            : _compatibilityRecommendation.BestActionLabel;
+    }
+
+    private string GetRemediationV2CurrentFileRiskLabel()
+        => _compatibilityRecommendation?.CurrentFileRiskLabel is { Length: > 0 } label ? label : "Unknown";
+
+    private string GetRemediationV2ConversionRiskLabel()
+        => _compatibilityRecommendation?.ConversionRiskLabel is { Length: > 0 } label ? label : "Unknown";
+
+    private string GetRemediationV2WhySummary()
+    {
+        if (_compatibilityRecommendation is null)
+        {
+            return "MediaCloud needs one scan before it can give a recommendation.";
+        }
+
+        if (_compatibilityJobs.Any(x => string.Equals(x.Status, "Running", StringComparison.OrdinalIgnoreCase)))
+        {
+            return "MediaCloud is already running a fix for this title.";
+        }
+
+        if (_compatibilityJobs.Any(x => string.Equals(x.Status, "Queued", StringComparison.OrdinalIgnoreCase)))
+        {
+            return "MediaCloud already has a fix queued for this title.";
+        }
+
+        if (!string.IsNullOrWhiteSpace(_compatibilityRecommendation.UserDecisionSummary))
+        {
+            return _compatibilityRecommendation.UserDecisionSummary;
+        }
+
+        if (!_compatibilityRecommendation.SafeToQueue)
+        {
+            return "This would need a full video conversion, so MediaCloud wants a human review before doing anything.";
+        }
+
+        return "This looks like a lower-risk compatibility fix that MediaCloud can queue without changing the original file automatically.";
+    }
+
+    private static string GetRemediationHistoryActionLabel(LibraryRemediationJobDto job)
+    {
+        if (job is null)
+        {
+            return "—";
+        }
+
+        if (!string.IsNullOrWhiteSpace(job.RequestedAction))
+        {
+            return job.RequestedAction.Replace('_', ' ');
+        }
+
+        if (!string.IsNullOrWhiteSpace(job.CommandName))
+        {
+            return job.CommandName.Replace('_', ' ');
+        }
+
+        if (!string.IsNullOrWhiteSpace(job.ReleaseSummary))
+        {
+            return job.ReleaseSummary;
+        }
+
+        return "—";
+    }
+
+    private static string GetRemediationHistoryDownloadTypeLabel(LibraryRemediationJobDto job)
+    {
+        if (!string.IsNullOrWhiteSpace(job.DownloadType))
+        {
+            return job.DownloadType.Trim();
+        }
+
+        return IsRemediationHistoryDownloadPhase(job.SearchStatus)
+            ? "Unknown"
+            : "—";
+    }
+
+    private static string GetRemediationHistoryStatusDefinition(LibraryRemediationJobDto job)
+        => GetRemediationHistoryPillDefinition("Status", job.Status);
+
+    private static string GetRemediationHistoryIntegrationStepDefinition(LibraryRemediationJobDto job)
+        => GetRemediationHistoryPillDefinition("Integration step", job.SearchStatus);
+
+    private static string GetRemediationHistoryVerificationDefinition(LibraryRemediationJobDto job)
+        => GetRemediationHistoryPillDefinition("Verification", job.VerificationStatus);
+
+    private static string GetRemediationHistoryProviderStateDefinition(LibraryRemediationJobDto job)
+        => GetRemediationHistoryPillDefinition("Provider state", job.ProviderCommandStatus);
+
+    private static string GetRemediationHistoryDownloadTypeDefinition(LibraryRemediationJobDto job)
+        => GetRemediationHistoryPillDefinition("Download type", GetRemediationHistoryDownloadTypeLabel(job));
+
+    private static string GetRemediationHistoryPillDefinition(string category, string? value)
+    {
+        var normalizedCategory = (category ?? string.Empty).Trim().ToLowerInvariant();
+        var normalizedValue = (value ?? string.Empty).Trim();
+        var key = normalizedValue.ToLowerInvariant();
+
+        if (string.IsNullOrWhiteSpace(normalizedValue) || normalizedValue == "—")
+        {
+            return normalizedCategory switch
+            {
+                "download type" => "MediaCloud does not have provider data showing whether this replacement came from Usenet or Torrent.",
+                _ => $"No additional detail is available for {category.ToLowerInvariant()} yet."
+            };
+        }
+
+        if (normalizedCategory == "integration step")
+        {
+            return key switch
+            {
+                "queued" => "MediaCloud asked the provider to run the replacement search, but there is no live grab or download evidence yet.",
+                "searchqueued" => "The replacement search itself was queued with the provider.",
+                "blacklistedandqueued" => "MediaCloud blacklisted the current release and queued a new replacement search.",
+                "grabbed" => "The provider selected a replacement release and is waiting for download/import to continue.",
+                "downloading" => "The provider is actively downloading the replacement file now.",
+                "importing" => "The provider finished downloading and is importing the replacement into the library.",
+                "imported" => "The provider says the replacement imported, and MediaCloud is waiting for refreshed local evidence.",
+                "completed" => "The provider-side replacement step finished.",
+                "noresults" => "The provider search ran but did not find a downloadable replacement.",
+                "failed" => "The provider-side replacement step failed.",
+                "blocked" => "MediaCloud intentionally did not send this forward because it needs review or is not allowed to auto-run.",
+                "notstarted" => "This remediation path has not started yet.",
+                "pending" => "MediaCloud is still waiting for enough evidence to advance this step.",
+                "standby" => "Wait for the current remediation attempt to finish before repeating it.",
+                _ => $"Integration step: {normalizedValue}."
+            };
+        }
+
+        if (normalizedCategory == "status")
+        {
+            return key switch
+            {
+                "processing" => "MediaCloud is actively tracking this remediation and waiting for the provider or local evidence to advance.",
+                "resolved" => "MediaCloud believes the issue is fixed.",
+                "verificationfailed" => "A replacement happened, but the latest evidence still shows the issue.",
+                "failed" => "The remediation request failed before MediaCloud could verify a fix.",
+                "noreplacementfound" => "MediaCloud completed the search flow, but no replacement was found.",
+                "blockedprofilereview" => "MediaCloud stopped here because the acquisition profile needs review first.",
+                "blockedmanualreview" => "MediaCloud stopped here because this case needs manual review.",
+                "importedreplacement" => "A replacement appears to be in place, but MediaCloud still wants fresher evidence.",
+                _ => $"Status: {normalizedValue}."
+            };
+        }
+
+        if (normalizedCategory == "verification")
+        {
+            return key switch
+            {
+                "verified" => "MediaCloud checked the latest evidence and believes the issue is fixed.",
+                "waitingforevidence" => "The provider may be done, but MediaCloud is still waiting for refreshed file metadata or probe results.",
+                "pending" => "Verification cannot finish yet because the replacement flow is still in progress.",
+                "failed" => "Verification ran and still found a problem.",
+                "nomatch" => "No replacement was found, so there is nothing new for MediaCloud to verify yet.",
+                "notstarted" => "Verification has not started yet.",
+                _ => $"Verification: {normalizedValue}."
+            };
+        }
+
+        if (normalizedCategory == "provider state")
+        {
+            return key switch
+            {
+                "queued" => "The provider accepted the command but has not started running it yet.",
+                "started" => "The provider started the command.",
+                "running" => "The provider is actively running the command now.",
+                "completed" => "The provider reports that the command finished.",
+                "failed" => "The provider reports that the command failed.",
+                "aborted" => "The provider reports that the command was aborted.",
+                _ => $"Provider state: {normalizedValue}."
+            };
+        }
+
+        if (normalizedCategory == "download type")
+        {
+            return key switch
+            {
+                "torrent" => "The provider reported this replacement is coming from a torrent source.",
+                "usenet" => "The provider reported this replacement is coming from a Usenet source.",
+                "unknown" => "The movie is in a download/import phase, but the provider did not tell MediaCloud whether it is Usenet or Torrent.",
+                _ => $"Download type: {normalizedValue}."
+            };
+        }
+
+        return $"{category}: {normalizedValue}.";
+    }
+
+    private static string GetRemediationHistoryDownloadTypePillClass(LibraryRemediationJobDto job)
+    {
+        if (!string.IsNullOrWhiteSpace(job.DownloadType))
+        {
+            return GetRemediationHistoryStatusPillClass(job.DownloadType);
+        }
+
+        return IsRemediationHistoryDownloadPhase(job.SearchStatus)
+            ? "movie-remediation-status-pill--warn"
+            : "movie-remediation-status-pill--muted";
+    }
+
+    private static bool IsRemediationHistoryDownloadPhase(string? searchStatus)
+        => (searchStatus ?? string.Empty).Trim().ToLowerInvariant() switch
+        {
+            "grabbed" or "downloading" or "importing" or "imported" => true,
+            _ => false
+        };
+
+    private IEnumerable<LibraryRemediationJobDto> GetRecentRemediationHistoryJobs(int count)
+        => _compatibilityJobs.Take(Math.Max(count, 0));
+
+    private async Task OpenFullRemediationHistoryAsync()
+    {
+        _activeMovieDetailTabIndex = FileRemediationTabIndex;
+        await InvokeAsync(StateHasChanged);
+        await Task.Yield();
+
+        try
+        {
+            await JSRuntime.InvokeVoidAsync("eval", @"(() => {
+                const card = document.getElementById('remediation-history');
+                if (!card) return;
+                card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                window.scrollBy({ top: -96, behavior: 'auto' });
+                card.setAttribute('tabindex', '-1');
+                card.focus({ preventScroll: true });
+                card.classList.remove('movie-remediation-card--focus');
+                void card.offsetWidth;
+                card.classList.add('movie-remediation-card--focus');
+                setTimeout(() => card.classList.remove('movie-remediation-card--focus'), 2400);
+            })()");
+        }
+        catch
+        {
+            // Best-effort tab switch and scroll only.
+        }
+    }
+
+    private async Task FocusProfileComparisonAsync()
+    {
+        _remediationV2ShowAllComparisons = true;
+        await InvokeAsync(StateHasChanged);
+        await Task.Yield();
+
+        try
+        {
+            await JSRuntime.InvokeVoidAsync("eval", @"(() => {
+                const card = document.getElementById('remediation-v2-profile-comparison');
+                if (!card) return;
+                card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                window.scrollBy({ top: -96, behavior: 'auto' });
+                card.setAttribute('tabindex', '-1');
+                card.focus({ preventScroll: true });
+                card.classList.remove('movie-remediation-card--focus');
+                void card.offsetWidth;
+                card.classList.add('movie-remediation-card--focus');
+                setTimeout(() => card.classList.remove('movie-remediation-card--focus'), 2400);
+            })()");
+        }
+        catch
+        {
+            // Best-effort focus/highlight only.
+        }
+    }
+
+    private bool ShouldRemediationV2ShowQueueAction()
+        => _compatibilityRecommendation is not null
+            && _compatibilityRecommendation.SafeToQueue
+            && !string.IsNullOrWhiteSpace(GetRecommendedCommandPreview())
+            && !_compatibilityJobs.Any(x => string.Equals(x.Status, "Queued", StringComparison.OrdinalIgnoreCase) || string.Equals(x.Status, "Running", StringComparison.OrdinalIgnoreCase));
+
+    private bool ShouldRemediationV2ShowScanAction()
+        => _compatibilityRecommendation is null;
+
+    private static bool ShouldShowCompatibilityPill(string? status)
+        => (status ?? string.Empty).Trim().ToLowerInvariant() switch
+        {
+            "match" => false,
+            "allowed" => false,
+            _ => true
+        };
+
+    private static bool ShouldShowPreferredHint(MediaCompatibilityComparisonRowResponse row)
+    {
+        if (row is null || string.IsNullOrWhiteSpace(row.SelectedProfileValue))
+        {
+            return false;
+        }
+
+        return (row.Status ?? string.Empty).Trim().ToLowerInvariant() switch
+        {
+            "outside profile" => true,
+            "disc image" => true,
+            "allowed" => string.Equals(row.Label, "Container", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(row.Label, "Video codec", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(row.Label, "Audio", StringComparison.OrdinalIgnoreCase),
+            _ => false
+        };
+    }
+
     private static string GetCompatibilityStatusClass(string? status)
         => (status ?? string.Empty).Trim().ToLowerInvariant() switch
         {
@@ -839,8 +2658,6 @@ else
             _ => "Legacy"
         };
 
-    private void ToggleCompatibilityPanel() => _compatibilityExpanded = !_compatibilityExpanded;
-
     private static string GetIssueTypeLabel(string? issueType)
         => IssueTypeOptions.FirstOrDefault(x => string.Equals(x.Value, issueType, StringComparison.OrdinalIgnoreCase))?.Label
             ?? (string.IsNullOrWhiteSpace(issueType) ? "Issue" : issueType.Replace('_', ' '));
@@ -858,8 +2675,21 @@ else
             _ => "display:inline-flex; align-items:center; justify-content:center; white-space:nowrap; padding:0.16rem 0.56rem; border-radius:999px; font-size:0.7rem; line-height:1; font-weight:700; background:rgba(59,130,246,0.18); color:#bfdbfe; border:1px solid rgba(59,130,246,0.45);"
         };
 
+    private static string GetRemediationHistoryStatusPillClass(string? status)
+        => (status ?? string.Empty).Trim().ToLowerInvariant() switch
+        {
+            "resolved" or "completed" or "verified" or "notneeded" or "succeeded" => "movie-remediation-status-pill--good",
+            "downloading" or "importing" or "imported" or "grabbed" or "processing" or "running" or "queued" or "searchqueued" or "blacklistedandqueued" or "standby" or "pending" or "started" => "movie-remediation-status-pill--info",
+            "noreplacementfound" or "noresults" or "nomatch" or "blocked" or "notstarted" or "notapplicable" or "skipped" => "movie-remediation-status-pill--muted",
+            "verificationfailed" or "failed" or "aborted" => "movie-remediation-status-pill--danger",
+            "recommended" or "manualreview" or "blockedmanualreview" or "blockedprofilereview" => "movie-remediation-status-pill--warn",
+            _ => "movie-remediation-status-pill--muted"
+        };
+
     private static string FormatIssueTimestamp(DateTimeOffset value)
         => value.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
+
+    private sealed record RemediationV2ChecklistStep(string Label, bool Completed, bool IsCurrent);
 
     private record LibraryItemSourceStatusDto(
         string ServiceKey,
@@ -886,7 +2716,7 @@ else
         bool HasSourceLinkAfter,
         bool AttemptedCreateAction,
         string Message,
-        DateTimeOffset SyncedAtUtc);
+        DateTimeOffset? SyncedAtUtc);
 
     private sealed record CreateLibraryIssueRequest(
         string IssueType,
@@ -942,7 +2772,83 @@ else
         string ReviewOperatorWarning,
         IReadOnlyList<string> BlockedReasons,
         IReadOnlyList<string> ManualPlanSteps,
-        string ManualCommandPreview);
+        string ManualCommandPreview,
+        string UserDecisionGuidance = "",
+        string BestActionLabel = "",
+        string CurrentFileRiskLabel = "Unknown",
+        string ConversionRiskLabel = "Unknown",
+        string UserDecisionSummary = "");
+
+    private sealed record QueueMediaCompatibilityRemediationResponse(
+        long LibraryItemId,
+        long JobId,
+        bool Queued,
+        bool AlreadyQueued,
+        string Message);
+
+    private sealed record SearchReplacementRequest(
+        string Reason,
+        string Notes,
+        string? IssueType = null);
+
+    private sealed record LibraryItemRemediationResponse(
+        long LibraryItemId,
+        bool Success,
+        string ServiceKey,
+        string ServiceDisplayName,
+        string CommandName,
+        int? ExternalItemId,
+        bool LookedUpRemotely,
+        string Reason,
+        string Notes,
+        string Message);
+
+    private sealed record ErrorResponse(string Error);
+
+    private sealed record LibraryRemediationJobDto(
+        long Id,
+        long LibraryItemId,
+        long? LibraryIssueId,
+        string ServiceKey,
+        string ServiceDisplayName,
+        long? IntegrationId,
+        string RequestedAction,
+        string CommandName,
+        int? ExternalItemId,
+        string IssueType,
+        string Reason,
+        string Notes,
+        string ReasonCategory,
+        string Confidence,
+        bool ShouldSearchNow,
+        bool ShouldBlacklistCurrentRelease,
+        bool NeedsManualReview,
+        bool NotesRecordedOnly,
+        bool LookedUpRemotely,
+        string PolicySummary,
+        string NotesHandling,
+        string ProfileDecision,
+        string ProfileSummary,
+        string Status,
+        string SearchStatus,
+        string BlacklistStatus,
+        string OutcomeSummary,
+        string ResultMessage,
+        int? ProviderCommandId,
+        string ProviderCommandStatus,
+        string ProviderCommandSummary,
+        string DownloadType,
+        DateTimeOffset? ProviderCommandCheckedAtUtc,
+        string VerificationStatus,
+        string VerificationSummary,
+        DateTimeOffset? VerificationCheckedAtUtc,
+        string LoopbackStatus,
+        string LoopbackSummary,
+        string ReleaseSummary,
+        string RequestedBy,
+        DateTimeOffset RequestedAtUtc,
+        DateTimeOffset? FinishedAtUtc,
+        DateTimeOffset? LastCheckedAtUtc);
 
     private sealed record IssueTypeOption(string Value, string Label);
 

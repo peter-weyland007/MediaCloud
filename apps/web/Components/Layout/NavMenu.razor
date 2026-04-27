@@ -15,6 +15,7 @@
                 <span class="nav-chevron">@(_mediaExpanded ? "▾" : "▸")</span>
             </button>
             <div id="media-subitems" class="nav-subitems @(_mediaExpanded ? "expanded" : "collapsed")" role="group" aria-label="Media sections">
+                <NavLink class="nav-link nav-sublink" href="media/recent">Recently Added</NavLink>
                 <NavLink class="nav-link nav-sublink" href="media/movies">Movies</NavLink>
                 <NavLink class="nav-link nav-sublink" href="media/tv-shows">TV Shows</NavLink>
                 <NavLink class="nav-link nav-sublink" href="media/music">Music</NavLink>

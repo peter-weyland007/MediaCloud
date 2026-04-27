@@ -1,0 +1,18 @@
+@page "/media/recent"
+@attribute [Authorize]
+
+<PageTitle>Recently Added</PageTitle>
+
+<div style="display:flex; justify-content:space-between; align-items:flex-start; gap:0.85rem; flex-wrap:wrap;">
+    <div>
+        <h1 style="margin:0;">Recently Added</h1>
+        <p class="subtitle" style="margin:0.25rem 0 0;">Newest items MediaCloud discovered are listed first, across movies, TV, and music.</p>
+    </div>
+</div>
+
+<div class="card" style="margin-top:1rem;">
+    <p class="card-label">NEWEST LIBRARY ITEMS</p>
+    <p class="card-note" style="margin:0.35rem 0 0;">Sorted by when MediaCloud first added the item to its library index, newest at the top.</p>
+</div>
+
+<MediaLibraryTable InitialSortBy="created" InitialSortDir="desc" />

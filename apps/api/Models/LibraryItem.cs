@@ -13,6 +13,7 @@ public class LibraryItem
     public int? TvdbId { get; set; }
     public string ImdbId { get; set; } = string.Empty;
     public string PlexRatingKey { get; set; } = string.Empty;
+    public string ContentRating { get; set; } = string.Empty;
     public string Description { get; set; } = string.Empty;
     public string DescriptionSourceService { get; set; } = string.Empty;
 

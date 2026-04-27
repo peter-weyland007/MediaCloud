@@ -15,14 +15,15 @@ public sealed class DetailActionButtonVisualConsistencyTests
     }
 
     [Fact]
-    public void Analyze_button_uses_stacked_right_aligned_status_text_under_button()
+    public void Analyze_button_can_move_below_primary_file_with_left_aligned_status_text()
     {
         var repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../../"));
         var fullPath = Path.GetFullPath(Path.Combine(repoRoot, "apps/web/Components/Shared/MediaItemDetailBody.razor"));
         var content = File.ReadAllText(fullPath);
 
-        Assert.Contains("display:flex; flex-direction:column; gap:0.2rem; align-items:flex-end; align-self:start; min-width:0;", content);
-        Assert.Contains("text-align:right;", content);
+        Assert.Contains("AnalyzeButtonBelowPrimaryFile", content);
+        Assert.Contains("align-items:flex-start; margin-top:0.85rem; min-width:0;", content);
+        Assert.Contains("text-align:left;", content);
         Assert.Contains("font-size:0.72rem;", content);
         Assert.DoesNotContain("@StatusMessage", content);
     }

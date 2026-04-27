@@ -51,10 +51,10 @@
             </div>
         </div>
 
-        <div style="display:flex; gap:0.55rem; margin-top:0.85rem; flex-wrap:wrap;">
-            <button class="button-primary" @onclick="SaveAsync" disabled="@_saving">@(_saving ? "Saving..." : "Save runtime policy")</button>
-            <button class="button-secondary" @onclick="ResetDefaultsAsync" disabled="@_resetting">@(_resetting ? "Resetting..." : "Reset to defaults")</button>
-        </div>
+        <MudButtonGroup Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small">
+            <MudButton ButtonType="ButtonType.Button" OnClick="SaveAsync" Disabled="@_saving">@(_saving ? "Saving..." : "Save runtime policy")</MudButton>
+            <MudButton ButtonType="ButtonType.Button" Color="Color.Secondary" OnClick="ResetDefaultsAsync" Disabled="@_resetting">@(_resetting ? "Resetting..." : "Reset to defaults")</MudButton>
+        </MudButtonGroup>
     }
 </div>
 

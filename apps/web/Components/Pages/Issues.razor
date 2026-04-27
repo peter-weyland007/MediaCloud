@@ -62,9 +62,11 @@
                 <label>Jump to page</label>
                 <input class="input" type="number" min="1" max="@TotalPages" value="@_jumpPageText" @onchange="OnJumpPageChanged" />
             </div>
-            <button class="button-secondary" @onclick="GoToPageAsync" disabled="@_loading">Go</button>
-            <button class="button-secondary" @onclick="PreviousPageAsync" disabled="@(_loading || _pageIndex == 0)">Previous</button>
-            <button class="button-secondary" @onclick="NextPageAsync" disabled="@(_loading || !CanGoNext)">Next</button>
+            <MudButtonGroup Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small">
+                <MudButton ButtonType="ButtonType.Button" Color="Color.Secondary" OnClick="GoToPageAsync" Disabled="@_loading">Go</MudButton>
+                <MudButton ButtonType="ButtonType.Button" Color="Color.Secondary" OnClick="PreviousPageAsync" Disabled="@(_loading || _pageIndex == 0)">Previous</MudButton>
+                <MudButton ButtonType="ButtonType.Button" Color="Color.Secondary" OnClick="NextPageAsync" Disabled="@(_loading || !CanGoNext)">Next</MudButton>
+            </MudButtonGroup>
         </div>
     </div>
 

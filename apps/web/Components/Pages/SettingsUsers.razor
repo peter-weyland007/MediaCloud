@@ -66,13 +66,13 @@
             }
         </div>
 
-        <div style="display:flex; gap:0.5rem;">
-            <button class="button-primary" disabled="@_saving">@(_saving ? "Saving..." : (_editingUserId is null ? "Create user" : "Save changes"))</button>
+        <MudButtonGroup Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small">
+            <MudButton ButtonType="ButtonType.Submit" Disabled="@_saving">@(_saving ? "Saving..." : (_editingUserId is null ? "Create user" : "Save changes"))</MudButton>
             @if (_editingUserId is not null)
             {
-                <button class="button-primary" type="button" style="background:#334155; border-color:#334155;" @onclick="ResetFormToCreate">Cancel edit</button>
+                <MudButton ButtonType="ButtonType.Button" Color="Color.Secondary" OnClick="ResetFormToCreate">Cancel edit</MudButton>
             }
-        </div>
+        </MudButtonGroup>
     </EditForm>
 </div>
 
@@ -106,20 +106,20 @@
                         <td style="padding:0.45rem 0;">@user.Username @(isSelf ? "(You)" : string.Empty)</td>
                         <td style="padding:0.45rem 0;">@user.Role</td>
                         <td style="padding:0.45rem 0;">@user.CreatedAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
-                        <td style="padding:0.45rem 0; display:flex; gap:0.45rem;">
-                            <button class="button-primary"
-                                    style="padding: 0.45rem 0.7rem; font-size: 0.85rem;"
-                                    disabled="@isSelf"
-                                    title="@(isSelf ? "You cannot edit your own admin account from this panel." : null)"
-                                    @onclick="() => LoadUserForEdit(user)">
-                                Edit
-                            </button>
-                            <button class="button-danger"
-                                    disabled="@(isSelf || _deletingUserId == user.Id)"
-                                    title="@(isSelf ? "You cannot delete your own account." : null)"
-                                    @onclick="() => DeleteUserAsync(user)">
-                                @(_deletingUserId == user.Id ? "Deleting..." : "Delete")
-                            </button>
+                        <td style="padding:0.45rem 0;">
+                            <MudButtonGroup Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small">
+                                <MudButton ButtonType="ButtonType.Button"
+                                           Disabled="@isSelf"
+                                           OnClick="@(() => LoadUserForEdit(user))">
+                                    Edit
+                                </MudButton>
+                                <MudButton ButtonType="ButtonType.Button"
+                                           Color="Color.Error"
+                                           Disabled="@(isSelf || _deletingUserId == user.Id)"
+                                           OnClick="@(() => DeleteUserAsync(user))">
+                                    @(_deletingUserId == user.Id ? "Deleting..." : "Delete")
+                                </MudButton>
+                            </MudButtonGroup>
                         </td>
                     </tr>
                 }

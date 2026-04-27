@@ -14,6 +14,17 @@ public sealed class MovieDetailFileIdentifierPresentationTests
     }
 
     [Fact]
+    public void Movie_details_file_and_identifiers_tab_uses_flat_layout_and_moves_analyze_button_below_primary_file()
+    {
+        var repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../../"));
+        var fullPath = Path.GetFullPath(Path.Combine(repoRoot, "apps/web/Components/Pages/MovieDetails.razor"));
+        var content = File.ReadAllText(fullPath);
+
+        Assert.Contains("FlattenMetricsPanel=\"true\"", content);
+        Assert.Contains("AnalyzeButtonBelowPrimaryFile=\"true\"", content);
+    }
+
+    [Fact]
     public void Library_item_detail_route_backfills_blank_movie_primary_file_path_from_source()
     {
         var repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../../"));

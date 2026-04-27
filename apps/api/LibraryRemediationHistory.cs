@@ -16,6 +16,18 @@ public static class LibraryRemediationJobFactory
         string requestedBy,
         DateTimeOffset requestedAtUtc,
         bool? blacklistSucceeded)
+        => Create(libraryItemId, libraryIssueId, null, intent, result, releaseContext, requestedBy, requestedAtUtc, blacklistSucceeded);
+
+    public static LibraryRemediationJob Create(
+        long libraryItemId,
+        long? libraryIssueId,
+        long? integrationId,
+        LibraryRemediationIntent intent,
+        LibraryItemRemediationResponse result,
+        LibraryRemediationReleaseContext? releaseContext,
+        string requestedBy,
+        DateTimeOffset requestedAtUtc,
+        bool? blacklistSucceeded)
     {
         var now = requestedAtUtc;
         var initialStatus = LibraryRemediationLifecycleTracker.DetermineInitialStatus(intent, result, blacklistSucceeded);
@@ -25,6 +37,7 @@ public static class LibraryRemediationJobFactory
             LibraryIssueId = libraryIssueId,
             ServiceKey = result.ServiceKey,
             ServiceDisplayName = result.ServiceDisplayName,
+            IntegrationId = integrationId,
             RequestedAction = intent.RequestedAction,
             CommandName = result.CommandName,
             ExternalItemId = result.ExternalItemId,
@@ -47,6 +60,10 @@ public static class LibraryRemediationJobFactory
             BlacklistStatus = LibraryRemediationLifecycleTracker.DetermineInitialBlacklistStatus(intent, blacklistSucceeded),
             OutcomeSummary = LibraryRemediationLifecycleTracker.DetermineInitialOutcomeSummary(intent, result, blacklistSucceeded),
             ResultMessage = result.Message,
+            ProviderCommandId = result.ProviderCommandId,
+            ProviderCommandStatus = result.ProviderCommandStatus,
+            ProviderCommandSummary = result.ProviderCommandSummary,
+            ProviderCommandCheckedAtUtc = result.ProviderCommandId.HasValue ? requestedAtUtc : null,
             VerificationStatus = LibraryRemediationLifecycleTracker.DetermineInitialVerificationStatus(intent, result),
             VerificationSummary = LibraryRemediationLifecycleTracker.DetermineInitialVerificationSummary(intent, result),
             VerificationDetailsJson = LibraryRemediationLifecycleTracker.BuildInitialVerificationDetailsJson(intent, result),

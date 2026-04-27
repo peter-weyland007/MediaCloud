@@ -9,74 +9,312 @@
 <h1>Integrations</h1>
 <p class="subtitle">Integration control plane. Open a service panel to manage operational status, health, and deeper service views.</p>
 
-<div class="card" style="margin-bottom:1rem; display:flex; justify-content:space-between; align-items:center; gap:1rem; flex-wrap:wrap;">
-    <div>
-        <p class="card-label">CONTROL PLANE</p>
-        <p class="card-note" style="margin-top:0.35rem;">Use Settings when you need to change how MediaCloud connects to a service.</p>
+<div class="card" style="margin-bottom:1rem; display:grid; gap:0.85rem;">
+    <p class="card-label">CONTROL PLANE SUMMARY</p>
+    <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:0.85rem;">
+        <div>
+            <p class="card-label">Configured</p>
+            <p style="margin:0.35rem 0 0;">@_instances.Count</p>
+        </div>
+        <div>
+            <p class="card-label">Enabled</p>
+            <p style="margin:0.35rem 0 0;">@EnabledInstanceCount()</p>
+        </div>
+        <div>
+            <p class="card-label">Attention needed</p>
+            <p style="margin:0.35rem 0 0;">@AttentionNeededCount()</p>
+        </div>
+        <div>
+            <p class="card-label">Services</p>
+            <p style="margin:0.35rem 0 0;">@_groups.Count</p>
+        </div>
     </div>
-    <a class="button-primary" href="/settings/integrations" style="display:inline-block; text-decoration:none;">Open connection settings</a>
 </div>
 
-@if (_loading)
-{
-    <div class="card">
-        <p class="card-note">Loading integrations…</p>
+<div class="card" style="margin-bottom:1rem; display:grid; gap:0.85rem;">
+    <div style="display:flex; justify-content:space-between; align-items:center; gap:1rem; flex-wrap:wrap;">
+        <div>
+            <p class="card-label">SET UP INTEGRATIONS</p>
+            <p class="card-note" style="margin-top:0.35rem;">Add or edit instances directly from the integrations control plane.</p>
+        </div>
+        <button class="button-primary" type="button" @onclick="OpenCreateIntegrationDialog">Add integration</button>
     </div>
-}
-else if (_groups.Count == 0)
-{
-    <div class="card">
-        <p class="card-note">No integrations configured yet.</p>
-    </div>
-}
-else
-{
-    <div class="cards-grid" style="grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); align-items:stretch;">
-        @foreach (var group in GroupInstancesByService())
-        {
-            <a href="@($"/integrations/{group.ServiceKey}")" class="card" style="text-decoration:none; color:inherit; display:grid; gap:0.85rem; min-height:220px;">
-                <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:0.75rem;">
-                    <div style="display:flex; gap:0.85rem; min-width:0;">
-                        <span class="integration-service-monogram">@GetServiceMonogram(group.DisplayName)</span>
-                        <div style="display:grid; gap:0.3rem; min-width:0;">
-                            <p class="card-label">SERVICE PANEL</p>
-                            <strong style="font-size:1.05rem; color:#f8fafc;">@group.DisplayName</strong>
-                            <span class="card-note">@DisplayRoleSummary(group.RoleSummary)</span>
-                        </div>
-                    </div>
-                    <span style="@BuildGroupHealthPillStyle(group)">@GetGroupHealthLabel(group)</span>
+
+    @if (!_loading && _instances.Count > 0)
+    {
+        <div style="display:flex; justify-content:space-between; align-items:end; gap:0.85rem; flex-wrap:wrap;">
+            <div style="display:grid; gap:0.35rem; min-width:min(420px, 100%); flex:1 1 420px;">
+                <label for="integration-quick-filter" class="card-label">QUICK FILTER</label>
+                <InputText id="integration-quick-filter" class="input" @bind-Value="_tableFilter" placeholder="Search service, instance, URL, auth, role, status, or error" />
+                <span class="card-note">Showing @FilteredInstanceCount() of @_instances.Count integration instance(s).</span>
+            </div>
+            @if (!string.IsNullOrWhiteSpace(_tableFilter))
+            {
+                <button class="button-primary" type="button" style="background:#334155; border-color:#334155;" @onclick="ClearTableFilter">Clear filter</button>
+            }
+        </div>
+    }
+
+    @if (_loading)
+    {
+        <p class="card-note">Loading integration instances…</p>
+    }
+    else if (_instances.Count == 0)
+    {
+        <div style="display:grid; gap:0.75rem;">
+            <p class="card-note">No integration instances configured yet.</p>
+            <div>
+                <button class="button-primary" type="button" @onclick="OpenCreateIntegrationDialog">Add first integration</button>
+            </div>
+        </div>
+    }
+    else if (FilteredInstanceCount() == 0)
+    {
+        <p class="card-note">No integration instances match the current filter.</p>
+    }
+    else
+    {
+        <div style="border:1px solid rgba(51,65,85,0.7); border-radius:16px; overflow:hidden; background:rgba(2,6,23,0.38);">
+            <table style="width:100%; border-collapse:separate; border-spacing:0; table-layout:fixed; background:transparent;">
+                <colgroup>
+                    <col style="width:34%;" />
+                    <col style="width:23%;" />
+                    <col style="width:17%;" />
+                    <col style="width:26%;" />
+                </colgroup>
+                <thead>
+                    <tr style="background:rgba(15,23,42,0.96);">
+                        <th style="text-align:left; padding:0.85rem 0.75rem; border-bottom:1px solid rgba(51,65,85,0.85); font-size:0.78rem; letter-spacing:0.04em; text-transform:uppercase; color:#94a3b8;">Integration</th>
+                        <th style="text-align:left; padding:0.85rem 0.75rem; border-bottom:1px solid rgba(51,65,85,0.85); font-size:0.78rem; letter-spacing:0.04em; text-transform:uppercase; color:#94a3b8;">Connectivity</th>
+                        <th style="text-align:left; padding:0.85rem 0.75rem; border-bottom:1px solid rgba(51,65,85,0.85); font-size:0.78rem; letter-spacing:0.04em; text-transform:uppercase; color:#94a3b8;">Health</th>
+                        <th style="text-align:left; padding:0.85rem 0.75rem; border-bottom:1px solid rgba(51,65,85,0.85); font-size:0.78rem; letter-spacing:0.04em; text-transform:uppercase; color:#94a3b8;">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var item in FilteredInstances())
+                    {
+                        <tr style="border-bottom:1px solid rgba(30,41,59,0.85); vertical-align:top;">
+                            <td style="padding:0.75rem; border-bottom:1px solid rgba(30,41,59,0.85); max-width:0;">
+                                <div style="display:grid; gap:0.45rem; min-width:0;">
+                                    <div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap; min-width:0;">
+                                        <strong style="font-size:0.95rem; color:#f8fafc;">@($"{item.DisplayName} ({item.InstanceName})")</strong>
+                                        <span style="@BuildEnabledPillStyle(item.Enabled)">@(item.Enabled ? "Enabled" : "Disabled")</span>
+                                        <span style="@BuildModePillStyle(item.SupportsSync)">@(item.SupportsSync ? "Sync-backed" : "Ops-only")</span>
+                                        <span style="@BuildHealthPillStyle(item)">@GetHealthLabel(item)</span>
+                                    </div>
+                                    <a href="@item.BaseUrl" target="_blank" rel="noopener noreferrer" class="integration-instance-link" style="display:block; word-break:break-word; line-height:1.3;">@item.BaseUrl</a>
+                                </div>
+                            </td>
+                            <td style="padding:0.75rem; border-bottom:1px solid rgba(30,41,59,0.85); max-width:0;">
+                                <div style="display:grid; gap:0.45rem; min-width:0;">
+                                    <div>
+                                        <p class="card-label">AUTH</p>
+                                        <p style="margin:0.25rem 0 0; color:#e2e8f0; font-weight:700;">@GetAuthLabel(item.AuthType)</p>
+                                    </div>
+                                </div>
+                            </td>
+                            <td style="padding:0.75rem; border-bottom:1px solid rgba(30,41,59,0.85); max-width:0;">
+                                <div style="display:grid; gap:0.45rem; justify-items:start; min-width:0;">
+                                    <div>
+                                        <p class="card-label">LAST TEST/SYNC</p>
+                                        <p style="margin:0.25rem 0 0;">@FormatTimestamp(item.LastSuccessfulAtUtc)</p>
+                                    </div>
+                                    @if (!string.IsNullOrWhiteSpace(item.LastError))
+                                    {
+                                        <div>
+                                            <p class="card-label">LAST ERROR</p>
+                                            <p class="card-note" style="margin-top:0.25rem; display:block; white-space:normal; line-height:1.25;">@item.LastError</p>
+                                        </div>
+                                    }
+                                </div>
+                            </td>
+                            <td style="padding:0.75rem; border-bottom:1px solid rgba(30,41,59,0.85);">
+                                <MudButtonGroup Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small">
+                                    <MudButton Class="integration-action-button" ButtonType="ButtonType.Button" OnClick="@(() => OpenEditIntegrationDialog(item))">Edit</MudButton>
+                                    <MudButton Class="integration-action-button integration-action-button-sync" ButtonType="ButtonType.Button" Disabled="@(!item.SupportsSync || _syncingId == item.Id)" OnClick="@(() => SyncIntegrationAsync(item))">
+                                        @(_syncingId == item.Id ? "Syncing..." : "Sync")
+                                    </MudButton>
+                                    <MudButton Class="integration-action-button integration-action-button-secondary" ButtonType="ButtonType.Button" Disabled="@(_testingId == item.Id)" OnClick="@(() => TestIntegrationAsync(item))">
+                                        @(_testingId == item.Id ? "Testing..." : "Test")
+                                    </MudButton>
+                                    <MudButton Class="integration-action-button" Href="@($"/integrations/{item.ServiceKey}")">Panel</MudButton>
+                                    <MudButton Class="integration-action-button" Color="Color.Error" ButtonType="ButtonType.Button" Disabled="@(_deletingId == item.Id)" OnClick="@(() => OpenDeleteIntegrationDialog(item))">
+                                        @(_deletingId == item.Id ? "Deleting..." : "Delete")
+                                    </MudButton>
+                                </MudButtonGroup>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+</div>
+
+<MudDialog Class="integration-dialog" @bind-Visible="_integrationDialogVisible" Options="_integrationDialogOptions">
+    <TitleContent>
+        @(_editingId is null ? "Add integration instance" : $"Edit integration: {_form.InstanceName}")
+    </TitleContent>
+    <DialogContent>
+        <div style="display:grid; gap:0.85rem; max-height:min(70vh, 760px); overflow-y:auto; padding-right:0.25rem;">
+            <p class="card-note">Provide connection details for the selected integration instance.</p>
+
+            <EditForm Model="_form" FormName="integration-dialog-form" OnValidSubmit="SaveIntegrationAsync">
+                <DataAnnotationsValidator />
+
+                <div class="form-group">
+                    <label for="integration-service">Service</label>
+                    <InputSelect id="integration-service" class="input" @bind-Value="_form.ServiceKey" @bind-Value:after="EnsureSelectedServiceAuthType">
+                        @foreach (var service in _services)
+                        {
+                            <option value="@service.ServiceKey" disabled="@(_editingId is not null && !string.Equals(service.ServiceKey, _form.ServiceKey, StringComparison.OrdinalIgnoreCase))">@service.DisplayName</option>
+                        }
+                    </InputSelect>
                 </div>
 
-                <div style="display:flex; gap:0.45rem; flex-wrap:wrap;">
-                    <span class="integration-service-metric-chip">@group.Items.Count instance(s)</span>
-                    <span class="integration-service-metric-chip">Healthy: @group.HealthyCount</span>
-                    <span class="integration-service-metric-chip">Operational: @group.OperationalCount</span>
-                    <span class="integration-service-metric-chip">Attention needed: @group.AttentionNeededCount</span>
+                <div class="form-group">
+                    <label for="integration-instance-name">Instance Name</label>
+                    <InputText id="integration-instance-name" class="input" @bind-Value="_form.InstanceName" />
+                    @if (ShowDuplicateInstanceValidationError())
+                    {
+                        <p class="error-text" style="margin-top:0.35rem;">An instance with this service + name already exists.</p>
+                    }
+                    else if (ShouldShowInstanceAvailabilityHint())
+                    {
+                        <p class="success-text" style="margin-top:0.35rem;">Instance name is available for this service.</p>
+                    }
                 </div>
 
-                <div style="display:grid; gap:0.55rem; margin-top:auto;">
-                    <div>
-                        <p class="card-label">LAST SUCCESS</p>
-                        <p class="card-note" style="margin-top:0.35rem;">@FormatTimestamp(group.LastSuccessfulAtUtc)</p>
-                    </div>
-                    <div>
-                        <p class="card-label">INSTANCES</p>
-                        <p class="card-note" style="margin-top:0.35rem;">@string.Join(", ", group.Items.Select(x => x.InstanceName))</p>
-                    </div>
+                <div class="form-group">
+                    <label for="integration-base-url">Base URL</label>
+                    <InputText id="integration-base-url" class="input" @bind-Value="_form.BaseUrl" />
+                    @if (ShowBaseUrlValidationError())
+                    {
+                        <p class="error-text" style="margin-top:0.35rem;">Base URL must be a valid absolute URL (e.g. http://localhost:7878).</p>
+                    }
                 </div>
-            </a>
-        }
-    </div>
-}
+
+                <div class="form-group">
+                    <label for="integration-auth-type">Authentication</label>
+                    <InputSelect id="integration-auth-type" class="input" @bind-Value="_form.AuthType">
+                        @foreach (var auth in GetAuthOptions())
+                        {
+                            <option value="@auth">@GetAuthLabel(auth)</option>
+                        }
+                    </InputSelect>
+                </div>
+
+                @if (IsAuthSelectionInvalid())
+                {
+                    <p class="error-text" style="margin-top:-0.35rem; margin-bottom:0.6rem;">This service requires credentials. Select API Key/Token or Username + Password.</p>
+                }
+
+                @if (_form.AuthType == "ApiKey")
+                {
+                    <div class="form-group">
+                        <label for="integration-api-key">API Key / Token</label>
+                        <InputText id="integration-api-key" class="input" @bind-Value="_form.ApiKey" />
+                        @if (ShowApiKeyValidationError())
+                        {
+                            <p class="error-text" style="margin-top:0.35rem;">API key/token is required for API key authentication.</p>
+                        }
+                    </div>
+                }
+                else if (_form.AuthType == "Basic")
+                {
+                    <div class="form-group">
+                        <label for="integration-username">Username</label>
+                        <InputText id="integration-username" class="input" @bind-Value="_form.Username" />
+                        @if (ShowBasicUsernameValidationError())
+                        {
+                            <p class="error-text" style="margin-top:0.35rem;">Username is required for basic authentication.</p>
+                        }
+                    </div>
+                    <div class="form-group">
+                        <label for="integration-password">Password</label>
+                        <InputText id="integration-password" type="password" class="input" @bind-Value="_form.Password" />
+                        @if (ShowBasicPasswordValidationError())
+                        {
+                            <p class="error-text" style="margin-top:0.35rem;">Password is required for basic authentication.</p>
+                        }
+                    </div>
+                }
+
+                <div style="display:flex; align-items:center; gap:0.55rem; margin-bottom:0.75rem;">
+                    <InputCheckbox id="integration-enabled" @bind-Value="_form.Enabled" />
+                    <label for="integration-enabled" style="margin:0;">Enabled</label>
+                </div>
+
+                <MudButtonGroup Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small">
+                    <MudButton ButtonType="ButtonType.Submit" Disabled="@_saving">@(_saving ? "Saving..." : (_editingId is null ? "Add instance" : "Save changes"))</MudButton>
+                    <MudButton ButtonType="ButtonType.Button" Color="Color.Secondary" OnClick="CloseIntegrationDialog">Cancel</MudButton>
+                </MudButtonGroup>
+            </EditForm>
+        </div>
+    </DialogContent>
+</MudDialog>
+
+<MudDialog Class="integration-dialog integration-delete-dialog" @bind-Visible="_deleteIntegrationDialogVisible" Options="_integrationDialogOptions">
+    <TitleContent>
+        Delete integration instance?
+    </TitleContent>
+    <DialogContent>
+        <div style="display:grid; gap:0.85rem;">
+            <p class="card-note">@DeleteIntegrationPrompt()</p>
+            <MudButtonGroup Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small">
+                <MudButton ButtonType="ButtonType.Button" Color="Color.Error" Disabled="@(_deletingId == _integrationPendingDelete?.Id)" OnClick="ConfirmDeleteIntegrationAsync">@(_deletingId == _integrationPendingDelete?.Id ? "Deleting..." : "Delete integration")</MudButton>
+                <MudButton ButtonType="ButtonType.Button" Color="Color.Secondary" Disabled="@(_deletingId == _integrationPendingDelete?.Id)" OnClick="CloseDeleteIntegrationDialog">Cancel</MudButton>
+            </MudButtonGroup>
+        </div>
+    </DialogContent>
+</MudDialog>
 
 @code {
+    private readonly List<IntegrationServiceResponse> _services = [];
     private readonly List<IntegrationInstanceResponse> _instances = [];
     private readonly List<ServiceIntegrationGroup> _groups = [];
+    private readonly IntegrationFormModel _form = new();
+    private readonly DialogOptions _integrationDialogOptions = new() { CloseOnEscapeKey = true, MaxWidth = MaxWidth.Medium, FullWidth = true };
     private bool _loading = true;
+    private bool _saving;
+    private bool _integrationDialogVisible;
+    private bool _deleteIntegrationDialogVisible;
+    private bool _attemptedSave;
+    private string _tableFilter = string.Empty;
+    private long? _editingId;
+    private long? _deletingId;
+    private long? _testingId;
+    private IntegrationInstanceResponse? _integrationPendingDelete;
+    private long? _syncingId;
 
     protected override async Task OnInitializedAsync()
     {
+        await LoadServicesAsync();
         await LoadInstancesAsync();
+    }
+
+    private async Task LoadServicesAsync()
+    {
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, "/api/integration-services");
+            await AttachBearerAsync(request);
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add($"Failed to load integration services ({(int)response.StatusCode}).", Severity.Error);
+                return;
+            }
+
+            var services = await response.Content.ReadFromJsonAsync<List<IntegrationServiceResponse>>() ?? [];
+            _services.Clear();
+            _services.AddRange(services);
+            EnsureSelectedServiceAuthType();
+        }
+        catch
+        {
+            Snackbar.Add("Failed to load integration services.", Severity.Error);
+        }
     }
 
     private async Task LoadInstancesAsync()
@@ -96,8 +334,7 @@ else
             var items = await response.Content.ReadFromJsonAsync<List<IntegrationInstanceResponse>>() ?? [];
             _instances.Clear();
             _instances.AddRange(items);
-            _groups.Clear();
-            _groups.AddRange(GroupInstancesByService());
+            RebuildGroups();
         }
         catch
         {
@@ -109,6 +346,319 @@ else
         }
     }
 
+    private void RebuildGroups()
+    {
+        _groups.Clear();
+        _groups.AddRange(GroupInstancesByService());
+    }
+
+    private IEnumerable<IntegrationInstanceResponse> OrderedInstances()
+        => _instances
+            .OrderBy(x => x.DisplayName, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(x => x.InstanceName, StringComparer.OrdinalIgnoreCase);
+
+    private IEnumerable<IntegrationInstanceResponse> FilteredInstances()
+        => OrderedInstances().Where(MatchesTableFilter);
+
+    private int FilteredInstanceCount()
+        => FilteredInstances().Count();
+
+    private bool MatchesTableFilter(IntegrationInstanceResponse item)
+    {
+        var filter = (_tableFilter ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(filter))
+        {
+            return true;
+        }
+
+        return ContainsFilter(item.DisplayName, filter)
+            || ContainsFilter(item.InstanceName, filter)
+            || ContainsFilter(item.BaseUrl, filter)
+            || ContainsFilter(item.AuthType, filter)
+            || ContainsFilter(GetAuthLabel(item.AuthType), filter)
+            || ContainsFilter(item.RoleSummary, filter)
+            || ContainsFilter(GetHealthLabel(item), filter)
+            || ContainsFilter(item.LastError, filter)
+            || ContainsFilter(item.SupportsSync ? "Sync-backed" : "Ops-only", filter)
+            || ContainsFilter(item.Enabled ? "Enabled" : "Disabled", filter);
+    }
+
+    private static bool ContainsFilter(string? value, string filter)
+        => !string.IsNullOrWhiteSpace(value)
+           && value.Contains(filter, StringComparison.OrdinalIgnoreCase);
+
+    private void ClearTableFilter()
+        => _tableFilter = string.Empty;
+
+    private void OpenCreateIntegrationDialog()
+    {
+        ResetForm();
+        _integrationDialogVisible = true;
+    }
+
+    private void OpenEditIntegrationDialog(IntegrationInstanceResponse item)
+    {
+        _attemptedSave = false;
+        _editingId = item.Id;
+        _form.ServiceKey = item.ServiceKey;
+        _form.InstanceName = item.InstanceName;
+        _form.BaseUrl = item.BaseUrl;
+        _form.AuthType = item.AuthType;
+        _form.ApiKey = item.ApiKey;
+        _form.Username = item.Username;
+        _form.Password = item.Password;
+        _form.Enabled = item.Enabled;
+        EnsureSelectedServiceAuthType();
+        _integrationDialogVisible = true;
+    }
+
+    private void CloseIntegrationDialog()
+    {
+        _integrationDialogVisible = false;
+        ResetForm();
+    }
+
+    private void OpenDeleteIntegrationDialog(IntegrationInstanceResponse item)
+    {
+        _integrationPendingDelete = item;
+        _deleteIntegrationDialogVisible = true;
+    }
+
+    private void CloseDeleteIntegrationDialog()
+    {
+        _deleteIntegrationDialogVisible = false;
+        _integrationPendingDelete = null;
+    }
+
+    private string DeleteIntegrationPrompt()
+        => _integrationPendingDelete is null
+            ? "Delete this integration instance?"
+            : $"Delete {_integrationPendingDelete.DisplayName} ({_integrationPendingDelete.InstanceName})? This cannot be undone.";
+
+    private void ResetForm()
+    {
+        _attemptedSave = false;
+        _editingId = null;
+        _form.ServiceKey = _services.FirstOrDefault()?.ServiceKey ?? string.Empty;
+        _form.InstanceName = string.Empty;
+        _form.BaseUrl = string.Empty;
+        _form.AuthType = "ApiKey";
+        _form.ApiKey = string.Empty;
+        _form.Username = string.Empty;
+        _form.Password = string.Empty;
+        _form.Enabled = false;
+        EnsureSelectedServiceAuthType();
+    }
+
+    private void EnsureSelectedServiceAuthType()
+    {
+        var selected = SelectedService();
+        if (selected is null)
+        {
+            return;
+        }
+
+        if (selected.AllowedAuthTypes is null || selected.AllowedAuthTypes.Count == 0)
+        {
+            if (string.IsNullOrWhiteSpace(_form.AuthType))
+            {
+                _form.AuthType = "ApiKey";
+            }
+
+            return;
+        }
+
+        if (!selected.AllowedAuthTypes.Contains(_form.AuthType, StringComparer.OrdinalIgnoreCase))
+        {
+            _form.AuthType = selected.AllowedAuthTypes.FirstOrDefault() ?? "ApiKey";
+        }
+    }
+
+    private async Task SaveIntegrationAsync()
+    {
+        _attemptedSave = true;
+
+        if (!CanSubmitForm())
+        {
+            Snackbar.Add(GetFormValidationMessage(), Severity.Warning);
+            return;
+        }
+
+        _saving = true;
+        try
+        {
+            if (_editingId is null)
+            {
+                var createRequest = new CreateIntegrationInstanceRequest(
+                    _form.ServiceKey,
+                    _form.InstanceName,
+                    _form.BaseUrl,
+                    _form.AuthType,
+                    _form.ApiKey,
+                    _form.Username,
+                    _form.Password,
+                    _form.Enabled);
+
+                using var request = new HttpRequestMessage(HttpMethod.Post, "/api/integrations")
+                {
+                    Content = JsonContent.Create(createRequest)
+                };
+                await AttachBearerAsync(request);
+                using var response = await Http.SendAsync(request);
+                if (!response.IsSuccessStatusCode)
+                {
+                    Snackbar.Add($"Failed to create integration ({(int)response.StatusCode}).", Severity.Error);
+                    return;
+                }
+
+                Snackbar.Add("Integration instance created.", Severity.Success);
+            }
+            else
+            {
+                var updateRequest = new UpdateIntegrationInstanceRequest(
+                    _form.InstanceName,
+                    _form.BaseUrl,
+                    _form.AuthType,
+                    _form.ApiKey,
+                    _form.Username,
+                    _form.Password,
+                    _form.Enabled);
+
+                using var request = new HttpRequestMessage(HttpMethod.Put, $"/api/integrations/{_editingId.Value}")
+                {
+                    Content = JsonContent.Create(updateRequest)
+                };
+                await AttachBearerAsync(request);
+                using var response = await Http.SendAsync(request);
+                if (!response.IsSuccessStatusCode)
+                {
+                    Snackbar.Add($"Failed to update integration ({(int)response.StatusCode}).", Severity.Error);
+                    return;
+                }
+
+                Snackbar.Add("Integration instance updated.", Severity.Success);
+            }
+
+            _integrationDialogVisible = false;
+            ResetForm();
+            await LoadInstancesAsync();
+        }
+        catch
+        {
+            Snackbar.Add("Failed to save integration instance.", Severity.Error);
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private async Task TestIntegrationAsync(IntegrationInstanceResponse item)
+    {
+        _testingId = item.Id;
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, $"/api/integrations/{item.Id}/test");
+            await AttachBearerAsync(request);
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add($"Connection test failed ({(int)response.StatusCode}).", Severity.Error);
+                return;
+            }
+
+            var result = await response.Content.ReadFromJsonAsync<IntegrationTestResponse>();
+            if (result is null)
+            {
+                Snackbar.Add("Connection test returned no data.", Severity.Error);
+                return;
+            }
+
+            var message = result.Success
+                ? $"{item.DisplayName} / {item.InstanceName}: connection successful ({result.StatusCode}){(string.IsNullOrWhiteSpace(result.Version) ? string.Empty : $" · version {result.Version}")}."
+                : $"{item.DisplayName} / {item.InstanceName}: connection failed ({result.StatusCode}) — {result.Message}";
+            Snackbar.Add(message, result.Success ? Severity.Success : Severity.Error);
+            await LoadInstancesAsync();
+        }
+        catch
+        {
+            Snackbar.Add("Connection test failed.", Severity.Error);
+        }
+        finally
+        {
+            _testingId = null;
+        }
+    }
+
+    private async Task SyncIntegrationAsync(IntegrationInstanceResponse item)
+    {
+        _syncingId = item.Id;
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, $"/api/integrations/{item.Id}/sync")
+            {
+                Content = JsonContent.Create(new { ForceFullResync = false, MediaScope = (string?)null })
+            };
+            await AttachBearerAsync(request);
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add($"Failed to sync integration ({(int)response.StatusCode}).", Severity.Error);
+                return;
+            }
+
+            var result = await response.Content.ReadFromJsonAsync<TriggerIntegrationSyncResponse>();
+            Snackbar.Add(result?.Message ?? $"{item.DisplayName} sync completed.", result?.Accepted == true ? Severity.Success : Severity.Warning);
+            await LoadInstancesAsync();
+        }
+        catch
+        {
+            Snackbar.Add("Failed to sync integration.", Severity.Error);
+        }
+        finally
+        {
+            _syncingId = null;
+        }
+    }
+
+    private async Task ConfirmDeleteIntegrationAsync()
+    {
+        if (_integrationPendingDelete is null)
+        {
+            return;
+        }
+
+        var item = _integrationPendingDelete;
+        _deletingId = item.Id;
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Delete, $"/api/integrations/{item.Id}");
+            await AttachBearerAsync(request);
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add($"Failed to delete integration ({(int)response.StatusCode}).", Severity.Error);
+                return;
+            }
+
+            Snackbar.Add("Integration instance deleted.", Severity.Success);
+            CloseDeleteIntegrationDialog();
+            await LoadInstancesAsync();
+            if (_editingId == item.Id)
+            {
+                CloseIntegrationDialog();
+            }
+        }
+        catch
+        {
+            Snackbar.Add("Failed to delete integration instance.", Severity.Error);
+        }
+        finally
+        {
+            _deletingId = null;
+        }
+    }
+
     private async Task AttachBearerAsync(HttpRequestMessage request)
     {
         var token = await TokenStore.GetTokenAsync();
@@ -117,6 +667,120 @@ else
             request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
         }
     }
+
+    private IntegrationServiceResponse? SelectedService()
+        => _services.FirstOrDefault(x => string.Equals(x.ServiceKey, _form.ServiceKey, StringComparison.OrdinalIgnoreCase));
+
+    private bool IsAuthSelectionInvalid()
+    {
+        var service = SelectedService();
+        if (service is null) return false;
+        if (!service.RequiresAuth) return false;
+        return string.Equals(_form.AuthType, "None", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private bool ShowApiKeyValidationError()
+        => _attemptedSave
+           && string.Equals(_form.AuthType, "ApiKey", StringComparison.OrdinalIgnoreCase)
+           && string.IsNullOrWhiteSpace(_form.ApiKey);
+
+    private bool ShowBasicUsernameValidationError()
+        => _attemptedSave
+           && string.Equals(_form.AuthType, "Basic", StringComparison.OrdinalIgnoreCase)
+           && string.IsNullOrWhiteSpace(_form.Username);
+
+    private bool ShowBasicPasswordValidationError()
+        => _attemptedSave
+           && string.Equals(_form.AuthType, "Basic", StringComparison.OrdinalIgnoreCase)
+           && string.IsNullOrWhiteSpace(_form.Password);
+
+    private bool ShowBaseUrlValidationError()
+        => _attemptedSave && !IsBaseUrlValid();
+
+    private bool ShowDuplicateInstanceValidationError()
+        => _attemptedSave && IsDuplicateInstanceName();
+
+    private bool ShouldShowInstanceAvailabilityHint()
+    {
+        var service = (_form.ServiceKey ?? string.Empty).Trim();
+        var name = (_form.InstanceName ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(service) || string.IsNullOrWhiteSpace(name))
+        {
+            return false;
+        }
+
+        return !IsDuplicateInstanceName();
+    }
+
+    private bool IsBaseUrlValid()
+        => Uri.TryCreate((_form.BaseUrl ?? string.Empty).Trim(), UriKind.Absolute, out _);
+
+    private bool IsDuplicateInstanceName()
+    {
+        var service = (_form.ServiceKey ?? string.Empty).Trim();
+        var name = (_form.InstanceName ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(service) || string.IsNullOrWhiteSpace(name))
+        {
+            return false;
+        }
+
+        return _instances.Any(x =>
+            x.Id != (_editingId ?? 0) &&
+            string.Equals(x.ServiceKey, service, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(x.InstanceName, name, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private bool CanSubmitForm()
+    {
+        if (string.IsNullOrWhiteSpace(_form.ServiceKey)) return false;
+        if (string.IsNullOrWhiteSpace(_form.InstanceName)) return false;
+        if (string.IsNullOrWhiteSpace(_form.BaseUrl)) return false;
+        if (!IsBaseUrlValid()) return false;
+        if (IsDuplicateInstanceName()) return false;
+        if (IsAuthSelectionInvalid()) return false;
+        if (ShowApiKeyValidationError()) return false;
+        if (ShowBasicUsernameValidationError()) return false;
+        if (ShowBasicPasswordValidationError()) return false;
+        return true;
+    }
+
+    private string GetFormValidationMessage()
+    {
+        if (string.IsNullOrWhiteSpace(_form.ServiceKey)) return "Service is required.";
+        if (string.IsNullOrWhiteSpace(_form.InstanceName)) return "Instance name is required.";
+        if (string.IsNullOrWhiteSpace(_form.BaseUrl)) return "Base URL is required.";
+        if (!IsBaseUrlValid()) return "Base URL must be a valid absolute URL.";
+        if (IsDuplicateInstanceName()) return "An instance with this service + name already exists.";
+        if (IsAuthSelectionInvalid()) return "This service requires credentials. Select API key or basic auth.";
+        if (ShowApiKeyValidationError()) return "API key/token is required for API key authentication.";
+        if (ShowBasicUsernameValidationError()) return "Username is required for basic authentication.";
+        if (ShowBasicPasswordValidationError()) return "Password is required for basic authentication.";
+        return "Please correct the form and try again.";
+    }
+
+    private IEnumerable<string> GetAuthOptions()
+    {
+        var service = SelectedService();
+        if (service is null || service.AllowedAuthTypes is null || service.AllowedAuthTypes.Count == 0)
+        {
+            return new[] { "None", "ApiKey", "Basic" };
+        }
+
+        return service.AllowedAuthTypes;
+    }
+
+    private static string GetAuthLabel(string authType) => authType switch
+    {
+        "ApiKey" => "API Key / Token",
+        "Basic" => "Username + Password",
+        _ => "None"
+    };
+
+    private int EnabledInstanceCount()
+        => _instances.Count(x => x.Enabled);
+
+    private int AttentionNeededCount()
+        => _instances.Count(x => x.Enabled && string.Equals(GetHealthLabel(x), "Attention needed", StringComparison.OrdinalIgnoreCase));
 
     private IReadOnlyList<ServiceIntegrationGroup> GroupInstancesByService()
         => _instances
@@ -176,6 +840,27 @@ else
             _ => "display:inline-flex; align-items:center; gap:0.35rem; width:max-content; padding:0.22rem 0.62rem; border-radius:999px; background:rgba(30,41,59,0.6); color:#cbd5e1; border:1px solid rgba(71,85,105,0.75); font-size:0.78rem; font-weight:800;"
         };
 
+    private static string BuildEnabledPillStyle(bool enabled)
+        => enabled
+            ? "display:inline-flex; align-items:center; gap:0.35rem; width:max-content; padding:0.18rem 0.58rem; border-radius:999px; background:rgba(21,128,61,0.24); color:#dcfce7; border:1px solid rgba(74,222,128,0.45); font-size:0.74rem; font-weight:800;"
+            : "display:inline-flex; align-items:center; gap:0.35rem; width:max-content; padding:0.18rem 0.58rem; border-radius:999px; background:rgba(71,85,105,0.3); color:#e2e8f0; border:1px solid rgba(148,163,184,0.4); font-size:0.74rem; font-weight:800;";
+
+    private static string BuildModePillStyle(bool supportsSync)
+        => supportsSync
+            ? "display:inline-flex; align-items:center; gap:0.35rem; width:max-content; padding:0.18rem 0.58rem; border-radius:999px; background:rgba(14,116,144,0.24); color:#cffafe; border:1px solid rgba(34,211,238,0.42); font-size:0.74rem; font-weight:800;"
+            : "display:inline-flex; align-items:center; gap:0.35rem; width:max-content; padding:0.18rem 0.58rem; border-radius:999px; background:rgba(88,28,135,0.24); color:#f5d0fe; border:1px solid rgba(217,70,239,0.36); font-size:0.74rem; font-weight:800;";
+
+    private static string BuildHealthPillStyle(IntegrationInstanceResponse item)
+        => GetHealthLabel(item) switch
+        {
+            "Healthy" => "display:inline-flex; align-items:center; gap:0.35rem; width:max-content; padding:0.22rem 0.62rem; border-radius:999px; background:rgba(21,128,61,0.3); color:#dcfce7; border:1px solid rgba(74,222,128,0.55); font-size:0.78rem; font-weight:800;",
+            "Operational" => "display:inline-flex; align-items:center; gap:0.35rem; width:max-content; padding:0.22rem 0.62rem; border-radius:999px; background:rgba(14,116,144,0.3); color:#cffafe; border:1px solid rgba(34,211,238,0.55); font-size:0.78rem; font-weight:800;",
+            "Attention needed" => "display:inline-flex; align-items:center; gap:0.35rem; width:max-content; padding:0.22rem 0.62rem; border-radius:999px; background:rgba(185,28,28,0.28); color:#fecaca; border:1px solid rgba(248,113,113,0.55); font-size:0.78rem; font-weight:800;",
+            "Awaiting success" => "display:inline-flex; align-items:center; gap:0.35rem; width:max-content; padding:0.22rem 0.62rem; border-radius:999px; background:rgba(180,83,9,0.34); color:#fef3c7; border:1px solid rgba(251,191,36,0.58); font-size:0.78rem; font-weight:800;",
+            "Disabled" => "display:inline-flex; align-items:center; gap:0.35rem; width:max-content; padding:0.22rem 0.62rem; border-radius:999px; background:rgba(71,85,105,0.34); color:#e2e8f0; border:1px solid rgba(148,163,184,0.45); font-size:0.78rem; font-weight:800;",
+            _ => "display:inline-flex; align-items:center; gap:0.35rem; width:max-content; padding:0.22rem 0.62rem; border-radius:999px; background:rgba(30,41,59,0.6); color:#cbd5e1; border:1px solid rgba(71,85,105,0.75); font-size:0.78rem; font-weight:800;"
+        };
+
     private sealed record ServiceIntegrationGroup(
         string ServiceKey,
         string DisplayName,
@@ -185,6 +870,14 @@ else
         int OperationalCount,
         int AttentionNeededCount,
         DateTimeOffset? LastSuccessfulAtUtc);
+
+    private sealed record IntegrationServiceResponse(
+        string ServiceKey,
+        string DisplayName,
+        bool RequiresAuth,
+        IReadOnlyList<string> AllowedAuthTypes,
+        bool SupportsSync,
+        string RoleSummary);
 
     private sealed record IntegrationInstanceResponse(
         long Id,
@@ -215,4 +908,48 @@ else
         int HealthIssues,
         int WarningHealthIssues,
         int ErrorHealthIssues);
+
+    private sealed record IntegrationTestResponse(long IntegrationId, string ServiceKey, string InstanceName, bool Success, int StatusCode, string Message, string Version);
+
+    private sealed record TriggerIntegrationSyncResponse(long IntegrationId, bool Accepted, string Message);
+
+    private sealed record CreateIntegrationInstanceRequest(
+        string ServiceKey,
+        string InstanceName,
+        string BaseUrl,
+        string AuthType,
+        string ApiKey,
+        string Username,
+        string Password,
+        bool Enabled);
+
+    private sealed record UpdateIntegrationInstanceRequest(
+        string InstanceName,
+        string BaseUrl,
+        string AuthType,
+        string ApiKey,
+        string Username,
+        string Password,
+        bool Enabled);
+
+    private class IntegrationFormModel
+    {
+        [System.ComponentModel.DataAnnotations.Required]
+        public string ServiceKey { get; set; } = string.Empty;
+
+        [System.ComponentModel.DataAnnotations.Required]
+        [System.ComponentModel.DataAnnotations.MaxLength(64)]
+        public string InstanceName { get; set; } = string.Empty;
+
+        [System.ComponentModel.DataAnnotations.Required]
+        public string BaseUrl { get; set; } = string.Empty;
+
+        [System.ComponentModel.DataAnnotations.Required]
+        public string AuthType { get; set; } = "ApiKey";
+
+        public string ApiKey { get; set; } = string.Empty;
+        public string Username { get; set; } = string.Empty;
+        public string Password { get; set; } = string.Empty;
+        public bool Enabled { get; set; }
+    }
 }

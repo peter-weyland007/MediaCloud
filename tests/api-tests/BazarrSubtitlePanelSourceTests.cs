@@ -16,12 +16,13 @@ public sealed class BazarrSubtitlePanelSourceTests
 
         Assert.Contains("<BazarrSubtitlePanel", movieContent);
         Assert.Contains("<BazarrSubtitlePanel", tvContent);
-        Assert.Contains("SUBTITLES", componentContent);
+        Assert.Contains("<p class=\"card-label\">SUBTITLES</p>", componentContent);
         Assert.DoesNotContain("BAZARR SUBTITLES", componentContent);
         Assert.Contains("Missing targets", componentContent);
         Assert.Contains("Available subtitles", componentContent);
-        Assert.Contains("aria-expanded=\"@_expanded\"", componentContent);
-        Assert.Contains("private bool _expanded;", componentContent);
-        Assert.Contains("ToggleExpanded", componentContent);
+        Assert.Contains("subtitle-panel-content", componentContent);
+        Assert.DoesNotContain("aria-expanded=\"@_expanded\"", componentContent);
+        Assert.DoesNotContain("private bool _expanded;", componentContent);
+        Assert.DoesNotContain("ToggleExpanded", componentContent);
     }
 }

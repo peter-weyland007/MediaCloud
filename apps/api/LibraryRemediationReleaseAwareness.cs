@@ -8,7 +8,9 @@ public sealed record LibraryRemediationHistoryCandidate(
     string SourceTitle,
     string DownloadId,
     string DataJson,
-    DateTimeOffset? EventTimeUtc);
+    DateTimeOffset? EventTimeUtc,
+    int? TargetExternalItemId = null,
+    string Protocol = "");
 
 public sealed record LibraryRemediationReleaseContext(
     string ServiceKey,

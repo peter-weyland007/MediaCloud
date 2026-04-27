@@ -18,6 +18,7 @@ public sealed class MediaItemDetailBodyPanelLayoutTests
         Assert.Contains("SUBTITLE LANGUAGES", content);
         Assert.Contains("FILE & IDENTIFIERS", content);
         Assert.Contains("PRIMARY FILE", content);
+        Assert.Contains("FlattenMetricsPanel", content);
         Assert.Contains("border-bottom:1px solid rgba(51,65,85,0.65);", content);
         Assert.Contains("<p class=\"card-label\">SOURCE SERVICES</p>", content);
     }

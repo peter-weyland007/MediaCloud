@@ -37,10 +37,10 @@ public sealed class IntegrationControlPlaneSourceTests
     }
 
     [Fact]
-    public void Settings_integrations_page_surfaces_control_plane_summary_health_and_sync_actions()
+    public void Integrations_page_surfaces_control_plane_summary_health_and_sync_actions()
     {
         var repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../../"));
-        var pagePath = Path.GetFullPath(Path.Combine(repoRoot, "apps/web/Components/Pages/SettingsIntegrations.razor"));
+        var pagePath = Path.GetFullPath(Path.Combine(repoRoot, "apps/web/Components/Pages/Integrations.razor"));
         var content = File.ReadAllText(pagePath);
 
         Assert.Contains("CONTROL PLANE SUMMARY", content);

@@ -14,12 +14,11 @@
 <div class="card" style="margin-bottom:1rem; display:flex; justify-content:space-between; align-items:center; gap:1rem; flex-wrap:wrap;">
     <div>
         <p class="card-label">SERVICE CONTROL PLANE</p>
-        <p class="card-note" style="margin-top:0.35rem;">Back to integrations for the broader control plane, or open connection settings to edit URLs and credentials.</p>
+        <p class="card-note" style="margin-top:0.35rem;">Back to integrations for the broader control plane and connection management.</p>
     </div>
-    <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
-        <a class="button-primary" href="/integrations" style="display:inline-block; text-decoration:none; background:#334155; border-color:#334155;">Back to integrations</a>
-        <a class="button-primary" href="/settings/integrations" style="display:inline-block; text-decoration:none;">Open connection settings</a>
-    </div>
+    <MudButtonGroup Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small">
+        <MudButton Href="/integrations" Color="Color.Secondary">Back to integrations</MudButton>
+    </MudButtonGroup>
 </div>
 
 @if (_loading)
@@ -43,105 +42,1074 @@ else if (_instances.Count == 0)
 }
 else
 {
-    <div class="card" style="margin-bottom:1rem; display:grid; gap:0.85rem;">
-        <p class="card-label">SUMMARY</p>
-        <div style="display:flex; gap:0.55rem; flex-wrap:wrap;">
-            <span class="integration-service-metric-chip">@_instances.Count instance(s)</span>
-            <span class="integration-service-metric-chip">Healthy: @_instances.Count(x => string.Equals(GetHealthLabel(x), "Healthy", StringComparison.OrdinalIgnoreCase))</span>
-            <span class="integration-service-metric-chip">Operational: @_instances.Count(x => string.Equals(GetHealthLabel(x), "Operational", StringComparison.OrdinalIgnoreCase))</span>
-            <span class="integration-service-metric-chip">Attention needed: @_instances.Count(x => string.Equals(GetHealthLabel(x), "Attention needed", StringComparison.OrdinalIgnoreCase))</span>
-        </div>
-    </div>
+    <section class="card" style="margin-bottom:1rem; display:grid; gap:0.85rem;">
+        <button type="button"
+                class="integration-detail-panel-toggle"
+                @onclick='() => TogglePanel("summary")'
+                aria-expanded="@IsPanelExpanded("summary")"
+                aria-controls="integration-detail-panel-summary">
+            <span>
+                <span class="card-label" style="display:block;">SUMMARY</span>
+                <span class="card-note" style="display:block; margin-top:0.35rem;">Overall service health and instance totals for @ServiceDisplayName.</span>
+            </span>
+            <span class="integration-detail-panel-chevron">@PanelChevron("summary")</span>
+        </button>
 
-    <div class="card" style="display:grid; gap:0.85rem;">
-        <p class="card-label">SERVICE INSTANCES</p>
-        @foreach (var item in _instances)
+        @if (IsPanelExpanded("summary"))
         {
-            <div class="integration-instance-card">
-                <div class="integration-instance-heading">
-                    <div class="integration-instance-title-block">
-                        <strong>@item.InstanceName</strong>
-                        <a href="@item.BaseUrl" target="_blank" rel="noopener noreferrer" class="integration-instance-link">@item.BaseUrl</a>
-                        <span class="card-note">Auth: @item.AuthType · Enabled: @(item.Enabled ? "Yes" : "No") · Mode: @(item.SupportsSync ? "Sync-backed" : "Ops-only") · Updated: @FormatTimestamp(item.UpdatedAtUtc)</span>
-                    </div>
-                    <span class="integration-instance-health" style="@BuildHealthPillStyle(item)">@GetHealthLabel(item)</span>
-                </div>
+            <div id="integration-detail-panel-summary" class="integration-detail-panel-body" style="display:flex; gap:0.55rem; flex-wrap:wrap;">
+                <span class="integration-service-metric-chip">@_instances.Count instance(s)</span>
+                <span class="integration-service-metric-chip">Healthy: @_instances.Count(x => string.Equals(GetHealthLabel(x), "Healthy", StringComparison.OrdinalIgnoreCase))</span>
+                <span class="integration-service-metric-chip">Operational: @_instances.Count(x => string.Equals(GetHealthLabel(x), "Operational", StringComparison.OrdinalIgnoreCase))</span>
+                <span class="integration-service-metric-chip">Attention needed: @_instances.Count(x => string.Equals(GetHealthLabel(x), "Attention needed", StringComparison.OrdinalIgnoreCase))</span>
+            </div>
+        }
+    </section>
 
-                <div class="integration-instance-detail-grid">
+    @if (IsRadarrPage)
+    {
+        <section class="card" style="margin-bottom:1rem; display:grid; gap:0.85rem;">
+            <button type="button"
+                    class="integration-detail-panel-toggle"
+                    @onclick='() => TogglePanel("radarr-control")'
+                    aria-expanded="@IsPanelExpanded("radarr-control")"
+                    aria-controls="integration-detail-panel-radarr-control">
+                <span>
+                    <span class="card-label" style="display:block;">RADARR CONTROL</span>
+                    <span class="card-note" style="display:block; margin-top:0.35rem;">First-pass Radarr control plane for catalog sync, monitoring ownership, roots, and reconciliation.</span>
+                </span>
+                <span class="integration-detail-panel-chevron">@PanelChevron("radarr-control")</span>
+            </button>
+
+            @if (IsPanelExpanded("radarr-control"))
+            {
+                <div id="integration-detail-panel-radarr-control" class="integration-detail-panel-body" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:0.85rem;">
                     <div>
-                        <p class="card-label">VERSION</p>
-                        <div class="integration-instance-version-row">
-                            <span>@DisplayVersionComparison(item.CurrentVersion, item.LatestReleaseVersion)</span>
-                            <span style="@BuildVersionStatusPillStyle(item.CurrentVersion, item.LatestReleaseVersion)">@GetVersionStatusLabel(item.CurrentVersion, item.LatestReleaseVersion)</span>
-                        </div>
+                        <p class="card-label">CATALOG SYNC</p>
+                        <p class="card-note" style="margin-top:0.35rem;">Last success: @FormatTimestamp(_instances.Select(x => x.LastSuccessfulAtUtc).Where(x => x.HasValue).OrderByDescending(x => x).FirstOrDefault())</p>
+                        <p class="card-note" style="margin-top:0.25rem;">Last attempt: @FormatTimestamp(_instances.Select(x => x.LastAttemptedAtUtc).Where(x => x.HasValue).OrderByDescending(x => x).FirstOrDefault())</p>
+                        <p class="card-note" style="margin-top:0.25rem;">Sync-backed movie catalog ingestion is active for Radarr.</p>
                     </div>
                     <div>
-                        <p class="card-label">HEALTH</p>
-                        <p style="margin:0.35rem 0 0;">Last success: @FormatTimestamp(item.LastSuccessfulAtUtc)</p>
-                        <p class="card-note" style="margin-top:0.25rem;">Last attempt: @FormatTimestamp(item.LastAttemptedAtUtc)</p>
-                        @if (!string.IsNullOrWhiteSpace(item.LastError))
+                        <p class="card-label">MONITORING OWNERSHIP</p>
+                        <p class="card-note" style="margin-top:0.35rem;">MediaCloud owns monitoring: @FormatBool(_monitoringSettings?.ManagedByMediaCloud)</p>
+                        <p class="card-note" style="margin-top:0.25rem;">Auto sync enabled: @FormatBool(_monitoringSettings?.AutoSyncEnabled)</p>
+                        <p class="card-note" style="margin-top:0.25rem;">Settings live on the app-wide monitoring policy, but this is the effective Radarr state.</p>
+                    </div>
+                    <div>
+                        <p class="card-label">DRIFT & RECONCILIATION</p>
+                        @if (_radarrDriftPreviewLoading)
                         {
-                            <p class="card-note" style="margin-top:0.25rem;">Error: @item.LastError</p>
+                            <p class="card-note" style="margin-top:0.35rem;">Loading drift preview…</p>
+                        }
+                        else
+                        {
+                            <p class="card-note" style="margin-top:0.35rem;">Plex movies scanned: @(_radarrDriftPreview?.TotalPlexMovies ?? 0)</p>
+                            <p class="card-note" style="margin-top:0.25rem;">Missing from Radarr: @(_radarrDriftPreview?.MissingRadarrCount ?? 0)</p>
+                            <p class="card-note" style="margin-top:0.25rem;">Missing in both Radarr + Overseerr: @(_radarrDriftPreview?.MissingBothCount ?? 0)</p>
+                        }
+                    </div>
+
+                    <div style="grid-column:1 / -1; display:grid; gap:0.75rem;">
+                        <div style="display:flex; justify-content:space-between; align-items:center; gap:0.75rem; flex-wrap:wrap;">
+                            <div>
+                                <p class="card-label">SEARCH & RETRY</p>
+                                <p class="card-note" style="margin-top:0.35rem;">Retry search in Radarr for linked titles or add missing titles to Radarr from the drift preview.</p>
+                            </div>
+                            <MudButtonGroup Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small">
+                                <MudButton Class="integration-action-button integration-action-button-sync" ButtonType="ButtonType.Button" Disabled="@(_selectedRadarrSearchRetryLibraryItemIds.Count == 0 || _radarrSyncingLibraryItemIds.Count > 0)" OnClick="BulkSyncSelectedLibraryItemsToRadarrAsync">
+                                    @(_radarrSyncingLibraryItemIds.Count > 0 ? "Adding..." : "Bulk Add to Radarr")
+                                </MudButton>
+                                <MudButton Class="integration-action-button integration-action-button-secondary" ButtonType="ButtonType.Button" Disabled="@(_selectedRadarrSearchRetryLibraryItemIds.Count == 0 || _radarrSearchingLibraryItemIds.Count > 0)" OnClick="BulkRunRadarrSearchReplacementAsync">
+                                    @(_radarrSearchingLibraryItemIds.Count > 0 ? "Retrying..." : "Bulk Retry search")
+                                </MudButton>
+                                <MudButton Class="integration-action-button integration-action-button-secondary" ButtonType="ButtonType.Button" Disabled="@_radarrDriftPreviewLoading" OnClick="RefreshRadarrDriftPreviewAsync">
+                                    @(_radarrDriftPreviewLoading ? "Refreshing..." : "Refresh drift preview")
+                                </MudButton>
+                            </MudButtonGroup>
+                        </div>
+
+                        @if (!string.IsNullOrWhiteSpace(_radarrSearchRetryStatus))
+                        {
+                            <p class="card-note">@_radarrSearchRetryStatus</p>
+                        }
+
+                        @if (VisibleRadarrSearchRetryRows.Count == 0)
+                        {
+                            <p class="card-note">No Radarr search/retry candidates are available from the current drift preview.</p>
+                        }
+                        else
+                        {
+                            <table style="width:100%; border-collapse:collapse; font-size:0.84rem;">
+                                <thead>
+                                    <tr style="text-align:left; border-bottom:1px solid rgba(148,163,184,0.25);">
+                                        <th style="padding:0.3rem 0.4rem; width:80px;">
+                                            <label style="display:flex; gap:0.35rem; align-items:center;">
+                                                <input type="checkbox" checked="@AreAllVisibleRadarrSearchRetryRowsSelected" @onchange="ToggleSelectAllRadarrSearchRetryRows" />
+                                                All
+                                            </label>
+                                        </th>
+                                        <th style="padding:0.3rem 0.4rem;">Title</th>
+                                        <th style="padding:0.3rem 0.4rem;">Year</th>
+                                        <th style="padding:0.3rem 0.4rem;">Radarr state</th>
+                                        <th style="padding:0.3rem 0.4rem;">TMDB</th>
+                                        <th style="padding:0.3rem 0.4rem;">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var row in VisibleRadarrSearchRetryRows)
+                                    {
+                                        <tr style="border-bottom:1px solid rgba(148,163,184,0.12);">
+                                            <td style="padding:0.3rem 0.4rem;">
+                                                <input type="checkbox" checked="@_selectedRadarrSearchRetryLibraryItemIds.Contains(row.LibraryItemId)" disabled="@(!CanBulkOperateOnRadarrSearchRetryRow(row))" @onchange="args => ToggleRadarrSearchRetryRowSelection(row.LibraryItemId, args.Value)" />
+                                            </td>
+                                            <td style="padding:0.3rem 0.4rem;">
+                                                <div>@row.Title</div>
+                                                <div class="card-note">Sources: @row.SourceServicesCsv</div>
+                                            </td>
+                                            <td style="padding:0.3rem 0.4rem;">@(row.Year?.ToString() ?? "—")</td>
+                                            <td style="padding:0.3rem 0.4rem;">@(row.MissingRadarr ? "Missing from Radarr" : "Linked in Radarr")</td>
+                                            <td style="padding:0.3rem 0.4rem;">@(row.TmdbId?.ToString() ?? "—")</td>
+                                            <td style="padding:0.3rem 0.4rem;">
+                                                <MudButtonGroup Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small">
+                                                    <MudButton Class="integration-action-button integration-action-button-sync"
+                                                               ButtonType="ButtonType.Button"
+                                                               Disabled="@(!row.MissingRadarr || !row.CanBackfill || _radarrSyncingLibraryItemIds.Contains(row.LibraryItemId))"
+                                                               OnClick="@(() => SyncLibraryItemToRadarrAsync(row))">
+                                                        @(_radarrSyncingLibraryItemIds.Contains(row.LibraryItemId) ? "Adding..." : "Add to Radarr")
+                                                    </MudButton>
+                                                    <MudButton Class="integration-action-button integration-action-button-secondary"
+                                                               ButtonType="ButtonType.Button"
+                                                               Disabled="@(row.MissingRadarr || _radarrSearchingLibraryItemIds.Contains(row.LibraryItemId))"
+                                                               OnClick="@(() => RunRadarrSearchReplacementAsync(row))">
+                                                        @(_radarrSearchingLibraryItemIds.Contains(row.LibraryItemId) ? "Retrying..." : "Retry search in Radarr")
+                                                    </MudButton>
+                                                </MudButtonGroup>
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
                         }
                     </div>
                 </div>
+            }
+        </section>
 
-                @if (string.Equals(item.ServiceKey, "prowlarr", StringComparison.OrdinalIgnoreCase) && item.ProwlarrSummary is not null)
+        <section class="card" style="margin-bottom:1rem; display:grid; gap:0.85rem;">
+            <button type="button"
+                    class="integration-detail-panel-toggle"
+                    @onclick='() => TogglePanel("radarr-quality-profiles")'
+                    aria-expanded="@IsPanelExpanded("radarr-quality-profiles")"
+                    aria-controls="integration-detail-panel-radarr-quality-profiles">
+                <span>
+                    <span class="card-label" style="display:block;">QUALITY PROFILES</span>
+                    <span class="card-note" style="display:block; margin-top:0.35rem;">Choose the preferred quality profile MediaCloud should use for Radarr-driven adds and future remediation flows.</span>
+                </span>
+                <span class="integration-detail-panel-chevron">@PanelChevron("radarr-quality-profiles")</span>
+            </button>
+
+            @if (IsPanelExpanded("radarr-quality-profiles"))
+            {
+                <div id="integration-detail-panel-radarr-quality-profiles" class="integration-detail-panel-body" style="display:grid; gap:0.85rem;">
+                    @if (_radarrQualityProfilesLoading && _radarrQualityProfiles is null)
+                    {
+                        <p class="card-note">Loading quality profiles…</p>
+                    }
+                    else if (_radarrQualityProfiles is null)
+                    {
+                        <p class="card-note">@(string.IsNullOrWhiteSpace(_radarrQualityProfilesError) ? "Radarr quality profiles are not available yet." : _radarrQualityProfilesError)</p>
+                    }
+                    else
+                    {
+                        @if (!string.IsNullOrWhiteSpace(_radarrQualityProfilesError))
+                        {
+                            <p class="card-note" style="color:#fca5a5;">@_radarrQualityProfilesError</p>
+                        }
+
+                        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:0.85rem;">
+                            <div>
+                                <p class="card-label">AVAILABLE PROFILES</p>
+                                <p class="card-note" style="margin-top:0.35rem;">@_radarrQualityProfiles.Profiles.Count profile(s) returned by Radarr.</p>
+                            </div>
+                            <div>
+                                <p class="card-label">PREFERRED QUALITY PROFILE</p>
+                                <p class="card-note" style="margin-top:0.35rem;">@(_radarrQualityProfiles.PreferredProfileName is { Length: > 0 } preferred ? preferred : "No MediaCloud default selected yet.")</p>
+                            </div>
+                            <div>
+                                <p class="card-label">OBSERVED ON SYNCED ITEMS</p>
+                                @if (_radarrQualityProfiles.ObservedLibraryQualityProfiles.Count == 0)
+                                {
+                                    <p class="card-note" style="margin-top:0.35rem;">No synced Radarr profile names have been observed yet.</p>
+                                }
+                                else
+                                {
+                                    <p class="card-note" style="margin-top:0.35rem;">@string.Join(", ", _radarrQualityProfiles.ObservedLibraryQualityProfiles)</p>
+                                }
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="radarr-preferred-quality-profile">Preferred quality profile</label>
+                            <InputSelect id="radarr-preferred-quality-profile" class="input" @bind-Value="_radarrQualityProfiles.PreferredProfileId">
+                                @foreach (var profile in _radarrQualityProfiles.Profiles)
+                                {
+                                    <option value="@profile.Id">@profile.Name</option>
+                                }
+                            </InputSelect>
+                        </div>
+
+                        <MudButtonGroup Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small">
+                            <MudButton Class="integration-action-button integration-action-button-sync" ButtonType="ButtonType.Button" Disabled="@(_radarrQualityProfilesSaving || _radarrQualityProfilesSyncing || _instances.FirstOrDefault() is null || _radarrQualityProfiles.Profiles.Count == 0)" OnClick="SaveRadarrQualityProfileAsync">
+                                @(_radarrQualityProfilesSaving ? "Saving..." : "Save quality profile")
+                            </MudButton>
+                            <MudButton Class="integration-action-button integration-action-button-sync" ButtonType="ButtonType.Button" Disabled="@(_radarrQualityProfilesSaving || _radarrQualityProfilesSyncing || _instances.FirstOrDefault() is null || _radarrQualityProfiles.Profiles.Count == 0)" OnClick="SyncRadarrMediaCloudProfileAsync">
+                                @(_radarrQualityProfilesSyncing ? "Syncing..." : "Sync MediaCloud Profile")
+                            </MudButton>
+                            <MudButton Class="integration-action-button integration-action-button-secondary" ButtonType="ButtonType.Button" Disabled="@(_radarrQualityProfilesLoading || _radarrQualityProfilesSyncing || _instances.FirstOrDefault() is null)" OnClick="ReloadRadarrQualityProfilesAsync">
+                                @(_radarrQualityProfilesLoading ? "Refreshing..." : "Reload from Radarr")
+                            </MudButton>
+                        </MudButtonGroup>
+                    }
+                </div>
+            }
+        </section>
+
+        <section class="card" style="margin-bottom:1rem; display:grid; gap:0.85rem;">
+            <button type="button"
+                    class="integration-detail-panel-toggle"
+                    @onclick='() => TogglePanel("radarr-default-add-policy")'
+                    aria-expanded="@IsPanelExpanded("radarr-default-add-policy")"
+                    aria-controls="integration-detail-panel-radarr-default-add-policy">
+                <span>
+                    <span class="card-label" style="display:block;">DEFAULT ADD POLICY</span>
+                    <span class="card-note" style="display:block; margin-top:0.35rem;">Control the root folder, quality profile, minimum availability, and monitored default MediaCloud should use when adding movies to Radarr.</span>
+                </span>
+                <span class="integration-detail-panel-chevron">@PanelChevron("radarr-default-add-policy")</span>
+            </button>
+
+            @if (IsPanelExpanded("radarr-default-add-policy"))
+            {
+                <div id="integration-detail-panel-radarr-default-add-policy" class="integration-detail-panel-body" style="display:grid; gap:0.85rem;">
+                    @if (_radarrDefaultAddPolicyLoading && _radarrDefaultAddPolicy is null)
+                    {
+                        <p class="card-note">Loading default add policy…</p>
+                    }
+                    else if (_radarrDefaultAddPolicy is null)
+                    {
+                        <p class="card-note">@(string.IsNullOrWhiteSpace(_radarrDefaultAddPolicyError) ? "Radarr default add policy is not available yet." : _radarrDefaultAddPolicyError)</p>
+                    }
+                    else
+                    {
+                        @if (!string.IsNullOrWhiteSpace(_radarrDefaultAddPolicyError))
+                        {
+                            <p class="card-note" style="color:#fca5a5;">@_radarrDefaultAddPolicyError</p>
+                        }
+
+                        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:0.85rem;">
+                            <div>
+                                <p class="card-label">ROOT FOLDER</p>
+                                <p class="card-note" style="margin-top:0.35rem;">@(_radarrDefaultAddPolicy.RootFolderPath is { Length: > 0 } root ? root : "No default root folder selected.")</p>
+                            </div>
+                            <div>
+                                <p class="card-label">QUALITY PROFILE</p>
+                                <p class="card-note" style="margin-top:0.35rem;">@(_radarrDefaultAddPolicy.QualityProfileName is { Length: > 0 } profile ? profile : "No default quality profile selected.")</p>
+                            </div>
+                            <div>
+                                <p class="card-label">MINIMUM AVAILABILITY</p>
+                                <p class="card-note" style="margin-top:0.35rem;">@_radarrDefaultAddPolicy.MinimumAvailability</p>
+                            </div>
+                            <div>
+                                <p class="card-label">MONITOR BY DEFAULT</p>
+                                <p class="card-note" style="margin-top:0.35rem;">@FormatBool(_radarrDefaultAddPolicy.Monitored)</p>
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="radarr-default-root-folder">Default root folder</label>
+                            <InputSelect id="radarr-default-root-folder" class="input" @bind-Value="_radarrDefaultAddPolicy.RootFolderPath">
+                                @foreach (var root in _radarrDefaultAddPolicy.AvailableRootFolders)
+                                {
+                                    <option value="@root">@root</option>
+                                }
+                            </InputSelect>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="radarr-default-quality-profile">Preferred quality profile</label>
+                            <InputSelect id="radarr-default-quality-profile" class="input" @bind-Value="_radarrDefaultAddPolicy.QualityProfileId">
+                                @foreach (var profile in _radarrDefaultAddPolicy.AvailableQualityProfiles)
+                                {
+                                    <option value="@profile.Id">@profile.Name</option>
+                                }
+                            </InputSelect>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="radarr-minimum-availability">Minimum availability</label>
+                            <InputSelect id="radarr-minimum-availability" class="input" @bind-Value="_radarrDefaultAddPolicy.MinimumAvailability">
+                                @foreach (var option in _radarrDefaultAddPolicy.MinimumAvailabilityOptions)
+                                {
+                                    <option value="@option">@option</option>
+                                }
+                            </InputSelect>
+                        </div>
+
+                        <label style="display:flex; gap:0.45rem; align-items:center;">
+                            <input type="checkbox" @bind="_radarrDefaultAddPolicy.Monitored" />
+                            <span>Monitor by default</span>
+                        </label>
+
+                        <MudButtonGroup Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small">
+                            <MudButton Class="integration-action-button integration-action-button-sync" ButtonType="ButtonType.Button" Disabled="@(_radarrDefaultAddPolicySaving || _instances.FirstOrDefault() is null || _radarrDefaultAddPolicy.AvailableRootFolders.Count == 0 || _radarrDefaultAddPolicy.AvailableQualityProfiles.Count == 0)" OnClick="SaveRadarrDefaultAddPolicyAsync">
+                                @(_radarrDefaultAddPolicySaving ? "Saving..." : "Save add policy")
+                            </MudButton>
+                            <MudButton Class="integration-action-button integration-action-button-secondary" ButtonType="ButtonType.Button" Disabled="@(_radarrDefaultAddPolicyLoading || _instances.FirstOrDefault() is null)" OnClick="ReloadRadarrDefaultAddPolicyAsync">
+                                @(_radarrDefaultAddPolicyLoading ? "Refreshing..." : "Reload from Radarr")
+                            </MudButton>
+                        </MudButtonGroup>
+                    }
+                </div>
+            }
+        </section>
+
+        <section class="card" style="margin-bottom:1rem; display:grid; gap:0.85rem;">
+            <button type="button"
+                    class="integration-detail-panel-toggle"
+                    @onclick='() => TogglePanel("radarr-tags")'
+                    aria-expanded="@IsPanelExpanded("radarr-tags")"
+                    aria-controls="integration-detail-panel-radarr-tags">
+                <span>
+                    <span class="card-label" style="display:block;">TAGS</span>
+                    <span class="card-note" style="display:block; margin-top:0.35rem;">Apply tags when adding movies to Radarr so MediaCloud can stamp consistent acquisition policy onto new adds.</span>
+                </span>
+                <span class="integration-detail-panel-chevron">@PanelChevron("radarr-tags")</span>
+            </button>
+
+            @if (IsPanelExpanded("radarr-tags"))
+            {
+                <div id="integration-detail-panel-radarr-tags" class="integration-detail-panel-body" style="display:grid; gap:0.85rem;">
+                    @if (_radarrTagsLoading && _radarrTags is null)
+                    {
+                        <p class="card-note">Loading tags…</p>
+                    }
+                    else if (_radarrTags is null)
+                    {
+                        <p class="card-note">@(string.IsNullOrWhiteSpace(_radarrTagsError) ? "Radarr tags are not available yet." : _radarrTagsError)</p>
+                    }
+                    else
+                    {
+                        @if (!string.IsNullOrWhiteSpace(_radarrTagsError))
+                        {
+                            <p class="card-note" style="color:#fca5a5;">@_radarrTagsError</p>
+                        }
+
+                        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:0.85rem;">
+                            <div>
+                                <p class="card-label">AVAILABLE TAGS</p>
+                                <p class="card-note" style="margin-top:0.35rem;">@_radarrTags.Tags.Count tag(s) returned by Radarr.</p>
+                            </div>
+                            <div>
+                                <p class="card-label">DEFAULT TAGS</p>
+                                <p class="card-note" style="margin-top:0.35rem;">@(_radarrTags.SelectedTagLabels.Count == 0 ? "No default tags selected." : string.Join(", ", _radarrTags.SelectedTagLabels))</p>
+                            </div>
+                        </div>
+
+                        <div style="display:grid; gap:0.6rem;">
+                            @foreach (var tag in _radarrTags.Tags)
+                            {
+                                <label style="display:flex; gap:0.45rem; align-items:center;">
+                                    <input type="checkbox" checked="@_radarrTags.SelectedTagIds.Contains(tag.Id)" @onchange="args => ToggleRadarrTagSelection(tag.Id, args.Value)" />
+                                    <span>@tag.Label</span>
+                                </label>
+                            }
+                        </div>
+
+                        <MudButtonGroup Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small">
+                            <MudButton Class="integration-action-button integration-action-button-sync" ButtonType="ButtonType.Button" Disabled="@(_radarrTagsSaving || _instances.FirstOrDefault() is null)" OnClick="SaveRadarrTagsAsync">
+                                @(_radarrTagsSaving ? "Saving..." : "Save tags")
+                            </MudButton>
+                            <MudButton Class="integration-action-button integration-action-button-secondary" ButtonType="ButtonType.Button" Disabled="@(_radarrTagsLoading || _instances.FirstOrDefault() is null)" OnClick="ReloadRadarrTagsAsync">
+                                @(_radarrTagsLoading ? "Refreshing..." : "Reload from Radarr")
+                            </MudButton>
+                        </MudButtonGroup>
+                    }
+                </div>
+            }
+        </section>
+
+        <section class="card" style="margin-bottom:1rem; display:grid; gap:0.85rem;">
+            <div class="integration-detail-panel-header">
+                <button type="button"
+                        class="integration-detail-panel-toggle"
+                        @onclick='() => TogglePanel("radarr-naming")'
+                        aria-expanded="@IsPanelExpanded("radarr-naming")"
+                        aria-controls="integration-detail-panel-radarr-naming">
+                    <span>
+                        <span class="card-label" style="display:block;">NAMING CONVENTION</span>
+                        <span class="card-note" style="display:block; margin-top:0.35rem;">Adjust Radarr file and folder naming without leaving MediaCloud.</span>
+                    </span>
+                </button>
+                <span class="integration-detail-panel-actions">
+                    <button type="button"
+                            class="integration-detail-panel-icon-button"
+                            title="File name tokens reference"
+                            aria-label="Open file name tokens reference"
+                            @onclick="OpenRadarrNamingHelp">
+                        <span class="integration-detail-panel-icon-glyph" aria-hidden="true">i</span>
+                    </button>
+                    <span class="integration-detail-panel-chevron">@PanelChevron("radarr-naming")</span>
+                </span>
+            </div>
+
+            @if (IsPanelExpanded("radarr-naming"))
+            {
+                <div id="integration-detail-panel-radarr-naming" class="integration-detail-panel-body" style="display:grid; gap:0.85rem;">
+
+                    @if (_radarrNamingLoading && _radarrNaming is null)
+                    {
+                        <p class="card-note">Loading naming settings…</p>
+                    }
+                    else if (_radarrNaming is null)
+                    {
+                        <p class="card-note">@(string.IsNullOrWhiteSpace(_radarrNamingError) ? "Radarr naming settings are not available yet." : _radarrNamingError)</p>
+                    }
+                    else
+                    {
+                        @if (!string.IsNullOrWhiteSpace(_radarrNamingError))
+                        {
+                            <p class="card-note" style="color:#fca5a5;">@_radarrNamingError</p>
+                        }
+
+                        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:0.85rem;">
+                            <label style="display:flex; gap:0.45rem; align-items:center;">
+                                <input type="checkbox" @bind="_radarrNaming.RenameMovies" />
+                                <span>Rename movie files</span>
+                            </label>
+                            <label style="display:flex; gap:0.45rem; align-items:center;">
+                                <input type="checkbox" @bind="_radarrNaming.ReplaceIllegalCharacters" />
+                                <span>Replace illegal characters</span>
+                            </label>
+                            <div>
+                                <label for="radarr-colon-format">Colon replacement format</label>
+                                <InputText id="radarr-colon-format" class="input" @bind-Value="_radarrNaming.ColonReplacementFormat" />
+                            </div>
+                        </div>
+
+                        <div style="display:grid; gap:0.75rem;">
+                            <div>
+                                <label for="radarr-standard-format">Standard file format</label>
+                                <textarea id="radarr-standard-format" class="input" rows="2" @bind="_radarrNaming.StandardMovieFormat"></textarea>
+                            </div>
+                            <div>
+                                <label for="radarr-folder-format">Movie folder format</label>
+                                <textarea id="radarr-folder-format" class="input" rows="2" @bind="_radarrNaming.MovieFolderFormat"></textarea>
+                            </div>
+                        </div>
+
+                        <MudButtonGroup Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small">
+                            <MudButton Class="integration-action-button integration-action-button-sync" ButtonType="ButtonType.Button" Disabled="@(_radarrNamingSaving || _instances.FirstOrDefault() is null)" OnClick="SaveRadarrNamingAsync">
+                                @(_radarrNamingSaving ? "Saving..." : "Save naming")
+                            </MudButton>
+                            <MudButton Class="integration-action-button integration-action-button-secondary" ButtonType="ButtonType.Button" Disabled="@(_radarrNamingLoading || _instances.FirstOrDefault() is null)" OnClick="ReloadRadarrNamingAsync">
+                                @(_radarrNamingLoading ? "Refreshing..." : "Reload from Radarr")
+                            </MudButton>
+                        </MudButtonGroup>
+                    }
+                </div>
+            }
+        </section>
+
+        <section class="card" style="margin-bottom:1rem; display:grid; gap:0.85rem;">
+            <button type="button"
+                    class="integration-detail-panel-toggle"
+                    @onclick='() => TogglePanel("radarr-paths")'
+                    aria-expanded="@IsPanelExpanded("radarr-paths")"
+                    aria-controls="integration-detail-panel-radarr-paths">
+                <span>
+                    <span class="card-label" style="display:block;">ROOT FOLDERS & MAPPINGS</span>
+                    <span class="card-note" style="display:block; margin-top:0.35rem;">Remote roots, local path mapping, and path test results.</span>
+                </span>
+                <span class="integration-detail-panel-chevron">@PanelChevron("radarr-paths")</span>
+            </button>
+
+            @if (IsPanelExpanded("radarr-paths"))
+            {
+                <div id="integration-detail-panel-radarr-paths" class="integration-detail-panel-body" style="display:grid; gap:0.85rem;">
+                    <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:0.85rem;">
+                        <div>
+                            <p class="card-label">DISCOVERED ROOT FOLDERS</p>
+                            @if (_radarrRemoteRoots?.Paths is { Count: > 0 } remoteRoots)
+                            {
+                                <ul style="margin:0.5rem 0 0 1rem; padding:0; display:grid; gap:0.35rem;">
+                                    @foreach (var root in remoteRoots)
+                                    {
+                                        <li class="card-note">@root</li>
+                                    }
+                                </ul>
+                            }
+                            else
+                            {
+                                <p class="card-note" style="margin-top:0.35rem;">@(_radarrRemoteRoots?.Message ?? "No Radarr root folders discovered yet.")</p>
+                            }
+                        </div>
+                        <div>
+                            <p class="card-label">ACTIVE PATH MAPPING</p>
+                            @if (_radarrPathMapping is not null)
+                            {
+                                <p class="card-note" style="margin-top:0.35rem;">Remote: @_radarrPathMapping.RemoteRootPath</p>
+                                <p class="card-note" style="margin-top:0.25rem;">Local: @_radarrPathMapping.LocalRootPath</p>
+                                <p class="card-note" style="margin-top:0.25rem;">Updated: @FormatTimestamp(_radarrPathMapping.UpdatedAtUtc)</p>
+                                <MudButtonGroup Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small">
+                                    <MudButton Class="integration-action-button" ButtonType="ButtonType.Button" OnClick="OpenEditPathMappingDialogAsync">Edit mapping</MudButton>
+                                    <MudButton Class="integration-action-button integration-action-button-secondary" ButtonType="ButtonType.Button" Disabled="@(_testingMappingId == _radarrPathMapping.Id)" OnClick="@(() => TestPathMappingAsync(_radarrPathMapping))">
+                                        @(_testingMappingId == _radarrPathMapping.Id ? "Testing mapping..." : "Test mapping")
+                                    </MudButton>
+                                    <MudButton Class="integration-action-button" ButtonType="ButtonType.Button" Color="Color.Error" OnClick="DeletePathMappingAsync">Delete mapping</MudButton>
+                                </MudButtonGroup>
+                            }
+                            else
+                            {
+                                <p class="card-note" style="margin-top:0.35rem;">No Radarr path mapping is configured yet.</p>
+                                <MudButton Class="integration-action-button" ButtonType="ButtonType.Button" OnClick="OpenCreatePathMappingDialogAsync" style="width:max-content;">Add mapping</MudButton>
+                            }
+                        </div>
+                    </div>
+
+                    @if (_radarrPathMappingTest is not null)
+                    {
+                        <div style="border-top:1px solid rgba(51,65,85,0.65); padding-top:0.75rem; display:grid; gap:0.35rem;">
+                            <p class="card-label">MAPPING TEST RESULT</p>
+                            <p class="card-note">Status: @(_radarrPathMappingTest.Success ? "Healthy" : "Needs attention")</p>
+                            <p class="card-note">Message: @_radarrPathMappingTest.Message</p>
+                            <p class="card-note">Local root exists: @FormatBool(_radarrPathMappingTest.LocalPathExists)</p>
+                            <p class="card-note">Remote root matches Radarr: @FormatBool(_radarrPathMappingTest.RemotePathMatchesIntegration)</p>
+                            <p class="card-note">Resolved sample file exists: @FormatBool(_radarrPathMappingTest.ResolvedLocalFileExists)</p>
+                        </div>
+                    }
+                </div>
+            }
+        </section>
+    }
+
+    @if (IsSonarrPage)
+    {
+        <section class="card" style="margin-bottom:1rem; display:grid; gap:0.85rem;">
+            <button type="button"
+                    class="integration-detail-panel-toggle"
+                    @onclick='() => TogglePanel("sonarr-quality-profiles")'
+                    aria-expanded="@IsPanelExpanded("sonarr-quality-profiles")"
+                    aria-controls="integration-detail-panel-sonarr-quality-profiles">
+                <span>
+                    <span class="card-label" style="display:block;">QUALITY PROFILES</span>
+                    <span class="card-note" style="display:block; margin-top:0.35rem;">Choose the preferred quality profile MediaCloud should use for Sonarr-driven adds, then sync the remote MediaCloud Profile when needed.</span>
+                </span>
+                <span class="integration-detail-panel-chevron">@PanelChevron("sonarr-quality-profiles")</span>
+            </button>
+
+            @if (IsPanelExpanded("sonarr-quality-profiles"))
+            {
+                <div id="integration-detail-panel-sonarr-quality-profiles" class="integration-detail-panel-body" style="display:grid; gap:0.85rem;">
+                    @if (_radarrQualityProfilesLoading && _radarrQualityProfiles is null)
+                    {
+                        <p class="card-note">Loading quality profiles…</p>
+                    }
+                    else if (_radarrQualityProfiles is null)
+                    {
+                        <p class="card-note">@(string.IsNullOrWhiteSpace(_radarrQualityProfilesError) ? "Sonarr quality profiles are not available yet." : _radarrQualityProfilesError)</p>
+                    }
+                    else
+                    {
+                        @if (!string.IsNullOrWhiteSpace(_radarrQualityProfilesError))
+                        {
+                            <p class="card-note" style="color:#fca5a5;">@_radarrQualityProfilesError</p>
+                        }
+
+                        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:0.85rem;">
+                            <div>
+                                <p class="card-label">AVAILABLE PROFILES</p>
+                                <p class="card-note" style="margin-top:0.35rem;">@_radarrQualityProfiles.Profiles.Count profile(s) returned by Sonarr.</p>
+                            </div>
+                            <div>
+                                <p class="card-label">PREFERRED QUALITY PROFILE</p>
+                                <p class="card-note" style="margin-top:0.35rem;">@(_radarrQualityProfiles.PreferredProfileName is { Length: > 0 } preferred ? preferred : "No MediaCloud default selected yet.")</p>
+                            </div>
+                            <div>
+                                <p class="card-label">OBSERVED ON SYNCED ITEMS</p>
+                                @if (_radarrQualityProfiles.ObservedLibraryQualityProfiles.Count == 0)
+                                {
+                                    <p class="card-note" style="margin-top:0.35rem;">No synced Sonarr profile names have been observed yet.</p>
+                                }
+                                else
+                                {
+                                    <p class="card-note" style="margin-top:0.35rem;">@string.Join(", ", _radarrQualityProfiles.ObservedLibraryQualityProfiles)</p>
+                                }
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="sonarr-preferred-quality-profile">Preferred quality profile</label>
+                            <InputSelect id="sonarr-preferred-quality-profile" class="input" @bind-Value="_radarrQualityProfiles.PreferredProfileId">
+                                @foreach (var profile in _radarrQualityProfiles.Profiles)
+                                {
+                                    <option value="@profile.Id">@profile.Name</option>
+                                }
+                            </InputSelect>
+                        </div>
+
+                        <MudButtonGroup Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small">
+                            <MudButton Class="integration-action-button integration-action-button-sync" ButtonType="ButtonType.Button" Disabled="@(_radarrQualityProfilesSaving || _radarrQualityProfilesSyncing || _instances.FirstOrDefault() is null || _radarrQualityProfiles.Profiles.Count == 0)" OnClick="SaveSonarrQualityProfileAsync">
+                                @(_radarrQualityProfilesSaving ? "Saving..." : "Save quality profile")
+                            </MudButton>
+                            <MudButton Class="integration-action-button integration-action-button-sync" ButtonType="ButtonType.Button" Disabled="@(_radarrQualityProfilesSaving || _radarrQualityProfilesSyncing || _instances.FirstOrDefault() is null || _radarrQualityProfiles.Profiles.Count == 0)" OnClick="SyncSonarrMediaCloudProfileAsync">
+                                @(_radarrQualityProfilesSyncing ? "Syncing..." : "Sync MediaCloud Profile")
+                            </MudButton>
+                            <MudButton Class="integration-action-button integration-action-button-secondary" ButtonType="ButtonType.Button" Disabled="@(_radarrQualityProfilesLoading || _radarrQualityProfilesSyncing || _instances.FirstOrDefault() is null)" OnClick="ReloadSonarrQualityProfilesAsync">
+                                @(_radarrQualityProfilesLoading ? "Refreshing..." : "Reload from Sonarr")
+                            </MudButton>
+                        </MudButtonGroup>
+                    }
+                </div>
+            }
+        </section>
+    }
+
+    <section class="card" style="display:grid; gap:0.85rem;">
+        <button type="button"
+                class="integration-detail-panel-toggle"
+                @onclick='() => TogglePanel("instances")'
+                aria-expanded="@IsPanelExpanded("instances")"
+                aria-controls="integration-detail-panel-instances">
+            <span>
+                <span class="card-label" style="display:block;">SERVICE INSTANCES</span>
+                <span class="card-note" style="display:block; margin-top:0.35rem;">Instance-level health, version status, and connection actions.</span>
+            </span>
+            <span class="integration-detail-panel-chevron">@PanelChevron("instances")</span>
+        </button>
+
+        @if (IsPanelExpanded("instances"))
+        {
+            <div id="integration-detail-panel-instances" class="integration-detail-panel-body" style="display:grid; gap:0.85rem;">
+                @foreach (var item in _instances)
                 {
-                    <div class="integration-prowlarr-summary-grid">
-                        <div>
-                            <p class="card-label">CONFIGURED INDEXERS</p>
-                            <p style="margin:0.35rem 0 0;">@item.ProwlarrSummary.ConfiguredIndexers</p>
+                    <div class="integration-instance-card">
+                        <div class="integration-instance-heading">
+                            <div class="integration-instance-title-block">
+                                <strong>@item.InstanceName</strong>
+                                <a href="@item.BaseUrl" target="_blank" rel="noopener noreferrer" class="integration-instance-link">@item.BaseUrl</a>
+                                <span class="card-note">Auth: @item.AuthType · Enabled: @(item.Enabled ? "Yes" : "No") · Mode: @(item.SupportsSync ? "Sync-backed" : "Ops-only") · Updated: @FormatTimestamp(item.UpdatedAtUtc)</span>
+                            </div>
+                            <span class="integration-instance-health" style="@BuildHealthPillStyle(item)">@GetHealthLabel(item)</span>
                         </div>
-                        <div>
-                            <p class="card-label">UNAVAILABLE INDEXERS</p>
-                            <p style="margin:0.35rem 0 0;">@item.ProwlarrSummary.UnavailableIndexers</p>
+
+                        <div class="integration-instance-detail-grid">
+                            <div>
+                                <p class="card-label">VERSION</p>
+                                <div class="integration-instance-version-row">
+                                    <span>@DisplayVersionComparison(item.CurrentVersion, item.LatestReleaseVersion)</span>
+                                    <span style="@BuildVersionStatusPillStyle(item.CurrentVersion, item.LatestReleaseVersion)">@GetVersionStatusLabel(item.CurrentVersion, item.LatestReleaseVersion)</span>
+                                </div>
+                            </div>
+                            <div>
+                                <p class="card-label">HEALTH</p>
+                                <p style="margin:0.35rem 0 0;">Last success: @FormatTimestamp(item.LastSuccessfulAtUtc)</p>
+                                <p class="card-note" style="margin-top:0.25rem;">Last attempt: @FormatTimestamp(item.LastAttemptedAtUtc)</p>
+                                @if (!string.IsNullOrWhiteSpace(item.LastError))
+                                {
+                                    <p class="card-note" style="margin-top:0.25rem;">Error: @item.LastError</p>
+                                }
+                            </div>
                         </div>
-                        <div>
-                            <p class="card-label">APPLICATION LINKS</p>
-                            <p style="margin:0.35rem 0 0;">@item.ProwlarrSummary.ApplicationLinks</p>
-                        </div>
-                        <div>
-                            <p class="card-label">HEALTH ISSUES</p>
-                            <p style="margin:0.35rem 0 0;">@item.ProwlarrSummary.HealthIssues</p>
-                            <p class="card-note" style="margin-top:0.25rem;">Warnings: @item.ProwlarrSummary.WarningHealthIssues · Errors: @item.ProwlarrSummary.ErrorHealthIssues</p>
+
+                        @if (string.Equals(item.ServiceKey, "prowlarr", StringComparison.OrdinalIgnoreCase) && item.ProwlarrSummary is not null)
+                        {
+                            <div class="integration-prowlarr-summary-grid">
+                                <div>
+                                    <p class="card-label">CONFIGURED INDEXERS</p>
+                                    <p style="margin:0.35rem 0 0;">@item.ProwlarrSummary.ConfiguredIndexers</p>
+                                </div>
+                                <div>
+                                    <p class="card-label">UNAVAILABLE INDEXERS</p>
+                                    <p style="margin:0.35rem 0 0;">@item.ProwlarrSummary.UnavailableIndexers</p>
+                                </div>
+                                <div>
+                                    <p class="card-label">APPLICATION LINKS</p>
+                                    <p style="margin:0.35rem 0 0;">@item.ProwlarrSummary.ApplicationLinks</p>
+                                </div>
+                                <div>
+                                    <p class="card-label">HEALTH ISSUES</p>
+                                    <p style="margin:0.35rem 0 0;">@item.ProwlarrSummary.HealthIssues</p>
+                                    <p class="card-note" style="margin-top:0.25rem;">Warnings: @item.ProwlarrSummary.WarningHealthIssues · Errors: @item.ProwlarrSummary.ErrorHealthIssues</p>
+                                </div>
+                            </div>
+                        }
+
+                        <div class="integration-instance-actions">
+                            <MudButtonGroup Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small">
+                                @if (item.SupportsSync)
+                                {
+                                    <MudButton Class="integration-action-button integration-action-button-sync" ButtonType="ButtonType.Button" Disabled="@(_syncingId == item.Id)" OnClick="@(() => SyncIntegrationAsync(item))">
+                                        @(_syncingId == item.Id ? "Syncing..." : "Sync")
+                                    </MudButton>
+                                }
+                                <MudButton Class="integration-action-button integration-action-button-secondary" ButtonType="ButtonType.Button" Disabled="@(_testingId == item.Id)" OnClick="@(() => TestIntegrationAsync(item))">
+                                    @(_testingId == item.Id ? "Testing..." : "Test")
+                                </MudButton>
+                                <MudButton Class="integration-action-button" Href="/integrations" Color="Color.Secondary">Manage connections</MudButton>
+                            </MudButtonGroup>
                         </div>
                     </div>
                 }
-
-                <div class="integration-instance-actions">
-                    @if (item.SupportsSync)
-                    {
-                        <button class="button-primary integration-action-button integration-action-button-sync" disabled="@(_syncingId == item.Id)" @onclick="() => SyncIntegrationAsync(item)">
-                            @(_syncingId == item.Id ? "Syncing..." : "Sync")
-                        </button>
-                    }
-                    <button class="button-primary integration-action-button integration-action-button-secondary" disabled="@(_testingId == item.Id)" @onclick="() => TestIntegrationAsync(item)">
-                        @(_testingId == item.Id ? "Testing..." : "Test")
-                    </button>
-                    <a class="button-primary integration-action-button" href="/settings/integrations" style="display:inline-block; text-decoration:none; background:#334155; border-color:#334155;">Connection settings</a>
-                </div>
             </div>
         }
-    </div>
+    </section>
 }
+
+
+<MudDialog Class="integration-dialog integration-path-mapping-dialog" @bind-Visible="_pathMappingDialogVisible" Options="_pathMappingDialogOptions">
+    <TitleContent>
+        @(_editingPathMappingId is null ? "Add mapping" : "Edit mapping")
+    </TitleContent>
+    <DialogContent>
+        <div style="display:grid; gap:0.85rem; max-height:min(70vh, 760px); overflow-y:auto; padding-right:0.25rem;">
+            <p class="card-note">Manage this integration's remote-to-local folder mapping directly from the integration page.</p>
+
+            <div class="form-group">
+                <label>Remote Root Path</label>
+                @if (_radarrRemoteRoots?.Paths is { Count: > 0 } remoteRootOptions)
+                {
+                    <select class="input" value="@(_useCustomPathMappingRemoteRoot ? CustomRemoteRootChoice : _pathMappingForm.RemoteRootPath)" @onchange="OnPathMappingRemoteRootChoiceChanged">
+                        @foreach (var root in remoteRootOptions)
+                        {
+                            <option value="@root">@root</option>
+                        }
+                        <option value="@CustomRemoteRootChoice">Custom...</option>
+                    </select>
+                    @if (_useCustomPathMappingRemoteRoot)
+                    {
+                        <InputText class="input" style="margin-top:0.45rem;" @bind-Value="_pathMappingForm.RemoteRootPath" placeholder="Enter custom remote root" />
+                    }
+                }
+                else
+                {
+                    <InputText class="input" @bind-Value="_pathMappingForm.RemoteRootPath" placeholder="/movies" />
+                }
+            </div>
+
+            <div class="form-group">
+                <label>Local Root Path</label>
+                <InputText class="input" @bind-Value="_pathMappingForm.LocalRootPath" placeholder="/Volumes/Media/Movies" />
+            </div>
+
+            <MudButtonGroup Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small">
+                <MudButton ButtonType="ButtonType.Button" Disabled="@_pathMappingSaving" OnClick="SavePathMappingAsync">@(_pathMappingSaving ? "Saving..." : "Save mapping")</MudButton>
+                <MudButton ButtonType="ButtonType.Button" Color="Color.Secondary" OnClick="ClosePathMappingDialog">Cancel</MudButton>
+            </MudButtonGroup>
+        </div>
+    </DialogContent>
+</MudDialog>
+
+<MudDialog Class="integration-dialog radarr-naming-help-dialog" @bind-Visible="_radarrNamingHelpVisible" Options="_radarrNamingHelpDialogOptions">
+    <TitleContent>
+        Movie naming tokens
+    </TitleContent>
+    <DialogContent>
+        <div class="radarr-naming-help-shell">
+            <p class="card-note">Replicated from Radarr's movie naming help so you can format names in MediaCloud without leaving the page.</p>
+
+            <section class="radarr-naming-help-section">
+                <p class="card-label">MOVIE NAMING</p>
+                <ul>
+                    <li><code>{Movie Title}</code> → The Movie's Title!</li>
+                    <li><code>{Movie Title:DE}</code> → Titel des Films</li>
+                    <li><code>{Movie CleanTitle}</code> → The Movies Title!</li>
+                    <li><code>{Movie TitleThe}</code> → Movie's Title!, The</li>
+                    <li><code>{Movie OriginalTitle}</code> → Τίτλος ταινίας</li>
+                    <li><code>{Movie CleanOriginalTitle}</code> → Τίτλος ταινίας</li>
+                    <li><code>{Movie TitleFirstCharacter}</code> → S</li>
+                    <li><code>{Movie Collection}</code> → The Movie Collection</li>
+                    <li><code>{Movie Certification}</code> → R</li>
+                    <li><code>{Release Year}</code> → 2009</li>
+                </ul>
+                <p class="card-note">CleanTitle replaces ampersands with “and”, strips slashes, and removes punctuation that is unsafe or noisy in file names.</p>
+            </section>
+
+            <section class="radarr-naming-help-section">
+                <p class="card-label">MOVIE IDS</p>
+                <ul>
+                    <li><code>{ImdbId}</code> → tt12345</li>
+                    <li><code>{Tmdbid}</code> → 123456</li>
+                    <li><code>{imdb-{ImdbId}}</code> conditionally hides when the IMDb value is blank.</li>
+                </ul>
+            </section>
+
+            <section class="radarr-naming-help-section">
+                <p class="card-label">QUALITY</p>
+                <ul>
+                    <li><code>{Quality Full}</code> → HDTV 720p Proper</li>
+                    <li><code>{Quality Title}</code> → HDTV 720p</li>
+                </ul>
+            </section>
+
+            <section class="radarr-naming-help-section">
+                <p class="card-label">MEDIA INFO</p>
+                <ul>
+                    <li><code>{MediaInfo Simple}</code> → x264 DTS</li>
+                    <li><code>{MediaInfo Full}</code> → x264 DTS [EN+DE]</li>
+                    <li><code>{MediaInfo AudioCodec}</code> → DTS</li>
+                    <li><code>{MediaInfo AudioChannels}</code> → 5.1</li>
+                    <li><code>{MediaInfo AudioLanguages}</code> → [EN+DE]</li>
+                    <li><code>{MediaInfo SubtitleLanguages}</code> → [EN]</li>
+                    <li><code>{MediaInfo VideoCodec}</code> → x264</li>
+                    <li><code>{MediaInfo VideoBitDepth}</code> → 8</li>
+                    <li><code>{MediaInfo VideoDynamicRange}</code> → HDR</li>
+                    <li><code>{MediaInfo VideoDynamicRangeType}</code> → DV HDR10</li>
+                </ul>
+                <p class="card-note">Language filters like <code>:EN+DE</code> are supported for MediaInfo Full, AudioLanguages, and SubtitleLanguages. Use <code>-DE</code> to exclude a language.</p>
+            </section>
+
+            <section class="radarr-naming-help-section">
+                <p class="card-label">RELEASE / EDITION / CUSTOM</p>
+                <ul>
+                    <li><code>{Release Group}</code> → Rls Grp</li>
+                    <li><code>{Edition Tags}</code> → IMAX</li>
+                    <li><code>{edition-{Edition Tags}}</code> conditionally hides when edition tags are blank.</li>
+                    <li><code>{Custom Formats}</code> → Surround Sound x264</li>
+                </ul>
+            </section>
+
+            <section class="radarr-naming-help-section">
+                <p class="card-label">ORIGINAL</p>
+                <ul>
+                    <li><code>{Original Title}</code> → Movie.Title.HDTV.x264-EVOLVE</li>
+                    <li><code>{Original Filename}</code> → Movie.title.hdtv.x264-EVOLVE</li>
+                </ul>
+                <p class="card-note">Radarr recommends Original Title over Original Filename because the literal filename may be obfuscated.</p>
+            </section>
+
+            <section class="radarr-naming-help-section">
+                <p class="card-label">MOVIE FOLDER FORMAT</p>
+                <p class="card-note">Folder naming uses the same movie identity tokens plus the core IDs:</p>
+                <ul>
+                    <li><code>{Movie Title}</code>, <code>{Movie Title:DE}</code>, <code>{Movie CleanTitle}</code></li>
+                    <li><code>{Movie TitleThe}</code>, <code>{Movie OriginalTitle}</code>, <code>{Movie TitleFirstCharacter}</code></li>
+                    <li><code>{Movie Collection}</code>, <code>{Movie Certification}</code>, <code>{Release Year}</code></li>
+                    <li><code>{ImdbId}</code>, <code>{Tmdbid}</code></li>
+                </ul>
+            </section>
+        </div>
+    </DialogContent>
+    <DialogActions>
+        <MudButton ButtonType="ButtonType.Button" Color="Color.Secondary" OnClick="CloseRadarrNamingHelp">Close</MudButton>
+    </DialogActions>
+</MudDialog>
+
+<style>
+    .integration-detail-panel-toggle {
+        width: 100%;
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 0.85rem;
+        padding: 0;
+        border: 0;
+        background: transparent;
+        color: inherit;
+        text-align: left;
+        cursor: pointer;
+    }
+
+    .integration-detail-panel-toggle:hover .integration-detail-panel-chevron,
+    .integration-detail-panel-toggle:focus-visible .integration-detail-panel-chevron {
+        color: #e2e8f0;
+    }
+
+    .integration-detail-panel-header {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 0.75rem;
+    }
+
+    .integration-detail-panel-header .integration-detail-panel-toggle {
+        flex: 1 1 auto;
+        justify-content: flex-start;
+    }
+
+    .integration-detail-panel-actions {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        margin-left: auto;
+    }
+
+    .integration-detail-panel-icon-button {
+        border: 1px solid rgba(71, 85, 105, 0.65);
+        background: rgba(15, 23, 42, 0.72);
+        color: #cbd5e1;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        transition: border-color 120ms ease, color 120ms ease, background 120ms ease;
+    }
+
+    .integration-detail-panel-icon-button:hover,
+    .integration-detail-panel-icon-button:focus-visible {
+        color: #f8fafc;
+        border-color: rgba(148, 163, 184, 0.85);
+        background: rgba(30, 41, 59, 0.9);
+        outline: none;
+    }
+
+    .integration-detail-panel-icon-button {
+        width: 2rem;
+        height: 2rem;
+        border-radius: 999px;
+        padding: 0;
+        line-height: 1;
+    }
+
+    .integration-detail-panel-icon-glyph {
+        width: 1rem;
+        height: 1rem;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 999px;
+        border: 1.5px solid currentColor;
+        font-size: 0.72rem;
+        font-weight: 800;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        font-style: normal;
+        text-transform: none;
+        transform: translateY(-0.02rem);
+    }
+
+
+    .integration-detail-panel-chevron {
+        color: #94a3b8;
+        font-size: 1rem;
+        line-height: 1;
+        margin-left: auto;
+        padding-top: 0.15rem;
+    }
+
+    .integration-detail-panel-body {
+        display: grid;
+        gap: 0.85rem;
+        margin-top: 0.15rem;
+    }
+
+    .radarr-naming-help-shell {
+        display: grid;
+        gap: 0.9rem;
+        max-height: min(70vh, 760px);
+        overflow-y: auto;
+        padding-right: 0.25rem;
+    }
+
+    .radarr-naming-help-section {
+        display: grid;
+        gap: 0.35rem;
+        padding: 0.85rem;
+        border: 1px solid rgba(71, 85, 105, 0.55);
+        border-radius: 12px;
+        background: rgba(15, 23, 42, 0.55);
+    }
+
+    .radarr-naming-help-section ul {
+        margin: 0;
+        padding-left: 1.1rem;
+        display: grid;
+        gap: 0.3rem;
+    }
+
+    .radarr-naming-help-section code {
+        color: #bfdbfe;
+        background: rgba(30, 41, 59, 0.9);
+        border: 1px solid rgba(71, 85, 105, 0.55);
+        border-radius: 6px;
+        padding: 0.1rem 0.3rem;
+    }
+</style>
 
 @code {
     [Parameter] public string ServiceKey { get; set; } = string.Empty;
 
+    private const string MonitoringSettingsEndpoint = "/api/settings/monitoring";
+    private const string LibraryPathMappingsEndpoint = "/api/library-path-mappings";
+    private const string RemoteRootsEndpointTemplate = "/api/integrations/{integrationId}/remote-roots";
+    private const string RadarrNamingEndpointTemplate = "/api/integrations/{integrationId}/radarr/naming";
+    private const string RadarrQualityProfilesEndpointTemplate = "/api/integrations/{integrationId}/radarr/quality-profiles";
+    private const string RadarrSyncMediaCloudProfileEndpointTemplate = "/api/integrations/{integrationId}/radarr/quality-profiles/sync-mediacloud-profile";
+    private const string SonarrQualityProfilesEndpointTemplate = "/api/integrations/{integrationId}/sonarr/quality-profiles";
+    private const string SonarrSyncMediaCloudProfileEndpointTemplate = "/api/integrations/{integrationId}/sonarr/quality-profiles/sync-mediacloud-profile";
+    private const string RadarrDefaultAddPolicyEndpointTemplate = "/api/integrations/{integrationId}/radarr/default-add-policy";
+    private const string RadarrTagsEndpointTemplate = "/api/integrations/{integrationId}/radarr/tags";
+    private const string PathMappingTestEndpointTemplate = "/api/library-path-mappings/{mappingId}/test";
+    private const string PlexBackfillPreviewEndpoint = "/api/reconcile/plex-backfill/preview";
+    private const string LibraryItemSearchReplacementEndpointTemplate = "/api/library/items/{libraryItemId}/remediation/search-replacement";
+    private const string LibraryItemRadarrSourceSyncEndpointTemplate = "/api/library/items/{libraryItemId}/sources/radarr/sync";
+    private const string CustomRemoteRootChoice = "__custom__";
+
     private readonly List<IntegrationInstanceResponse> _instances = [];
+    private readonly HashSet<string> _expandedPanels = [];
+    private readonly DialogOptions _pathMappingDialogOptions = new() { CloseOnEscapeKey = true, MaxWidth = MaxWidth.Medium, FullWidth = true };
+    private readonly DialogOptions _radarrNamingHelpDialogOptions = new() { CloseOnEscapeKey = true, MaxWidth = MaxWidth.Medium, FullWidth = true };
     private bool _loading = true;
     private string _loadError = string.Empty;
     private long? _testingId;
     private long? _syncingId;
+    private long? _testingMappingId;
+    private MonitoringSettingsResponse? _monitoringSettings;
+    private LibraryPathMappingResponse? _radarrPathMapping;
+    private LibraryPathMappingTestResponse? _radarrPathMappingTest;
+    private IntegrationRemoteRootsResponse? _radarrRemoteRoots;
+    private long? _editingPathMappingId;
+    private PathMappingFormModel _pathMappingForm = new();
+    private RadarrNamingSettingsModel? _radarrNaming;
+    private RadarrQualityProfilesModel? _radarrQualityProfiles;
+    private RadarrDefaultAddPolicyModel? _radarrDefaultAddPolicy;
+    private RadarrTagsModel? _radarrTags;
+    private string _radarrNamingError = string.Empty;
+    private string _radarrTagsError = string.Empty;
+    private string _radarrQualityProfilesError = string.Empty;
+    private string _radarrDefaultAddPolicyError = string.Empty;
+    private bool _radarrNamingLoading;
+    private bool _radarrNamingSaving;
+    private bool _radarrQualityProfilesLoading;
+    private bool _radarrQualityProfilesSaving;
+    private bool _radarrQualityProfilesSyncing;
+    private bool _radarrDefaultAddPolicyLoading;
+    private bool _radarrDefaultAddPolicySaving;
+    private bool _radarrTagsLoading;
+    private bool _radarrTagsSaving;
+    private bool _radarrNamingHelpVisible;
+    private bool _pathMappingDialogVisible;
+    private bool _pathMappingSaving;
+    private bool _useCustomPathMappingRemoteRoot = true;
+    private PlexBackfillPreviewResponse? _radarrDriftPreview;
+    private bool _radarrDriftPreviewLoading;
+    private readonly HashSet<long> _radarrSearchingLibraryItemIds = [];
+    private readonly HashSet<long> _radarrSyncingLibraryItemIds = [];
+    private readonly HashSet<long> _selectedRadarrSearchRetryLibraryItemIds = [];
+    private string _radarrSearchRetryStatus = string.Empty;
 
     private string NormalizedServiceKey => (ServiceKey ?? string.Empty).Trim().ToLowerInvariant();
+    private bool IsRadarrPage => string.Equals(NormalizedServiceKey, "radarr", StringComparison.OrdinalIgnoreCase);
+    private bool IsSonarrPage => string.Equals(NormalizedServiceKey, "sonarr", StringComparison.OrdinalIgnoreCase);
     private string ServiceDisplayName => _instances.FirstOrDefault()?.DisplayName ?? NormalizeServiceDisplayName(ServiceKey);
     private string TitleText => string.IsNullOrWhiteSpace(ServiceDisplayName) ? "Integration" : $"{ServiceDisplayName} integration";
+    private IReadOnlyList<PlexBackfillCandidateDto> VisibleRadarrSearchRetryRows => _radarrDriftPreview?.Items.Take(8).ToList() ?? [];
+    private bool AreAllVisibleRadarrSearchRetryRowsSelected =>
+        VisibleRadarrSearchRetryRows.Where(CanBulkOperateOnRadarrSearchRetryRow).All(x => _selectedRadarrSearchRetryLibraryItemIds.Contains(x.LibraryItemId))
+        && VisibleRadarrSearchRetryRows.Any(CanBulkOperateOnRadarrSearchRetryRow);
 
     protected override async Task OnParametersSetAsync()
     {
         await LoadInstancesAsync();
+        await LoadServiceSpecificPanelsAsync();
     }
 
     private async Task LoadInstancesAsync()
@@ -170,6 +1138,1044 @@ else
         finally
         {
             _loading = false;
+        }
+    }
+
+    private async Task LoadServiceSpecificPanelsAsync()
+    {
+        _monitoringSettings = null;
+        _radarrPathMapping = null;
+        _radarrPathMappingTest = null;
+        _radarrRemoteRoots = null;
+        _editingPathMappingId = null;
+        _pathMappingDialogVisible = false;
+        _pathMappingSaving = false;
+        _useCustomPathMappingRemoteRoot = true;
+        _pathMappingForm = new PathMappingFormModel();
+        _radarrNaming = null;
+        _radarrQualityProfiles = null;
+        _radarrDefaultAddPolicy = null;
+        _radarrTags = null;
+        _radarrNamingError = string.Empty;
+        _radarrQualityProfilesError = string.Empty;
+        _radarrDefaultAddPolicyError = string.Empty;
+        _radarrTagsError = string.Empty;
+        _radarrNamingLoading = false;
+        _radarrNamingSaving = false;
+        _radarrQualityProfilesLoading = false;
+        _radarrQualityProfilesSaving = false;
+        _radarrQualityProfilesSyncing = false;
+        _radarrDefaultAddPolicyLoading = false;
+        _radarrDefaultAddPolicySaving = false;
+        _radarrTagsLoading = false;
+        _radarrTagsSaving = false;
+        _radarrDriftPreview = null;
+        _radarrDriftPreviewLoading = false;
+        _radarrSearchingLibraryItemIds.Clear();
+        _radarrSyncingLibraryItemIds.Clear();
+        _selectedRadarrSearchRetryLibraryItemIds.Clear();
+        _radarrSearchRetryStatus = string.Empty;
+
+        var integration = _instances.FirstOrDefault();
+        if (integration is null)
+        {
+            return;
+        }
+
+        if (!IsRadarrPage)
+        {
+            if (IsSonarrPage)
+            {
+                await LoadSonarrQualityProfilesAsync(integration.Id);
+            }
+
+            return;
+        }
+
+        await LoadMonitoringSettingsAsync();
+        await LoadRadarrQualityProfilesAsync(integration.Id);
+        await LoadRadarrDefaultAddPolicyAsync(integration.Id);
+        await LoadRadarrTagsAsync(integration.Id);
+        await LoadRadarrNamingAsync(integration.Id);
+        await LoadRadarrPathMappingAsync(integration.Id);
+        await LoadRadarrRemoteRootsAsync(integration.Id);
+        _ = LoadRadarrDriftPreviewAsync();
+    }
+
+    private async Task LoadMonitoringSettingsAsync()
+    {
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, MonitoringSettingsEndpoint);
+            await AttachBearerAsync(request);
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                return;
+            }
+
+            _monitoringSettings = await response.Content.ReadFromJsonAsync<MonitoringSettingsResponse>();
+        }
+        catch
+        {
+        }
+    }
+
+    private async Task LoadRadarrPathMappingAsync(long integrationId)
+    {
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, LibraryPathMappingsEndpoint);
+            await AttachBearerAsync(request);
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                return;
+            }
+
+            var mappings = await response.Content.ReadFromJsonAsync<List<LibraryPathMappingResponse>>() ?? [];
+            _radarrPathMapping = mappings.FirstOrDefault(x => x.IntegrationId == integrationId);
+        }
+        catch
+        {
+        }
+    }
+
+    private async Task LoadRadarrRemoteRootsAsync(long integrationId)
+    {
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, RemoteRootsEndpointTemplate.Replace("{integrationId}", integrationId.ToString()));
+            await AttachBearerAsync(request);
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                return;
+            }
+
+            _radarrRemoteRoots = await response.Content.ReadFromJsonAsync<IntegrationRemoteRootsResponse>();
+        }
+        catch
+        {
+        }
+    }
+
+    private async Task LoadRadarrQualityProfilesAsync(long integrationId)
+    {
+        _radarrQualityProfilesLoading = true;
+        _radarrQualityProfilesError = string.Empty;
+
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, RadarrQualityProfilesEndpointTemplate.Replace("{integrationId}", integrationId.ToString()));
+            await AttachBearerAsync(request);
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                _radarrQualityProfilesError = $"Failed to load quality profiles ({(int)response.StatusCode}).";
+                return;
+            }
+
+            var payload = await response.Content.ReadFromJsonAsync<RadarrQualityProfilesResponse>();
+            if (payload is null)
+            {
+                _radarrQualityProfilesError = "Radarr quality profiles returned no data.";
+                return;
+            }
+
+            _radarrQualityProfiles = new RadarrQualityProfilesModel
+            {
+                Profiles = payload.Profiles.Select(x => new RadarrQualityProfileOptionModel { Id = x.Id, Name = x.Name }).ToList(),
+                PreferredProfileId = payload.PreferredProfileId ?? payload.Profiles.FirstOrDefault()?.Id ?? 0,
+                PreferredProfileName = payload.PreferredProfileName,
+                ObservedLibraryQualityProfiles = payload.ObservedLibraryQualityProfiles.ToList()
+            };
+        }
+        catch
+        {
+            _radarrQualityProfilesError = "Failed to load quality profiles.";
+        }
+        finally
+        {
+            _radarrQualityProfilesLoading = false;
+        }
+    }
+
+    private async Task ReloadRadarrQualityProfilesAsync()
+    {
+        var integration = _instances.FirstOrDefault();
+        if (integration is null)
+        {
+            return;
+        }
+
+        await LoadRadarrQualityProfilesAsync(integration.Id);
+    }
+
+    private async Task LoadSonarrQualityProfilesAsync(long integrationId)
+    {
+        _radarrQualityProfilesLoading = true;
+        _radarrQualityProfilesError = string.Empty;
+
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, SonarrQualityProfilesEndpointTemplate.Replace("{integrationId}", integrationId.ToString()));
+            await AttachBearerAsync(request);
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                _radarrQualityProfilesError = $"Failed to load Sonarr quality profiles ({(int)response.StatusCode}).";
+                return;
+            }
+
+            var payload = await response.Content.ReadFromJsonAsync<RadarrQualityProfilesResponse>();
+            if (payload is null)
+            {
+                _radarrQualityProfilesError = "Sonarr quality profiles returned no data.";
+                return;
+            }
+
+            _radarrQualityProfiles = new RadarrQualityProfilesModel
+            {
+                Profiles = payload.Profiles.Select(x => new RadarrQualityProfileOptionModel { Id = x.Id, Name = x.Name }).ToList(),
+                PreferredProfileId = payload.PreferredProfileId ?? payload.Profiles.FirstOrDefault()?.Id ?? 0,
+                PreferredProfileName = payload.PreferredProfileName,
+                ObservedLibraryQualityProfiles = payload.ObservedLibraryQualityProfiles.ToList()
+            };
+        }
+        catch
+        {
+            _radarrQualityProfilesError = "Failed to load Sonarr quality profiles.";
+        }
+        finally
+        {
+            _radarrQualityProfilesLoading = false;
+        }
+    }
+
+    private async Task ReloadSonarrQualityProfilesAsync()
+    {
+        var integration = _instances.FirstOrDefault();
+        if (integration is null)
+        {
+            return;
+        }
+
+        await LoadSonarrQualityProfilesAsync(integration.Id);
+    }
+
+    private async Task SaveRadarrQualityProfileAsync()
+    {
+        var integration = _instances.FirstOrDefault();
+        if (integration is null || _radarrQualityProfiles is null || _radarrQualityProfiles.PreferredProfileId <= 0)
+        {
+            return;
+        }
+
+        _radarrQualityProfilesSaving = true;
+        _radarrQualityProfilesError = string.Empty;
+
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Put, RadarrQualityProfilesEndpointTemplate.Replace("{integrationId}", integration.Id.ToString()))
+            {
+                Content = JsonContent.Create(new UpdateRadarrPreferredQualityProfileRequest(_radarrQualityProfiles.PreferredProfileId))
+            };
+            await AttachBearerAsync(request);
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                _radarrQualityProfilesError = $"Failed to save preferred quality profile ({(int)response.StatusCode}).";
+                Snackbar.Add(_radarrQualityProfilesError, Severity.Error);
+                return;
+            }
+
+            var payload = await response.Content.ReadFromJsonAsync<RadarrQualityProfilesResponse>();
+            if (payload is null)
+            {
+                _radarrQualityProfilesError = "Radarr preferred quality profile save returned no data.";
+                Snackbar.Add(_radarrQualityProfilesError, Severity.Error);
+                return;
+            }
+
+            _radarrQualityProfiles = new RadarrQualityProfilesModel
+            {
+                Profiles = payload.Profiles.Select(x => new RadarrQualityProfileOptionModel { Id = x.Id, Name = x.Name }).ToList(),
+                PreferredProfileId = payload.PreferredProfileId ?? 0,
+                PreferredProfileName = payload.PreferredProfileName,
+                ObservedLibraryQualityProfiles = payload.ObservedLibraryQualityProfiles.ToList()
+            };
+
+            Snackbar.Add("Radarr preferred quality profile updated.", Severity.Success);
+        }
+        catch
+        {
+            _radarrQualityProfilesError = "Failed to save preferred quality profile.";
+            Snackbar.Add(_radarrQualityProfilesError, Severity.Error);
+        }
+        finally
+        {
+            _radarrQualityProfilesSaving = false;
+        }
+    }
+
+    private async Task SyncRadarrMediaCloudProfileAsync()
+    {
+        var integration = _instances.FirstOrDefault();
+        if (integration is null || _radarrQualityProfiles is null)
+        {
+            return;
+        }
+
+        _radarrQualityProfilesSyncing = true;
+        _radarrQualityProfilesError = string.Empty;
+
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, RadarrSyncMediaCloudProfileEndpointTemplate.Replace("{integrationId}", integration.Id.ToString()));
+            await AttachBearerAsync(request);
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                _radarrQualityProfilesError = $"Failed to sync MediaCloud Profile ({(int)response.StatusCode}).";
+                Snackbar.Add(_radarrQualityProfilesError, Severity.Error);
+                return;
+            }
+
+            var payload = await response.Content.ReadFromJsonAsync<RadarrQualityProfilesResponse>();
+            if (payload is null)
+            {
+                _radarrQualityProfilesError = "Radarr MediaCloud Profile sync returned no data.";
+                Snackbar.Add(_radarrQualityProfilesError, Severity.Error);
+                return;
+            }
+
+            _radarrQualityProfiles = new RadarrQualityProfilesModel
+            {
+                Profiles = payload.Profiles.Select(x => new RadarrQualityProfileOptionModel { Id = x.Id, Name = x.Name }).ToList(),
+                PreferredProfileId = payload.PreferredProfileId ?? 0,
+                PreferredProfileName = payload.PreferredProfileName,
+                ObservedLibraryQualityProfiles = payload.ObservedLibraryQualityProfiles.ToList()
+            };
+
+            Snackbar.Add("Radarr MediaCloud Profile synced and selected.", Severity.Success);
+        }
+        catch
+        {
+            _radarrQualityProfilesError = "Failed to sync MediaCloud Profile.";
+            Snackbar.Add(_radarrQualityProfilesError, Severity.Error);
+        }
+        finally
+        {
+            _radarrQualityProfilesSyncing = false;
+        }
+    }
+
+    private async Task SaveSonarrQualityProfileAsync()
+    {
+        var integration = _instances.FirstOrDefault();
+        if (integration is null || _radarrQualityProfiles is null || _radarrQualityProfiles.PreferredProfileId <= 0)
+        {
+            return;
+        }
+
+        _radarrQualityProfilesSaving = true;
+        _radarrQualityProfilesError = string.Empty;
+
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Put, SonarrQualityProfilesEndpointTemplate.Replace("{integrationId}", integration.Id.ToString()))
+            {
+                Content = JsonContent.Create(new UpdateRadarrPreferredQualityProfileRequest(_radarrQualityProfiles.PreferredProfileId))
+            };
+            await AttachBearerAsync(request);
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                _radarrQualityProfilesError = $"Failed to save Sonarr preferred quality profile ({(int)response.StatusCode}).";
+                Snackbar.Add(_radarrQualityProfilesError, Severity.Error);
+                return;
+            }
+
+            var payload = await response.Content.ReadFromJsonAsync<RadarrQualityProfilesResponse>();
+            if (payload is null)
+            {
+                _radarrQualityProfilesError = "Sonarr preferred quality profile save returned no data.";
+                Snackbar.Add(_radarrQualityProfilesError, Severity.Error);
+                return;
+            }
+
+            _radarrQualityProfiles = new RadarrQualityProfilesModel
+            {
+                Profiles = payload.Profiles.Select(x => new RadarrQualityProfileOptionModel { Id = x.Id, Name = x.Name }).ToList(),
+                PreferredProfileId = payload.PreferredProfileId ?? 0,
+                PreferredProfileName = payload.PreferredProfileName,
+                ObservedLibraryQualityProfiles = payload.ObservedLibraryQualityProfiles.ToList()
+            };
+
+            Snackbar.Add("Sonarr preferred quality profile updated.", Severity.Success);
+        }
+        catch
+        {
+            _radarrQualityProfilesError = "Failed to save Sonarr preferred quality profile.";
+            Snackbar.Add(_radarrQualityProfilesError, Severity.Error);
+        }
+        finally
+        {
+            _radarrQualityProfilesSaving = false;
+        }
+    }
+
+    private async Task SyncSonarrMediaCloudProfileAsync()
+    {
+        var integration = _instances.FirstOrDefault();
+        if (integration is null || _radarrQualityProfiles is null)
+        {
+            return;
+        }
+
+        _radarrQualityProfilesSyncing = true;
+        _radarrQualityProfilesError = string.Empty;
+
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, SonarrSyncMediaCloudProfileEndpointTemplate.Replace("{integrationId}", integration.Id.ToString()));
+            await AttachBearerAsync(request);
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                _radarrQualityProfilesError = $"Failed to sync MediaCloud Profile into Sonarr ({(int)response.StatusCode}).";
+                Snackbar.Add(_radarrQualityProfilesError, Severity.Error);
+                return;
+            }
+
+            var payload = await response.Content.ReadFromJsonAsync<RadarrQualityProfilesResponse>();
+            if (payload is null)
+            {
+                _radarrQualityProfilesError = "Sonarr MediaCloud Profile sync returned no data.";
+                Snackbar.Add(_radarrQualityProfilesError, Severity.Error);
+                return;
+            }
+
+            _radarrQualityProfiles = new RadarrQualityProfilesModel
+            {
+                Profiles = payload.Profiles.Select(x => new RadarrQualityProfileOptionModel { Id = x.Id, Name = x.Name }).ToList(),
+                PreferredProfileId = payload.PreferredProfileId ?? 0,
+                PreferredProfileName = payload.PreferredProfileName,
+                ObservedLibraryQualityProfiles = payload.ObservedLibraryQualityProfiles.ToList()
+            };
+
+            Snackbar.Add("Sonarr MediaCloud Profile synced and selected.", Severity.Success);
+        }
+        catch
+        {
+            _radarrQualityProfilesError = "Failed to sync MediaCloud Profile into Sonarr.";
+            Snackbar.Add(_radarrQualityProfilesError, Severity.Error);
+        }
+        finally
+        {
+            _radarrQualityProfilesSyncing = false;
+        }
+    }
+
+    private async Task LoadRadarrDefaultAddPolicyAsync(long integrationId)
+    {
+        _radarrDefaultAddPolicyLoading = true;
+        _radarrDefaultAddPolicyError = string.Empty;
+
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, RadarrDefaultAddPolicyEndpointTemplate.Replace("{integrationId}", integrationId.ToString()));
+            await AttachBearerAsync(request);
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                _radarrDefaultAddPolicyError = $"Failed to load default add policy ({(int)response.StatusCode}).";
+                return;
+            }
+
+            var payload = await response.Content.ReadFromJsonAsync<RadarrDefaultAddPolicyResponse>();
+            if (payload is null)
+            {
+                _radarrDefaultAddPolicyError = "Radarr default add policy returned no data.";
+                return;
+            }
+
+            _radarrDefaultAddPolicy = new RadarrDefaultAddPolicyModel
+            {
+                AvailableRootFolders = payload.AvailableRootFolders.ToList(),
+                AvailableQualityProfiles = payload.AvailableQualityProfiles.Select(x => new RadarrQualityProfileOptionModel { Id = x.Id, Name = x.Name }).ToList(),
+                RootFolderPath = payload.RootFolderPath,
+                QualityProfileId = payload.QualityProfileId ?? payload.AvailableQualityProfiles.FirstOrDefault()?.Id ?? 0,
+                QualityProfileName = payload.QualityProfileName,
+                MinimumAvailability = payload.MinimumAvailability,
+                Monitored = payload.Monitored,
+                MinimumAvailabilityOptions = payload.MinimumAvailabilityOptions.ToList()
+            };
+        }
+        catch
+        {
+            _radarrDefaultAddPolicyError = "Failed to load default add policy.";
+        }
+        finally
+        {
+            _radarrDefaultAddPolicyLoading = false;
+        }
+    }
+
+    private async Task ReloadRadarrDefaultAddPolicyAsync()
+    {
+        var integration = _instances.FirstOrDefault();
+        if (integration is null)
+        {
+            return;
+        }
+
+        await LoadRadarrDefaultAddPolicyAsync(integration.Id);
+    }
+
+    private async Task SaveRadarrDefaultAddPolicyAsync()
+    {
+        var integration = _instances.FirstOrDefault();
+        if (integration is null || _radarrDefaultAddPolicy is null || string.IsNullOrWhiteSpace(_radarrDefaultAddPolicy.RootFolderPath) || _radarrDefaultAddPolicy.QualityProfileId <= 0)
+        {
+            return;
+        }
+
+        _radarrDefaultAddPolicySaving = true;
+        _radarrDefaultAddPolicyError = string.Empty;
+
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Put, RadarrDefaultAddPolicyEndpointTemplate.Replace("{integrationId}", integration.Id.ToString()))
+            {
+                Content = JsonContent.Create(new UpdateRadarrDefaultAddPolicyRequest(
+                    _radarrDefaultAddPolicy.RootFolderPath,
+                    _radarrDefaultAddPolicy.QualityProfileId,
+                    _radarrDefaultAddPolicy.MinimumAvailability,
+                    _radarrDefaultAddPolicy.Monitored))
+            };
+            await AttachBearerAsync(request);
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                _radarrDefaultAddPolicyError = $"Failed to save default add policy ({(int)response.StatusCode}).";
+                Snackbar.Add(_radarrDefaultAddPolicyError, Severity.Error);
+                return;
+            }
+
+            var payload = await response.Content.ReadFromJsonAsync<RadarrDefaultAddPolicyResponse>();
+            if (payload is null)
+            {
+                _radarrDefaultAddPolicyError = "Radarr default add policy save returned no data.";
+                Snackbar.Add(_radarrDefaultAddPolicyError, Severity.Error);
+                return;
+            }
+
+            _radarrDefaultAddPolicy = new RadarrDefaultAddPolicyModel
+            {
+                AvailableRootFolders = payload.AvailableRootFolders.ToList(),
+                AvailableQualityProfiles = payload.AvailableQualityProfiles.Select(x => new RadarrQualityProfileOptionModel { Id = x.Id, Name = x.Name }).ToList(),
+                RootFolderPath = payload.RootFolderPath,
+                QualityProfileId = payload.QualityProfileId ?? 0,
+                QualityProfileName = payload.QualityProfileName,
+                MinimumAvailability = payload.MinimumAvailability,
+                Monitored = payload.Monitored,
+                MinimumAvailabilityOptions = payload.MinimumAvailabilityOptions.ToList()
+            };
+
+            Snackbar.Add("Radarr default add policy updated.", Severity.Success);
+        }
+        catch
+        {
+            _radarrDefaultAddPolicyError = "Failed to save default add policy.";
+            Snackbar.Add(_radarrDefaultAddPolicyError, Severity.Error);
+        }
+        finally
+        {
+            _radarrDefaultAddPolicySaving = false;
+        }
+    }
+
+    private async Task LoadRadarrTagsAsync(long integrationId)
+    {
+        _radarrTagsLoading = true;
+        _radarrTagsError = string.Empty;
+
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, RadarrTagsEndpointTemplate.Replace("{integrationId}", integrationId.ToString()));
+            await AttachBearerAsync(request);
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                _radarrTagsError = $"Failed to load tags ({(int)response.StatusCode}).";
+                return;
+            }
+
+            var payload = await response.Content.ReadFromJsonAsync<RadarrTagsResponse>();
+            if (payload is null)
+            {
+                _radarrTagsError = "Radarr tags returned no data.";
+                return;
+            }
+
+            _radarrTags = new RadarrTagsModel
+            {
+                Tags = payload.Tags.Select(x => new RadarrTagOptionModel { Id = x.Id, Label = x.Label }).ToList(),
+                SelectedTagIds = payload.SelectedTagIds.ToHashSet(),
+                SelectedTagLabels = payload.SelectedTagLabels.ToList()
+            };
+        }
+        catch
+        {
+            _radarrTagsError = "Failed to load tags.";
+        }
+        finally
+        {
+            _radarrTagsLoading = false;
+        }
+    }
+
+    private async Task ReloadRadarrTagsAsync()
+    {
+        var integration = _instances.FirstOrDefault();
+        if (integration is null)
+        {
+            return;
+        }
+
+        await LoadRadarrTagsAsync(integration.Id);
+    }
+
+    private void ToggleRadarrTagSelection(int tagId, object? rawValue)
+    {
+        if (_radarrTags is null)
+        {
+            return;
+        }
+
+        var isChecked = rawValue switch
+        {
+            bool value => value,
+            string value when bool.TryParse(value, out var parsed) => parsed,
+            _ => false
+        };
+
+        if (isChecked)
+        {
+            _radarrTags.SelectedTagIds.Add(tagId);
+        }
+        else
+        {
+            _radarrTags.SelectedTagIds.Remove(tagId);
+        }
+
+        _radarrTags.SelectedTagLabels = _radarrTags.Tags
+            .Where(x => _radarrTags.SelectedTagIds.Contains(x.Id))
+            .OrderBy(x => x.Label, StringComparer.OrdinalIgnoreCase)
+            .Select(x => x.Label)
+            .ToList();
+    }
+
+    private async Task SaveRadarrTagsAsync()
+    {
+        var integration = _instances.FirstOrDefault();
+        if (integration is null || _radarrTags is null)
+        {
+            return;
+        }
+
+        _radarrTagsSaving = true;
+        _radarrTagsError = string.Empty;
+
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Put, RadarrTagsEndpointTemplate.Replace("{integrationId}", integration.Id.ToString()))
+            {
+                Content = JsonContent.Create(new UpdateRadarrTagsRequest(_radarrTags.SelectedTagIds.OrderBy(x => x).ToList()))
+            };
+            await AttachBearerAsync(request);
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                _radarrTagsError = $"Failed to save tags ({(int)response.StatusCode}).";
+                Snackbar.Add(_radarrTagsError, Severity.Error);
+                return;
+            }
+
+            var payload = await response.Content.ReadFromJsonAsync<RadarrTagsResponse>();
+            if (payload is null)
+            {
+                _radarrTagsError = "Radarr tags save returned no data.";
+                Snackbar.Add(_radarrTagsError, Severity.Error);
+                return;
+            }
+
+            _radarrTags = new RadarrTagsModel
+            {
+                Tags = payload.Tags.Select(x => new RadarrTagOptionModel { Id = x.Id, Label = x.Label }).ToList(),
+                SelectedTagIds = payload.SelectedTagIds.ToHashSet(),
+                SelectedTagLabels = payload.SelectedTagLabels.ToList()
+            };
+
+            Snackbar.Add("Radarr default tags updated.", Severity.Success);
+        }
+        catch
+        {
+            _radarrTagsError = "Failed to save tags.";
+            Snackbar.Add(_radarrTagsError, Severity.Error);
+        }
+        finally
+        {
+            _radarrTagsSaving = false;
+        }
+    }
+
+    private async Task LoadRadarrNamingAsync(long integrationId)
+    {
+        _radarrNamingLoading = true;
+        _radarrNamingError = string.Empty;
+
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, RadarrNamingEndpointTemplate.Replace("{integrationId}", integrationId.ToString()));
+            await AttachBearerAsync(request);
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                _radarrNamingError = $"Failed to load naming settings ({(int)response.StatusCode}).";
+                return;
+            }
+
+            var payload = await response.Content.ReadFromJsonAsync<RadarrNamingSettingsResponse>();
+            if (payload is null)
+            {
+                _radarrNamingError = "Radarr naming settings returned no data.";
+                return;
+            }
+
+            _radarrNaming = new RadarrNamingSettingsModel
+            {
+                RenameMovies = payload.RenameMovies,
+                ReplaceIllegalCharacters = payload.ReplaceIllegalCharacters,
+                ColonReplacementFormat = payload.ColonReplacementFormat,
+                StandardMovieFormat = payload.StandardMovieFormat,
+                MovieFolderFormat = payload.MovieFolderFormat,
+                ConfigId = payload.ConfigId
+            };
+        }
+        catch
+        {
+            _radarrNamingError = "Failed to load naming settings.";
+        }
+        finally
+        {
+            _radarrNamingLoading = false;
+        }
+    }
+
+    private async Task ReloadRadarrNamingAsync()
+    {
+        var integration = _instances.FirstOrDefault();
+        if (integration is null)
+        {
+            return;
+        }
+
+        await LoadRadarrNamingAsync(integration.Id);
+    }
+
+    private async Task SaveRadarrNamingAsync()
+    {
+        var integration = _instances.FirstOrDefault();
+        if (integration is null || _radarrNaming is null)
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(_radarrNaming.StandardMovieFormat))
+        {
+            Snackbar.Add("Standard movie format is required.", Severity.Warning);
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(_radarrNaming.MovieFolderFormat))
+        {
+            Snackbar.Add("Movie folder format is required.", Severity.Warning);
+            return;
+        }
+
+        _radarrNamingSaving = true;
+        _radarrNamingError = string.Empty;
+
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Put, RadarrNamingEndpointTemplate.Replace("{integrationId}", integration.Id.ToString()))
+            {
+                Content = JsonContent.Create(new UpdateRadarrNamingSettingsRequest(
+                    _radarrNaming.RenameMovies,
+                    _radarrNaming.ReplaceIllegalCharacters,
+                    _radarrNaming.ColonReplacementFormat,
+                    _radarrNaming.StandardMovieFormat,
+                    _radarrNaming.MovieFolderFormat,
+                    _radarrNaming.ConfigId))
+            };
+            await AttachBearerAsync(request);
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                _radarrNamingError = $"Failed to save naming settings ({(int)response.StatusCode}).";
+                Snackbar.Add(_radarrNamingError, Severity.Error);
+                return;
+            }
+
+            var payload = await response.Content.ReadFromJsonAsync<RadarrNamingSettingsResponse>();
+            if (payload is null)
+            {
+                _radarrNamingError = "Radarr naming save returned no data.";
+                Snackbar.Add(_radarrNamingError, Severity.Error);
+                return;
+            }
+
+            _radarrNaming = new RadarrNamingSettingsModel
+            {
+                RenameMovies = payload.RenameMovies,
+                ReplaceIllegalCharacters = payload.ReplaceIllegalCharacters,
+                ColonReplacementFormat = payload.ColonReplacementFormat,
+                StandardMovieFormat = payload.StandardMovieFormat,
+                MovieFolderFormat = payload.MovieFolderFormat,
+                ConfigId = payload.ConfigId
+            };
+
+            Snackbar.Add("Radarr naming settings updated.", Severity.Success);
+        }
+        catch
+        {
+            _radarrNamingError = "Failed to save naming settings.";
+            Snackbar.Add(_radarrNamingError, Severity.Error);
+        }
+        finally
+        {
+            _radarrNamingSaving = false;
+        }
+    }
+
+    private async Task LoadRadarrDriftPreviewAsync()
+    {
+        _radarrDriftPreviewLoading = true;
+        await InvokeAsync(StateHasChanged);
+
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, PlexBackfillPreviewEndpoint)
+            {
+                Content = JsonContent.Create(new PlexBackfillPreviewRequest(200, false))
+            };
+            await AttachBearerAsync(request);
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                return;
+            }
+
+            _radarrDriftPreview = await response.Content.ReadFromJsonAsync<PlexBackfillPreviewResponse>();
+            var visibleIds = VisibleRadarrSearchRetryRows.Where(CanBulkOperateOnRadarrSearchRetryRow).Select(x => x.LibraryItemId).ToHashSet();
+            _selectedRadarrSearchRetryLibraryItemIds.RemoveWhere(id => !visibleIds.Contains(id));
+        }
+        catch
+        {
+        }
+        finally
+        {
+            _radarrDriftPreviewLoading = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private bool CanBulkOperateOnRadarrSearchRetryRow(PlexBackfillCandidateDto row)
+        => (row.MissingRadarr && row.CanBackfill) || !row.MissingRadarr;
+
+    private void ToggleRadarrSearchRetryRowSelection(long libraryItemId, object? rawValue)
+    {
+        var isChecked = rawValue switch
+        {
+            bool value => value,
+            string value when bool.TryParse(value, out var parsed) => parsed,
+            _ => false
+        };
+
+        if (isChecked)
+        {
+            _selectedRadarrSearchRetryLibraryItemIds.Add(libraryItemId);
+        }
+        else
+        {
+            _selectedRadarrSearchRetryLibraryItemIds.Remove(libraryItemId);
+        }
+    }
+
+    private void ToggleSelectAllRadarrSearchRetryRows(ChangeEventArgs args)
+    {
+        var isChecked = args.Value switch
+        {
+            bool value => value,
+            string value when bool.TryParse(value, out var parsed) => parsed,
+            _ => false
+        };
+
+        foreach (var row in VisibleRadarrSearchRetryRows.Where(CanBulkOperateOnRadarrSearchRetryRow))
+        {
+            if (isChecked)
+            {
+                _selectedRadarrSearchRetryLibraryItemIds.Add(row.LibraryItemId);
+            }
+            else
+            {
+                _selectedRadarrSearchRetryLibraryItemIds.Remove(row.LibraryItemId);
+            }
+        }
+    }
+
+    private async Task BulkSyncSelectedLibraryItemsToRadarrAsync()
+    {
+        var rows = VisibleRadarrSearchRetryRows
+            .Where(x => _selectedRadarrSearchRetryLibraryItemIds.Contains(x.LibraryItemId) && x.MissingRadarr && x.CanBackfill)
+            .ToList();
+        if (rows.Count == 0)
+        {
+            _radarrSearchRetryStatus = "No selected rows are eligible to add to Radarr.";
+            Snackbar.Add(_radarrSearchRetryStatus, Severity.Warning);
+            return;
+        }
+
+        foreach (var row in rows)
+        {
+            await SyncLibraryItemToRadarrAsync(row);
+        }
+
+        _radarrSearchRetryStatus = $"Processed bulk add for {rows.Count} Radarr candidate(s).";
+        Snackbar.Add(_radarrSearchRetryStatus, Severity.Success);
+    }
+
+    private async Task BulkRunRadarrSearchReplacementAsync()
+    {
+        var rows = VisibleRadarrSearchRetryRows
+            .Where(x => _selectedRadarrSearchRetryLibraryItemIds.Contains(x.LibraryItemId) && !x.MissingRadarr)
+            .ToList();
+        if (rows.Count == 0)
+        {
+            _radarrSearchRetryStatus = "No selected rows are eligible for Radarr retry search.";
+            Snackbar.Add(_radarrSearchRetryStatus, Severity.Warning);
+            return;
+        }
+
+        foreach (var row in rows)
+        {
+            await RunRadarrSearchReplacementAsync(row);
+        }
+
+        _radarrSearchRetryStatus = $"Queued bulk retry search for {rows.Count} Radarr item(s).";
+        Snackbar.Add(_radarrSearchRetryStatus, Severity.Success);
+    }
+
+    private async Task RefreshRadarrDriftPreviewAsync()
+    {
+        await LoadRadarrDriftPreviewAsync();
+        _radarrSearchRetryStatus = $"Drift preview refreshed at {DateTimeOffset.Now:t}.";
+        Snackbar.Add("Radarr drift preview refreshed.", Severity.Success);
+    }
+
+    private async Task SyncLibraryItemToRadarrAsync(PlexBackfillCandidateDto row)
+    {
+        _radarrSyncingLibraryItemIds.Add(row.LibraryItemId);
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post,
+                LibraryItemRadarrSourceSyncEndpointTemplate.Replace("{libraryItemId}", row.LibraryItemId.ToString()));
+            await AttachBearerAsync(request);
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                _radarrSearchRetryStatus = $"Add to Radarr failed for {row.Title} ({(int)response.StatusCode}).";
+                Snackbar.Add(_radarrSearchRetryStatus, Severity.Error);
+                return;
+            }
+
+            var payload = await response.Content.ReadFromJsonAsync<LibraryItemSourceSyncResponse>();
+            _radarrSearchRetryStatus = payload?.Message ?? $"Radarr sync completed for {row.Title}.";
+            Snackbar.Add(_radarrSearchRetryStatus, payload?.Success == true ? Severity.Success : Severity.Warning);
+            await LoadRadarrDriftPreviewAsync();
+        }
+        catch
+        {
+            _radarrSearchRetryStatus = $"Add to Radarr failed for {row.Title}.";
+            Snackbar.Add(_radarrSearchRetryStatus, Severity.Error);
+        }
+        finally
+        {
+            _radarrSyncingLibraryItemIds.Remove(row.LibraryItemId);
+        }
+    }
+
+    private async Task RunRadarrSearchReplacementAsync(PlexBackfillCandidateDto row)
+    {
+        _radarrSearchingLibraryItemIds.Add(row.LibraryItemId);
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post,
+                LibraryItemSearchReplacementEndpointTemplate.Replace("{libraryItemId}", row.LibraryItemId.ToString()))
+            {
+                Content = JsonContent.Create(new SearchReplacementRequest("manual_operator_retry", "Triggered from the Radarr integration detail page.", "manual_retry"))
+            };
+            await AttachBearerAsync(request);
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                _radarrSearchRetryStatus = $"Retry search failed for {row.Title} ({(int)response.StatusCode}).";
+                Snackbar.Add(_radarrSearchRetryStatus, Severity.Error);
+                return;
+            }
+
+            var payload = await response.Content.ReadFromJsonAsync<LibraryItemRemediationResponse>();
+            _radarrSearchRetryStatus = payload?.Message ?? $"Queued Radarr search for {row.Title}.";
+            Snackbar.Add(_radarrSearchRetryStatus, payload?.Success == true ? Severity.Success : Severity.Warning);
+        }
+        catch
+        {
+            _radarrSearchRetryStatus = $"Retry search failed for {row.Title}.";
+            Snackbar.Add(_radarrSearchRetryStatus, Severity.Error);
+        }
+        finally
+        {
+            _radarrSearchingLibraryItemIds.Remove(row.LibraryItemId);
+        }
+    }
+
+    private async Task TestPathMappingAsync(LibraryPathMappingResponse mapping)
+    {
+        _testingMappingId = mapping.Id;
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, PathMappingTestEndpointTemplate.Replace("{mappingId}", mapping.Id.ToString()));
+            await AttachBearerAsync(request);
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add($"Failed to test path mapping ({(int)response.StatusCode}).", Severity.Error);
+                return;
+            }
+
+            _radarrPathMappingTest = await response.Content.ReadFromJsonAsync<LibraryPathMappingTestResponse>();
+            Snackbar.Add(_radarrPathMappingTest?.Message ?? "Path mapping test completed.", _radarrPathMappingTest?.Success == true ? Severity.Success : Severity.Warning);
+        }
+        catch
+        {
+            Snackbar.Add("Failed to test path mapping.", Severity.Error);
+        }
+        finally
+        {
+            _testingMappingId = null;
         }
     }
 
@@ -241,6 +2247,180 @@ else
         }
     }
 
+    private async Task OpenCreatePathMappingDialogAsync()
+    {
+        var integration = _instances.FirstOrDefault();
+        if (integration is null)
+        {
+            return;
+        }
+
+        _editingPathMappingId = null;
+        _pathMappingForm = new PathMappingFormModel
+        {
+            IntegrationId = integration.Id,
+            RemoteRootPath = _radarrRemoteRoots?.Paths?.FirstOrDefault() ?? string.Empty,
+            LocalRootPath = string.Empty
+        };
+        _useCustomPathMappingRemoteRoot = !(_radarrRemoteRoots?.Paths?.Any() ?? false);
+        _pathMappingDialogVisible = true;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private Task OpenEditPathMappingDialogAsync()
+    {
+        var integration = _instances.FirstOrDefault();
+        if (integration is null || _radarrPathMapping is null)
+        {
+            return Task.CompletedTask;
+        }
+
+        _editingPathMappingId = _radarrPathMapping.Id;
+        _pathMappingForm = new PathMappingFormModel
+        {
+            IntegrationId = integration.Id,
+            RemoteRootPath = _radarrPathMapping.RemoteRootPath,
+            LocalRootPath = _radarrPathMapping.LocalRootPath
+        };
+        _useCustomPathMappingRemoteRoot = !(_radarrRemoteRoots?.Paths?.Any(x => string.Equals(x, _pathMappingForm.RemoteRootPath, StringComparison.OrdinalIgnoreCase)) ?? false);
+        _pathMappingDialogVisible = true;
+        return Task.CompletedTask;
+    }
+
+    private void ClosePathMappingDialog()
+    {
+        _pathMappingDialogVisible = false;
+        _editingPathMappingId = null;
+    }
+
+    private void OnPathMappingRemoteRootChoiceChanged(ChangeEventArgs args)
+    {
+        var selected = args.Value?.ToString() ?? string.Empty;
+        if (string.Equals(selected, CustomRemoteRootChoice, StringComparison.Ordinal))
+        {
+            _useCustomPathMappingRemoteRoot = true;
+            return;
+        }
+
+        _useCustomPathMappingRemoteRoot = false;
+        _pathMappingForm.RemoteRootPath = selected;
+    }
+
+    private async Task SavePathMappingAsync()
+    {
+        var integration = _instances.FirstOrDefault();
+        if (integration is null)
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(_pathMappingForm.RemoteRootPath))
+        {
+            Snackbar.Add("Remote root path is required.", Severity.Warning);
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(_pathMappingForm.LocalRootPath))
+        {
+            Snackbar.Add("Local root path is required.", Severity.Warning);
+            return;
+        }
+
+        _pathMappingSaving = true;
+        try
+        {
+            if (_editingPathMappingId is null)
+            {
+                using var request = new HttpRequestMessage(HttpMethod.Post, LibraryPathMappingsEndpoint)
+                {
+                    Content = JsonContent.Create(new CreateLibraryPathMappingRequest(integration.Id, _pathMappingForm.RemoteRootPath.Trim(), _pathMappingForm.LocalRootPath.Trim()))
+                };
+                await AttachBearerAsync(request);
+                using var response = await Http.SendAsync(request);
+                if (!response.IsSuccessStatusCode)
+                {
+                    Snackbar.Add($"Failed to add mapping ({(int)response.StatusCode}).", Severity.Error);
+                    return;
+                }
+                Snackbar.Add("Library path mapping added.", Severity.Success);
+            }
+            else
+            {
+                using var request = new HttpRequestMessage(HttpMethod.Put, $"{LibraryPathMappingsEndpoint}/{_editingPathMappingId.Value}")
+                {
+                    Content = JsonContent.Create(new UpdateLibraryPathMappingRequest(_pathMappingForm.RemoteRootPath.Trim(), _pathMappingForm.LocalRootPath.Trim()))
+                };
+                await AttachBearerAsync(request);
+                using var response = await Http.SendAsync(request);
+                if (!response.IsSuccessStatusCode)
+                {
+                    Snackbar.Add($"Failed to update mapping ({(int)response.StatusCode}).", Severity.Error);
+                    return;
+                }
+                Snackbar.Add("Library path mapping updated.", Severity.Success);
+            }
+
+            await LoadRadarrPathMappingAsync(integration.Id);
+            ClosePathMappingDialog();
+        }
+        catch
+        {
+            Snackbar.Add("Failed to save path mapping.", Severity.Error);
+        }
+        finally
+        {
+            _pathMappingSaving = false;
+        }
+    }
+
+    private async Task DeletePathMappingAsync()
+    {
+        var integration = _instances.FirstOrDefault();
+        if (integration is null || _radarrPathMapping is null)
+        {
+            return;
+        }
+
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Delete, $"{LibraryPathMappingsEndpoint}/{_radarrPathMapping.Id}");
+            await AttachBearerAsync(request);
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add($"Failed to delete mapping ({(int)response.StatusCode}).", Severity.Error);
+                return;
+            }
+
+            _radarrPathMapping = null;
+            _radarrPathMappingTest = null;
+            Snackbar.Add("Library path mapping deleted.", Severity.Success);
+            await LoadRadarrPathMappingAsync(integration.Id);
+        }
+        catch
+        {
+            Snackbar.Add("Failed to delete path mapping.", Severity.Error);
+        }
+    }
+
+    private void OpenRadarrNamingHelp() => _radarrNamingHelpVisible = true;
+
+    private void CloseRadarrNamingHelp() => _radarrNamingHelpVisible = false;
+
+    private void TogglePanel(string key)
+    {
+        if (!_expandedPanels.Add(key))
+        {
+            _expandedPanels.Remove(key);
+        }
+    }
+
+    private bool IsPanelExpanded(string key)
+        => _expandedPanels.Contains(key);
+
+    private string PanelChevron(string key)
+        => IsPanelExpanded(key) ? "▾" : "▸";
+
     private async Task AttachBearerAsync(HttpRequestMessage request)
     {
         var token = await TokenStore.GetTokenAsync();
@@ -249,6 +2429,10 @@ else
             request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
         }
     }
+
+
+    private static string FormatBool(bool? value)
+        => value.HasValue ? (value.Value ? "Yes" : "No") : "—";
 
     private static string NormalizeServiceDisplayName(string? value)
     {
@@ -345,6 +2529,84 @@ else
         int HealthIssues,
         int WarningHealthIssues,
         int ErrorHealthIssues);
+    private sealed record MonitoringSettingsResponse(bool ManagedByMediaCloud, bool AutoSyncEnabled);
+    private sealed record LibraryPathMappingResponse(long Id, long IntegrationId, string ServiceKey, string InstanceName, string DisplayName, string RemoteRootPath, string LocalRootPath, DateTimeOffset UpdatedAtUtc);
+    private sealed record LibraryPathMappingTestResponse(long MappingId, long IntegrationId, string ServiceKey, string RemoteRootPath, string LocalRootPath, bool LocalPathExists, bool RemotePathMatchesIntegration, bool DeepTestAttempted, string SourceFilePath, string ResolvedLocalFilePath, bool ResolvedLocalFileExists, IReadOnlyList<string> DiscoveredRemoteRoots, bool Success, string Message);
+    private sealed record CreateLibraryPathMappingRequest(long IntegrationId, string RemoteRootPath, string LocalRootPath);
+    private sealed record UpdateLibraryPathMappingRequest(string RemoteRootPath, string LocalRootPath);
+    private sealed record IntegrationRemoteRootsResponse(long IntegrationId, string ServiceKey, IReadOnlyList<string> Paths, string Message);
+    private sealed record RadarrNamingSettingsResponse(long IntegrationId, bool RenameMovies, bool ReplaceIllegalCharacters, string ColonReplacementFormat, string StandardMovieFormat, string MovieFolderFormat, int ConfigId);
+    private sealed record UpdateRadarrNamingSettingsRequest(bool RenameMovies, bool ReplaceIllegalCharacters, string ColonReplacementFormat, string StandardMovieFormat, string MovieFolderFormat, int ConfigId);
+    private sealed record RadarrTagOptionResponse(int Id, string Label);
+    private sealed record RadarrTagsResponse(long IntegrationId, IReadOnlyList<RadarrTagOptionResponse> Tags, IReadOnlyList<int> SelectedTagIds, IReadOnlyList<string> SelectedTagLabels);
+    private sealed record UpdateRadarrTagsRequest(IReadOnlyList<int> SelectedTagIds);
+    private sealed record RadarrQualityProfileOptionResponse(int Id, string Name);
+    private sealed record RadarrQualityProfilesResponse(long IntegrationId, IReadOnlyList<RadarrQualityProfileOptionResponse> Profiles, int? PreferredProfileId, string PreferredProfileName, IReadOnlyList<string> ObservedLibraryQualityProfiles);
+    private sealed record UpdateRadarrPreferredQualityProfileRequest(int PreferredProfileId);
+    private sealed record RadarrDefaultAddPolicyResponse(long IntegrationId, IReadOnlyList<string> AvailableRootFolders, IReadOnlyList<RadarrQualityProfileOptionResponse> AvailableQualityProfiles, string RootFolderPath, int? QualityProfileId, string QualityProfileName, string MinimumAvailability, bool Monitored, IReadOnlyList<string> MinimumAvailabilityOptions);
+    private sealed record UpdateRadarrDefaultAddPolicyRequest(string RootFolderPath, int QualityProfileId, string MinimumAvailability, bool Monitored);
+    private sealed class PathMappingFormModel
+    {
+        public long IntegrationId { get; set; }
+        public string RemoteRootPath { get; set; } = string.Empty;
+        public string LocalRootPath { get; set; } = string.Empty;
+    }
+
+    private sealed class RadarrNamingSettingsModel
+    {
+        public bool RenameMovies { get; set; }
+        public bool ReplaceIllegalCharacters { get; set; }
+        public string ColonReplacementFormat { get; set; } = string.Empty;
+        public string StandardMovieFormat { get; set; } = string.Empty;
+        public string MovieFolderFormat { get; set; } = string.Empty;
+        public int ConfigId { get; set; }
+    }
+
+    private sealed class RadarrQualityProfilesModel
+    {
+        public List<RadarrQualityProfileOptionModel> Profiles { get; set; } = [];
+        public int PreferredProfileId { get; set; }
+        public string PreferredProfileName { get; set; } = string.Empty;
+        public List<string> ObservedLibraryQualityProfiles { get; set; } = [];
+    }
+
+    private sealed class RadarrQualityProfileOptionModel
+    {
+        public int Id { get; set; }
+        public string Name { get; set; } = string.Empty;
+    }
+
+    private sealed class RadarrTagOptionModel
+    {
+        public int Id { get; set; }
+        public string Label { get; set; } = string.Empty;
+    }
+
+    private sealed class RadarrTagsModel
+    {
+        public List<RadarrTagOptionModel> Tags { get; set; } = [];
+        public HashSet<int> SelectedTagIds { get; set; } = [];
+        public List<string> SelectedTagLabels { get; set; } = [];
+    }
+
+    private sealed class RadarrDefaultAddPolicyModel
+    {
+        public List<string> AvailableRootFolders { get; set; } = [];
+        public List<RadarrQualityProfileOptionModel> AvailableQualityProfiles { get; set; } = [];
+        public string RootFolderPath { get; set; } = string.Empty;
+        public int QualityProfileId { get; set; }
+        public string QualityProfileName { get; set; } = string.Empty;
+        public string MinimumAvailability { get; set; } = "released";
+        public bool Monitored { get; set; } = true;
+        public List<string> MinimumAvailabilityOptions { get; set; } = [];
+    }
+    private sealed record PlexBackfillPreviewRequest(int Take = 100, bool IncludeItemsAlreadyRequested = false);
+    private sealed record PlexBackfillPreviewResponse(int TotalPlexMovies, int MissingRadarrCount, int MissingOverseerrRequestCount, int MissingBothCount, int CandidateCount, IReadOnlyList<PlexBackfillCandidateDto> Items);
+    private sealed record PlexBackfillCandidateDto(long LibraryItemId, string Title, int? Year, int? TmdbId, string ImdbId, bool MissingRadarr, bool MissingOverseerrRequest, bool InOverseerrMedia, bool CanBackfill, string SourceServicesCsv);
+    private sealed record SearchReplacementRequest(string Reason, string Notes, string? IssueType = null);
+    private sealed record LibraryItemRemediationResponse(long LibraryItemId, bool Success, string ServiceKey, string ServiceDisplayName, string CommandName, int? ExternalItemId, bool LookedUpRemotely, string Reason, string Notes, string Message, object? Intent = null, string SearchStatusHint = "");
+    private sealed record LibraryItemSourceSyncResponse(long LibraryItemId, string ServiceKey, bool Success, bool HadSourceLinkBefore, bool HasSourceLinkAfter, bool AttemptedCreateAction, string Message);
+
 
     private sealed record IntegrationTestResponse(long IntegrationId, string ServiceKey, string InstanceName, bool Success, int StatusCode, string Message, string Version);
     private sealed record TriggerIntegrationSyncResponse(long IntegrationId, bool Accepted, string Message);

@@ -3,21 +3,21 @@ using Xunit;
 public sealed class IntegrationOpsFeedbackSourceTests
 {
     [Fact]
-    public void Settings_integrations_page_uses_snackbar_for_connection_test_feedback_instead_of_inline_message_block()
+    public void Integrations_page_uses_snackbar_for_connection_test_feedback_instead_of_inline_message_block()
     {
         var repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../../"));
-        var pagePath = Path.GetFullPath(Path.Combine(repoRoot, "apps/web/Components/Pages/SettingsIntegrations.razor"));
+        var pagePath = Path.GetFullPath(Path.Combine(repoRoot, "apps/web/Components/Pages/Integrations.razor"));
         var content = File.ReadAllText(pagePath);
 
-        Assert.Contains("Snackbar.Add(_testMessage, _testSuccess ? Severity.Success : Severity.Error);", content);
+        Assert.Contains("Snackbar.Add(message, result.Success ? Severity.Success : Severity.Error);", content);
         Assert.DoesNotContain("@if (!string.IsNullOrWhiteSpace(_testMessage))", content);
     }
 
     [Fact]
-    public void Settings_integrations_page_lets_ops_only_integrations_surface_persisted_health_before_falling_back_to_ops_only_label()
+    public void Integrations_page_lets_ops_only_integrations_surface_persisted_health_before_falling_back_to_ops_only_label()
     {
         var repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../../"));
-        var pagePath = Path.GetFullPath(Path.Combine(repoRoot, "apps/web/Components/Pages/SettingsIntegrations.razor"));
+        var pagePath = Path.GetFullPath(Path.Combine(repoRoot, "apps/web/Components/Pages/Integrations.razor"));
         var content = File.ReadAllText(pagePath);
 
         Assert.Contains("if (!string.IsNullOrWhiteSpace(item.LastError) || item.ConsecutiveFailureCount > 0) return \"Attention needed\";", content);

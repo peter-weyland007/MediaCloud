@@ -108,6 +108,7 @@
                             <th style="position:sticky; top:0; z-index:20; background:#0b1220; padding:0.4rem 0; border-bottom:1px solid #1e293b; box-shadow:0 2px 0 #0b1220;"><button style="all:unset; cursor:pointer;" @onclick='() => ToggleSortAsync("runtime")'>Runtimes (Reported/Actual) @SortGlyph("runtime")</button></th>
                             <th style="position:sticky; top:0; z-index:20; background:#0b1220; padding:0.4rem 0; border-bottom:1px solid #1e293b; box-shadow:0 2px 0 #0b1220;">Runtime Match</th>
                         }
+                        <th style="position:sticky; top:0; z-index:20; background:#0b1220; padding:0.4rem 0; border-bottom:1px solid #1e293b; box-shadow:0 2px 0 #0b1220;"><button style="all:unset; cursor:pointer;" @onclick='() => ToggleSortAsync("created")'>Added @SortGlyph("created")</button></th>
                         <th style="position:sticky; top:0; z-index:20; background:#0b1220; padding:0.4rem 0; border-bottom:1px solid #1e293b; box-shadow:0 2px 0 #0b1220;"><button style="all:unset; cursor:pointer;" @onclick='() => ToggleSortAsync("updated")'>Updated @SortGlyph("updated")</button></th>
                     </tr>
                 </thead>
@@ -151,6 +152,7 @@
                                     <span style="@GetRuntimeMatchBadgeStyle(item)">@GetRuntimeMatchLabel(item)</span>
                                 </td>
                             }
+                            <td style="padding:0.45rem 0;">@item.CreatedAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
                             <td style="padding:0.45rem 0;">@item.UpdatedAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
                         </tr>
                     }
@@ -231,6 +233,8 @@
     [Parameter] public string? FixedMediaType { get; set; }
     [Parameter] public string[]? MediaTypeOptions { get; set; }
     [Parameter] public string InitialMediaType { get; set; } = "All";
+    [Parameter] public string InitialSortBy { get; set; } = "title";
+    [Parameter] public string InitialSortDir { get; set; } = "asc";
     [Parameter] public int RefreshVersion { get; set; }
 
     private readonly List<LibraryItemDto> _items = [];
@@ -274,15 +278,15 @@
                 : "All";
         }
 
-        var key = $"{FixedMediaType}|{InitialMediaType}|{string.Join(',', EffectiveMediaTypeOptions)}|{RefreshVersion}";
+        var key = $"{FixedMediaType}|{InitialMediaType}|{InitialSortBy}|{InitialSortDir}|{string.Join(',', EffectiveMediaTypeOptions)}|{RefreshVersion}";
         if (!_loadedOnce || !string.Equals(_currentParamKey, key, StringComparison.Ordinal))
         {
             _currentParamKey = key;
             _loadedOnce = true;
             _searchText = string.Empty;
             _selectedAvailability = "All";
-            _sortBy = "title";
-            _sortDir = "asc";
+            _sortBy = NormalizeSortBy(InitialSortBy);
+            _sortDir = NormalizeSortDir(InitialSortDir);
             await TryLoadRuntimePolicyAsync();
             await LoadPageAsync(0);
         }
@@ -304,8 +308,8 @@
         _searchText = string.Empty;
         _selectedMediaType = HasFixedMediaType ? FixedMediaType! : "All";
         _selectedAvailability = "All";
-        _sortBy = "title";
-        _sortDir = "asc";
+        _sortBy = NormalizeSortBy(InitialSortBy);
+        _sortDir = NormalizeSortDir(InitialSortDir);
         await LoadPageAsync(0);
     }
 
@@ -318,6 +322,23 @@
             await LoadPageAsync(0);
         }
     }
+
+    private static string NormalizeSortBy(string? sortBy)
+    {
+        var normalized = (sortBy ?? string.Empty).Trim().ToLowerInvariant();
+        return normalized switch
+        {
+            "title" => "title",
+            "year" => "year",
+            "runtime" => "runtime",
+            "created" => "created",
+            "updated" => "updated",
+            _ => "title"
+        };
+    }
+
+    private static string NormalizeSortDir(string? sortDir)
+        => string.Equals((sortDir ?? string.Empty).Trim(), "desc", StringComparison.OrdinalIgnoreCase) ? "desc" : "asc";
 
     private async Task ToggleSortAsync(string field)
     {
@@ -560,7 +581,7 @@
 
     private record LibraryItemCountDto(int Total);
     private record LibraryJumpDto(bool Found, string Token, int PageIndex, long? TargetId);
-    private record LibraryItemDto(long Id, string CanonicalKey, string MediaType, string DisplayTitle, string Title, string SortTitle, int? Year, int? TmdbId, int? TvdbId, string ImdbId, string PlexRatingKey, string Description, string DescriptionSourceService, double? RuntimeMinutes, double? ActualRuntimeMinutes, IReadOnlyList<string> AudioLanguages, IReadOnlyList<string> SubtitleLanguages, string PlayabilityScore, int PlayabilityNumericScore, string PlayabilitySummary, DateTimeOffset? PlayabilityCheckedAtUtc, IReadOnlyList<string> PlayabilityReasons, string PlayabilityVideoCodec, IReadOnlyList<string> PlayabilityAudioCodecs, IReadOnlyList<string> PlayabilitySubtitleCodecs, bool IsAvailable, string QualityProfile, DateTimeOffset? SourceUpdatedAtUtc, DateTimeOffset UpdatedAtUtc, string PrimaryFilePath, bool LocalFileExists, IReadOnlyList<string> SourceServices);
+    private record LibraryItemDto(long Id, string CanonicalKey, string MediaType, string DisplayTitle, string Title, string SortTitle, int? Year, int? TmdbId, int? TvdbId, string ImdbId, string PlexRatingKey, string Description, string DescriptionSourceService, double? RuntimeMinutes, double? ActualRuntimeMinutes, IReadOnlyList<string> AudioLanguages, IReadOnlyList<string> SubtitleLanguages, string PlayabilityScore, int PlayabilityNumericScore, string PlayabilitySummary, DateTimeOffset? PlayabilityCheckedAtUtc, IReadOnlyList<string> PlayabilityReasons, string PlayabilityVideoCodec, IReadOnlyList<string> PlayabilityAudioCodecs, IReadOnlyList<string> PlayabilitySubtitleCodecs, bool IsAvailable, string QualityProfile, DateTimeOffset? SourceUpdatedAtUtc, DateTimeOffset CreatedAtUtc, DateTimeOffset UpdatedAtUtc, string PrimaryFilePath, bool LocalFileExists, IReadOnlyList<string> SourceServices);
     private record RuntimePolicySettingsResponse(double ToleranceMinutesFloor, double TolerancePercent, double WarningPercent, double HighMinutes, double CriticalPercent, double CriticalMinutes);
     private record RuntimeMatchResult(string Label, string Kind);
 }
