@@ -1463,6 +1463,10 @@ public sealed class LibraryRemediationTests
         Assert.Contains("EnsureSqliteColumn(db, \"LibraryRemediationJobs\", \"VerificationCheckedAtUtc\", \"TEXT NULL\");", content);
         Assert.Contains("EnsureSqliteColumn(db, \"LibraryRemediationJobs\", \"LoopbackStatus\", \"TEXT NOT NULL DEFAULT ''\");", content);
         Assert.Contains("EnsureSqliteColumn(db, \"LibraryRemediationJobs\", \"LoopbackSummary\", \"TEXT NOT NULL DEFAULT ''\");", content);
+        Assert.Contains("EnsureSqliteColumn(db, \"LibraryRemediationJobs\", \"OperatorReviewStatus\", \"TEXT NOT NULL DEFAULT ''\");", content);
+        Assert.Contains("EnsureSqliteColumn(db, \"LibraryRemediationJobs\", \"OperatorReviewSummary\", \"TEXT NOT NULL DEFAULT ''\");", content);
+        Assert.Contains("EnsureSqliteColumn(db, \"LibraryRemediationJobs\", \"OperatorReviewedBy\", \"TEXT NOT NULL DEFAULT ''\");", content);
+        Assert.Contains("EnsureSqliteColumn(db, \"LibraryRemediationJobs\", \"OperatorReviewedAtUtc\", \"TEXT NULL\");", content);
     }
 
     [Fact]
