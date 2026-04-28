@@ -8,6 +8,7 @@ using Microsoft.Extensions.Configuration;
 using MudBlazor;
 using MudBlazor.Services;
 using web.Components;
+using web.Components.Shared;
 using web.Services.Auth;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -68,6 +69,7 @@ builder.Services.AddHttpClient("MediaCloudApi", client =>
 }).AddHttpMessageHandler<BearerTokenHandler>();
 
 builder.Services.AddScoped(sp => sp.GetRequiredService<IHttpClientFactory>().CreateClient("MediaCloudApi"));
+builder.Services.AddSingleton(BuildInfoSnapshot.Create(builder.Configuration, builder.Environment, "Web"));
 
 var app = builder.Build();
 

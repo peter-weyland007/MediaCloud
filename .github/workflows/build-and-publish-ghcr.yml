@@ -42,6 +42,12 @@ jobs:
             type=raw,value=main
             type=sha,prefix=sha-
 
+      - name: Compute build metadata
+        id: build_meta
+        run: |
+          echo "short_sha=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          echo "build_date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
@@ -49,5 +55,9 @@ jobs:
           file: ./Dockerfile
           push: true
           platforms: linux/amd64
+          build-args: |
+            GIT_SHA=${{ github.sha }}
+            BUILD_DATE=${{ steps.build_meta.outputs.build_date }}
+            IMAGE_TAG=sha-${{ steps.build_meta.outputs.short_sha }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

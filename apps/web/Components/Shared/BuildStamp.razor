@@ -1,0 +1,35 @@
+@using System.Net.Http.Json
+@inject HttpClient Http
+@inject BuildInfoSnapshot LocalBuildInfo
+
+<div class="build-stamp @(Compact ? "build-stamp--compact" : string.Empty)" title="Build identifiers for the currently running MediaCloud web and API instances.">
+    @if (Compact)
+    {
+        <div class="build-stamp-line build-stamp-line--compact">
+            <span>@($"Version: {LocalBuildInfo.GitShaShort}/{(_apiBuildInfo?.GitShaShort ?? "loading")}")</span>
+        </div>
+    }
+    else
+    {
+        <div class="build-stamp-line"><span class="build-stamp-label">Web:</span> <span>@LocalBuildInfo.CompactLabel</span></div>
+        <div class="build-stamp-line"><span class="build-stamp-label">API:</span> <span>@(_apiBuildInfo?.CompactLabel ?? "loading…")</span></div>
+    }
+</div>
+
+@code {
+    [Parameter] public bool Compact { get; set; }
+
+    private BuildInfoSnapshot? _apiBuildInfo;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _apiBuildInfo = await Http.GetFromJsonAsync<BuildInfoSnapshot>("/api/public/build-info");
+        }
+        catch
+        {
+            _apiBuildInfo = null;
+        }
+    }
+}

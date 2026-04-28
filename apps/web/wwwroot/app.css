@@ -41,6 +41,40 @@ body {
   gap: 0.4rem;
 }
 
+.build-stamp {
+  margin-top: 0.9rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid #1f2937;
+  display: grid;
+  gap: 0.2rem;
+  color: #94a3b8;
+  font-size: 0.72rem;
+  line-height: 1.35;
+}
+
+.build-stamp--compact {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+  color: #94a3b8;
+  font-size: 0.78rem;
+}
+
+.build-stamp-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.build-stamp-line--compact {
+  gap: 0.25rem;
+}
+
+.build-stamp-label {
+  color: #cbd5e1;
+  font-weight: 700;
+}
+
 .nav-link {
   color: #cbd5e1;
   text-decoration: none;

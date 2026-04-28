@@ -18,6 +18,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 
 var builder = WebApplication.CreateBuilder(args);
+var apiBuildInfo = BuildInfoResponse.Create(builder.Configuration, builder.Environment, "API");
 
 builder.Services.AddOpenApi();
 builder.Services.AddCors(options =>
@@ -605,6 +606,8 @@ app.MapGet("/api/public/auth-status", async (MediaCloudDbContext db) =>
     var enabled = await AppAuthSettings.IsSelfRegistrationAllowedAsync(db, allowSelfRegistrationDefault, allowSelfRegistrationKey);
     return Results.Ok(new AuthSettingsResponse(enabled));
 }).AllowAnonymous();
+
+app.MapGet("/api/public/build-info", () => Results.Ok(apiBuildInfo)).AllowAnonymous();
 
 app.MapPost("/api/auth/logout", () => Results.Ok()).RequireAuthorization();
 
@@ -8549,6 +8552,50 @@ public record RadarrDefaultAddPolicyResponse(long IntegrationId, IReadOnlyList<s
 public record UpdateRadarrDefaultAddPolicyRequest(string RootFolderPath, int QualityProfileId, string MinimumAvailability, bool Monitored);
 public record ErrorResponse(string Error);
 public record SuccessResponse(bool Success);
+public sealed record BuildInfoResponse(
+    string Application,
+    string Environment,
+    string GitSha,
+    string GitShaShort,
+    string ImageTag,
+    string BuildTimestampUtc,
+    string CompactLabel)
+{
+    public static BuildInfoResponse Create(IConfiguration configuration, IHostEnvironment environment, string application)
+    {
+        var gitSha = (configuration["BuildInfo:GitSha"] ?? "dev-local").Trim();
+        if (string.IsNullOrWhiteSpace(gitSha))
+        {
+            gitSha = "dev-local";
+        }
+
+        var gitShaShort = gitSha.Length > 7 ? gitSha[..7] : gitSha;
+        var imageTag = (configuration["BuildInfo:ImageTag"] ?? "dev-local").Trim();
+        if (string.IsNullOrWhiteSpace(imageTag))
+        {
+            imageTag = "dev-local";
+        }
+
+        var buildTimestampUtc = (configuration["BuildInfo:BuildTimestampUtc"] ?? "local").Trim();
+        if (string.IsNullOrWhiteSpace(buildTimestampUtc))
+        {
+            buildTimestampUtc = "local";
+        }
+
+        var environmentName = string.IsNullOrWhiteSpace(environment.EnvironmentName)
+            ? "Unknown"
+            : environment.EnvironmentName;
+
+        return new BuildInfoResponse(
+            application,
+            environmentName,
+            gitSha,
+            gitShaShort,
+            imageTag,
+            buildTimestampUtc,
+            string.Join(" · ", new[] { gitShaShort, imageTag, environmentName, buildTimestampUtc }.Where(x => !string.IsNullOrWhiteSpace(x))));
+    }
+}
 
 public static class RuntimePolicySettings
 {
