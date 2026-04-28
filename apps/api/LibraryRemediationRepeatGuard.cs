@@ -25,7 +25,7 @@ public static class LibraryRemediationRepeatGuard
             .OrderByDescending(x => x.RequestedAtUtc)
             .ToList();
 
-        var activeDuplicate = jobs.FirstOrDefault(x => IsActiveRepeatStatus(x.Status));
+        var activeDuplicate = jobs.FirstOrDefault(x => IsActiveRepeatStatus(x, now));
         if (activeDuplicate is not null)
         {
             return new(
@@ -52,13 +52,25 @@ public static class LibraryRemediationRepeatGuard
         return new(true, string.Empty, null, null);
     }
 
-    public static bool IsActiveRepeatStatus(string? status)
+    public static bool IsActiveRepeatStatus(LibraryRemediationJob job, DateTimeOffset now)
     {
-        var normalized = (status ?? string.Empty).Trim();
-        return normalized is "SearchQueued"
-            or "BlacklistedAndQueued"
-            or "Processing"
-            or "ImportedReplacement";
+        var normalized = (job.Status ?? string.Empty).Trim();
+        if (normalized is not ("SearchQueued" or "BlacklistedAndQueued" or "Processing" or "ImportedReplacement"))
+        {
+            return false;
+        }
+
+        var isQueuedState = normalized is "SearchQueued" or "BlacklistedAndQueued";
+        var hasProviderTracking = job.ProviderCommandId.HasValue
+            || !string.IsNullOrWhiteSpace(job.ProviderCommandStatus)
+            || job.ProviderCommandCheckedAtUtc.HasValue;
+
+        if (isQueuedState && !hasProviderTracking && job.RequestedAtUtc + RetryCooldown <= now)
+        {
+            return false;
+        }
+
+        return true;
     }
 
     private static string NormalizeIssueKey(LibraryRemediationJob job)

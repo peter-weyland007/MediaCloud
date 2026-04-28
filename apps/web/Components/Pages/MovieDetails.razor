@@ -2,6 +2,7 @@
 @attribute [Authorize]
 @inject HttpClient Http
 @inject ISnackbar Snackbar
+@inject AuthenticationStateProvider AuthStateProvider
 @inject AuthorizedApiRequestFactory RequestFactory
 @inject IJSRuntime JSRuntime
 @using web.Components.Shared
@@ -977,6 +978,7 @@ else
     private bool _queueingCompatibilityAction;
     private bool _requestingBetterFile;
     private bool _refreshingRemediationHistory;
+    private bool _canManageRemediation;
     private DateTimeOffset? _remediationHistoryRefreshedAtUtc;
     private bool _remediationV2ShowAllComparisons;
     private int _activeMovieDetailTabIndex = FileRemediationTabIndex;
@@ -1067,12 +1069,15 @@ else
                                         else if (step.IsCurrent && string.Equals(step.Label, "Choose which action to take", StringComparison.Ordinal))
                                         {
                                             <div style="display:flex; flex-direction:column; gap:0.45rem; align-items:stretch; min-width:12rem; margin-left:auto;">
-                                                <MudButton Variant="Variant.Filled"
-                                                           Color="Color.Primary"
-                                                           Size="Size.Small"
-                                                           Style="text-transform:none;"
-                                                           OnClick="RequestBetterFileAsync"
-                                                           Disabled="@_requestingBetterFile">@(_requestingBetterFile ? "Requesting..." : "Request better file")</MudButton>
+                                                @if (_canManageRemediation)
+                                                {
+                                                    <MudButton Variant="Variant.Filled"
+                                                               Color="Color.Primary"
+                                                               Size="Size.Small"
+                                                               Style="text-transform:none;"
+                                                               OnClick="RequestBetterFileAsync"
+                                                               Disabled="@_requestingBetterFile">@(_requestingBetterFile ? "Requesting..." : "Request better file")</MudButton>
+                                                }
                                                 <MudButton Variant="Variant.Outlined"
                                                            Color="Color.Default"
                                                            Size="Size.Small"
@@ -1085,6 +1090,10 @@ else
                                                            Style="text-transform:none;"
                                                            OnClick="ConvertAnywayAsync"
                                                            Disabled="@_requestingBetterFile">Convert anyway</MudButton>
+                                                @if (!_canManageRemediation)
+                                                {
+                                                    <span class="card-note" style="text-align:right; color:#94a3b8;">Admin access required to request a replacement or view remediation history.</span>
+                                                }
                                             </div>
                                         }
                                         else if (step.IsCurrent && step.Label.StartsWith("Wait", StringComparison.Ordinal))
@@ -1177,78 +1186,81 @@ else
                 </div>
             </div>
 
-            <div style="border:1px solid rgba(51,65,85,0.85); border-radius:0.75rem; padding:0.9rem; background:rgba(15,23,42,0.65); display:grid; gap:0.55rem;">
-                <div style="display:flex; justify-content:space-between; align-items:center; gap:0.75rem; flex-wrap:wrap;">
-                    <div style="display:grid; gap:0.2rem;">
-                        <p class="card-label">RECENT REMEDIATION HISTORY</p>
-                        <p class="card-note">The latest actions MediaCloud has already taken for this movie.</p>
-                        @if (_remediationHistoryRefreshedAtUtc.HasValue)
-                        {
-                            <p class="card-note">Last refreshed: @FormatIssueTimestamp(_remediationHistoryRefreshedAtUtc.Value)</p>
-                        }
-                    </div>
-                    <MudButton Variant="Variant.Text"
-                               Color="Color.Info"
-                               Size="Size.Small"
-                               Style="min-width:auto; padding:0; text-transform:none; font-weight:600;"
-                               OnClick="RefreshRemediationHistoryAsync"
-                               Disabled="@_refreshingRemediationHistory">@(_refreshingRemediationHistory ? "Refreshing..." : "Refresh status")</MudButton>
-                </div>
-                @if (_compatibilityJobs.Count == 0)
-                {
-                    <p class="card-note">No remediation actions have been recorded for this movie yet.</p>
-                }
-                else
-                {
-                    @foreach (var job in GetRecentRemediationHistoryJobs(3))
-                    {
-                        <div style="border-top:1px solid rgba(51,65,85,0.45); padding-top:0.55rem; display:grid; gap:0.35rem;">
-                            <p class="card-note"><strong>@DisplayValue(job.ServiceDisplayName)</strong> · @GetRemediationHistoryActionLabel(job)</p>
-                            <div class="movie-remediation-status-row">
-                                <span class="card-note">Status:</span>
-                                <MudTooltip Arrow="true" Placement="Placement.Top" Text="@GetRemediationHistoryStatusDefinition(job)">
-                                    <span class="movie-remediation-status-pill @GetRemediationHistoryStatusPillClass(job.Status)">@DisplayValue(job.Status)</span>
-                                </MudTooltip>
-                                <span class="card-note">Requested:</span>
-                                <span class="card-note">@FormatIssueTimestamp(job.RequestedAtUtc)</span>
-                            </div>
-                            <div class="movie-remediation-status-row">
-                                <span class="card-note">Integration step:</span>
-                                <MudTooltip Arrow="true" Placement="Placement.Top" Text="@GetRemediationHistoryIntegrationStepDefinition(job)">
-                                    <span class="movie-remediation-status-pill @GetRemediationHistoryStatusPillClass(job.SearchStatus)">@DisplayValue(job.SearchStatus)</span>
-                                </MudTooltip>
-                                <span class="card-note">Verification:</span>
-                                <MudTooltip Arrow="true" Placement="Placement.Top" Text="@GetRemediationHistoryVerificationDefinition(job)">
-                                    <span class="movie-remediation-status-pill @GetRemediationHistoryStatusPillClass(job.VerificationStatus)">@DisplayValue(job.VerificationStatus)</span>
-                                </MudTooltip>
-                            </div>
-                            @if (!string.IsNullOrWhiteSpace(job.ProviderCommandStatus))
+            @if (_canManageRemediation)
+            {
+                <div style="border:1px solid rgba(51,65,85,0.85); border-radius:0.75rem; padding:0.9rem; background:rgba(15,23,42,0.65); display:grid; gap:0.55rem;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; gap:0.75rem; flex-wrap:wrap;">
+                        <div style="display:grid; gap:0.2rem;">
+                            <p class="card-label">RECENT REMEDIATION HISTORY</p>
+                            <p class="card-note">The latest actions MediaCloud has already taken for this movie.</p>
+                            @if (_remediationHistoryRefreshedAtUtc.HasValue)
                             {
-                                <div class="movie-remediation-status-row">
-                                    <span class="card-note">Provider state:</span>
-                                    <MudTooltip Arrow="true" Placement="Placement.Top" Text="@GetRemediationHistoryProviderStateDefinition(job)">
-                                        <span class="movie-remediation-status-pill @GetRemediationHistoryStatusPillClass(job.ProviderCommandStatus)">@DisplayValue(job.ProviderCommandStatus)</span>
-                                    </MudTooltip>
-                                </div>
-                            }
-                            <div class="movie-remediation-status-row">
-                                <span class="card-note">Download type:</span>
-                                <MudTooltip Arrow="true" Placement="Placement.Top" Text="@GetRemediationHistoryDownloadTypeDefinition(job)">
-                                    <span class="movie-remediation-status-pill @GetRemediationHistoryDownloadTypePillClass(job)">@GetRemediationHistoryDownloadTypeLabel(job)</span>
-                                </MudTooltip>
-                            </div>
-                            @if (!string.IsNullOrWhiteSpace(job.OutcomeSummary))
-                            {
-                                <p class="card-note">Outcome: @DisplayValue(job.OutcomeSummary)</p>
-                            }
-                            else if (!string.IsNullOrWhiteSpace(job.ResultMessage))
-                            {
-                                <p class="card-note">Result: @DisplayValue(job.ResultMessage)</p>
+                                <p class="card-note">Last refreshed: @FormatIssueTimestamp(_remediationHistoryRefreshedAtUtc.Value)</p>
                             }
                         </div>
+                        <MudButton Variant="Variant.Text"
+                                   Color="Color.Info"
+                                   Size="Size.Small"
+                                   Style="min-width:auto; padding:0; text-transform:none; font-weight:600;"
+                                   OnClick="RefreshRemediationHistoryAsync"
+                                   Disabled="@_refreshingRemediationHistory">@(_refreshingRemediationHistory ? "Refreshing..." : "Refresh status")</MudButton>
+                    </div>
+                    @if (_compatibilityJobs.Count == 0)
+                    {
+                        <p class="card-note">No remediation actions have been recorded for this movie yet.</p>
                     }
-                }
-            </div>
+                    else
+                    {
+                        @foreach (var job in GetRecentRemediationHistoryJobs(3))
+                        {
+                            <div style="border-top:1px solid rgba(51,65,85,0.45); padding-top:0.55rem; display:grid; gap:0.35rem;">
+                                <p class="card-note"><strong>@DisplayValue(job.ServiceDisplayName)</strong> · @GetRemediationHistoryActionLabel(job)</p>
+                                <div class="movie-remediation-status-row">
+                                    <span class="card-note">Status:</span>
+                                    <MudTooltip Arrow="true" Placement="Placement.Top" Text="@GetRemediationHistoryStatusDefinition(job)">
+                                        <span class="movie-remediation-status-pill @GetRemediationHistoryStatusPillClass(job.Status)">@DisplayValue(job.Status)</span>
+                                    </MudTooltip>
+                                    <span class="card-note">Requested:</span>
+                                    <span class="card-note">@FormatIssueTimestamp(job.RequestedAtUtc)</span>
+                                </div>
+                                <div class="movie-remediation-status-row">
+                                    <span class="card-note">Integration step:</span>
+                                    <MudTooltip Arrow="true" Placement="Placement.Top" Text="@GetRemediationHistoryIntegrationStepDefinition(job)">
+                                        <span class="movie-remediation-status-pill @GetRemediationHistoryStatusPillClass(job.SearchStatus)">@DisplayValue(job.SearchStatus)</span>
+                                    </MudTooltip>
+                                    <span class="card-note">Verification:</span>
+                                    <MudTooltip Arrow="true" Placement="Placement.Top" Text="@GetRemediationHistoryVerificationDefinition(job)">
+                                        <span class="movie-remediation-status-pill @GetRemediationHistoryStatusPillClass(job.VerificationStatus)">@DisplayValue(job.VerificationStatus)</span>
+                                    </MudTooltip>
+                                </div>
+                                @if (!string.IsNullOrWhiteSpace(job.ProviderCommandStatus))
+                                {
+                                    <div class="movie-remediation-status-row">
+                                        <span class="card-note">Provider state:</span>
+                                        <MudTooltip Arrow="true" Placement="Placement.Top" Text="@GetRemediationHistoryProviderStateDefinition(job)">
+                                            <span class="movie-remediation-status-pill @GetRemediationHistoryStatusPillClass(job.ProviderCommandStatus)">@DisplayValue(job.ProviderCommandStatus)</span>
+                                        </MudTooltip>
+                                    </div>
+                                }
+                                <div class="movie-remediation-status-row">
+                                    <span class="card-note">Download type:</span>
+                                    <MudTooltip Arrow="true" Placement="Placement.Top" Text="@GetRemediationHistoryDownloadTypeDefinition(job)">
+                                        <span class="movie-remediation-status-pill @GetRemediationHistoryDownloadTypePillClass(job)">@GetRemediationHistoryDownloadTypeLabel(job)</span>
+                                    </MudTooltip>
+                                </div>
+                                @if (!string.IsNullOrWhiteSpace(job.OutcomeSummary))
+                                {
+                                    <p class="card-note">Outcome: @DisplayValue(job.OutcomeSummary)</p>
+                                }
+                                else if (!string.IsNullOrWhiteSpace(job.ResultMessage))
+                                {
+                                    <p class="card-note">Result: @DisplayValue(job.ResultMessage)</p>
+                                }
+                            </div>
+                        }
+                    }
+                </div>
+            }
 
 
             @if (!string.IsNullOrWhiteSpace(_statusMessage))
@@ -1261,6 +1273,7 @@ else
     private async Task LoadItemAsync(bool clearStatusMessage = true)
     {
         _loading = true;
+        await RefreshRemediationAccessAsync();
         if (clearStatusMessage)
         {
             _statusMessage = string.Empty;
@@ -1273,6 +1286,7 @@ else
         _sourceStatuses.Clear();
         _sourceLinks.Clear();
         _compatibilityJobs.Clear();
+        _remediationHistoryRefreshedAtUtc = null;
 
         try
         {
@@ -1292,7 +1306,10 @@ else
             await LoadSourcePanelAsync();
             await LoadIssuesAsync();
             await LoadCompatibilityRecommendationAsync();
-            await LoadCompatibilityJobsAsync();
+            if (_canManageRemediation)
+            {
+                await LoadCompatibilityJobsAsync();
+            }
         }
         finally
         {
@@ -1460,6 +1477,13 @@ else
             return;
         }
 
+        if (!_canManageRemediation)
+        {
+            _compatibilityQueueStatusMessage = "Admin access is required to request a replacement file.";
+            Snackbar.Add(_compatibilityQueueStatusMessage, Severity.Warning);
+            return;
+        }
+
         _requestingBetterFile = true;
         _compatibilityQueueStatusMessage = string.Empty;
         try
@@ -1509,6 +1533,20 @@ else
         _compatibilityQueueStatusMessage = "Manual conversion review is still required here. Use the operator remediation panel if you want to force a one-off conversion.";
         Snackbar.Add(_compatibilityQueueStatusMessage, Severity.Warning);
         return Task.CompletedTask;
+    }
+
+    private async Task RefreshRemediationAccessAsync()
+    {
+        try
+        {
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            _canManageRemediation = authState.User.Identity?.IsAuthenticated == true
+                && authState.User.IsInRole("Admin");
+        }
+        catch
+        {
+            _canManageRemediation = false;
+        }
     }
 
     private async Task ProbeRuntimeNowAsync()

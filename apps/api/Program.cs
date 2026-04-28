@@ -375,6 +375,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS IX_WatchHistoryEntries_Item_Source_External ON
     EnsureSqliteColumn(db, "LibraryRemediationJobs", "DownloadType", "TEXT NOT NULL DEFAULT ''");
     EnsureSqliteColumn(db, "LibraryRemediationJobs", "ProviderCommandCheckedAtUtc", "TEXT NULL");
     EnsureSqliteColumn(db, "LibraryRemediationJobs", "LastCheckedAtUtc", "TEXT NULL");
+    EnsureSqliteColumn(db, "LibraryRemediationJobs", "VerificationStatus", "TEXT NOT NULL DEFAULT ''");
+    EnsureSqliteColumn(db, "LibraryRemediationJobs", "VerificationSummary", "TEXT NOT NULL DEFAULT ''");
+    EnsureSqliteColumn(db, "LibraryRemediationJobs", "VerificationDetailsJson", "TEXT NOT NULL DEFAULT ''");
+    EnsureSqliteColumn(db, "LibraryRemediationJobs", "VerificationCheckedAtUtc", "TEXT NULL");
+    EnsureSqliteColumn(db, "LibraryRemediationJobs", "LoopbackStatus", "TEXT NOT NULL DEFAULT ''");
+    EnsureSqliteColumn(db, "LibraryRemediationJobs", "LoopbackSummary", "TEXT NOT NULL DEFAULT ''");
 
     db.Database.ExecuteSqlRaw(@"INSERT INTO LibraryPathMappings (IntegrationId, RemoteRootPath, LocalRootPath, UpdatedAtUtc)
 SELECT c.Id, c.RemoteRootPath, c.LocalRootPath, c.UpdatedAtUtc

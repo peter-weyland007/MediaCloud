@@ -1344,6 +1344,78 @@ public sealed class LibraryRemediationTests
     }
 
     [Fact]
+    public void EvaluateRetryGuard_allows_retry_when_older_active_job_is_stale_legacy_queue_without_provider_tracking()
+    {
+        var now = new DateTimeOffset(2026, 4, 28, 15, 0, 0, TimeSpan.Zero);
+        var newRequest = new api.Models.LibraryRemediationJob
+        {
+            Id = 90,
+            LibraryItemId = 1474,
+            RequestedAction = "search_replacement",
+            IssueType = "media_compatibility",
+            Reason = "request_better_file",
+            RequestedAtUtc = now
+        };
+        var staleLegacyQueuedJob = new api.Models.LibraryRemediationJob
+        {
+            Id = 91,
+            LibraryItemId = 1474,
+            RequestedAction = "search_replacement",
+            IssueType = "media_compatibility",
+            Reason = "request_better_file",
+            Status = "SearchQueued",
+            SearchStatus = "Queued",
+            RequestedAtUtc = now.AddDays(-4),
+            ProviderCommandId = null,
+            ProviderCommandStatus = string.Empty,
+            ProviderCommandCheckedAtUtc = null,
+            LastCheckedAtUtc = now.AddMinutes(-1),
+            VerificationCheckedAtUtc = now.AddMinutes(-1)
+        };
+
+        var decision = LibraryRemediationRepeatGuard.Evaluate(newRequest, [newRequest, staleLegacyQueuedJob], now);
+
+        Assert.True(decision.Allowed);
+        Assert.Null(decision.BlockingJobId);
+        Assert.Null(decision.CooldownEndsAtUtc);
+    }
+
+    [Fact]
+    public void EvaluateRetryGuard_still_blocks_processing_job_without_provider_tracking_even_when_old()
+    {
+        var now = new DateTimeOffset(2026, 4, 28, 15, 0, 0, TimeSpan.Zero);
+        var newRequest = new api.Models.LibraryRemediationJob
+        {
+            Id = 92,
+            LibraryItemId = 1474,
+            RequestedAction = "search_replacement",
+            IssueType = "media_compatibility",
+            Reason = "request_better_file",
+            RequestedAtUtc = now
+        };
+        var inProgressJob = new api.Models.LibraryRemediationJob
+        {
+            Id = 93,
+            LibraryItemId = 1474,
+            RequestedAction = "search_replacement",
+            IssueType = "media_compatibility",
+            Reason = "request_better_file",
+            Status = "Processing",
+            SearchStatus = "Queued",
+            RequestedAtUtc = now.AddDays(-4),
+            ProviderCommandId = null,
+            ProviderCommandStatus = string.Empty,
+            ProviderCommandCheckedAtUtc = null
+        };
+
+        var decision = LibraryRemediationRepeatGuard.Evaluate(newRequest, [newRequest, inProgressJob], now);
+
+        Assert.False(decision.Allowed);
+        Assert.Equal(93, decision.BlockingJobId);
+        Assert.Contains("already queued", decision.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void RemediationJobDto_exposes_lifecycle_and_verification_fields()
     {
         var repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../../"));
@@ -1376,6 +1448,21 @@ public sealed class LibraryRemediationTests
         Assert.Contains("row.VerificationCheckedAtUtc", mapSlice);
         Assert.Contains("row.LoopbackStatus", mapSlice);
         Assert.Contains("row.LoopbackSummary", mapSlice);
+    }
+
+    [Fact]
+    public void Legacy_sqlite_bootstrap_ensures_newer_remediation_lifecycle_columns_for_existing_databases()
+    {
+        var repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../../"));
+        var programPath = Path.GetFullPath(Path.Combine(repoRoot, "apps/api/Program.cs"));
+        var content = File.ReadAllText(programPath);
+
+        Assert.Contains("EnsureSqliteColumn(db, \"LibraryRemediationJobs\", \"VerificationStatus\", \"TEXT NOT NULL DEFAULT ''\");", content);
+        Assert.Contains("EnsureSqliteColumn(db, \"LibraryRemediationJobs\", \"VerificationSummary\", \"TEXT NOT NULL DEFAULT ''\");", content);
+        Assert.Contains("EnsureSqliteColumn(db, \"LibraryRemediationJobs\", \"VerificationDetailsJson\", \"TEXT NOT NULL DEFAULT ''\");", content);
+        Assert.Contains("EnsureSqliteColumn(db, \"LibraryRemediationJobs\", \"VerificationCheckedAtUtc\", \"TEXT NULL\");", content);
+        Assert.Contains("EnsureSqliteColumn(db, \"LibraryRemediationJobs\", \"LoopbackStatus\", \"TEXT NOT NULL DEFAULT ''\");", content);
+        Assert.Contains("EnsureSqliteColumn(db, \"LibraryRemediationJobs\", \"LoopbackSummary\", \"TEXT NOT NULL DEFAULT ''\");", content);
     }
 
     [Fact]
