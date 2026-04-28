@@ -40,12 +40,14 @@ public sealed class BuildInfoSourceTests
         var loginPath = Path.GetFullPath(Path.Combine(repoRoot, "apps/web/Components/Pages/Login.razor"));
         var buildStampPath = Path.GetFullPath(Path.Combine(repoRoot, "apps/web/Components/Shared/BuildStamp.razor"));
         var webProgramPath = Path.GetFullPath(Path.Combine(repoRoot, "apps/web/Program.cs"));
+        var appCssPath = Path.GetFullPath(Path.Combine(repoRoot, "apps/web/wwwroot/app.css"));
 
         var apiProgram = File.ReadAllText(apiProgramPath);
         var mainLayout = File.ReadAllText(mainLayoutPath);
         var login = File.ReadAllText(loginPath);
         var buildStamp = File.ReadAllText(buildStampPath);
         var webProgram = File.ReadAllText(webProgramPath);
+        var appCss = File.ReadAllText(appCssPath);
 
         Assert.Contains("app.MapGet(\"/api/public/build-info\"", apiProgram);
         Assert.Contains("BuildInfoResponse(", apiProgram);
@@ -62,7 +64,14 @@ public sealed class BuildInfoSourceTests
         Assert.Contains("Web:", buildStamp);
         Assert.Contains("API:", buildStamp);
         Assert.Contains("Version:", buildStamp);
-        Assert.Contains("@($\"Version: {LocalBuildInfo.GitShaShort}/{(_apiBuildInfo?.GitShaShort ?? \"loading\")}\")", buildStamp);
+        Assert.Contains("private string CompactVersionLabel =>", buildStamp);
+        Assert.Contains("LocalBuildInfo.GitShaShort == _apiBuildInfo.GitShaShort", buildStamp);
+        Assert.Contains("$\"Version: {LocalBuildInfo.GitShaShort}\"", buildStamp);
+        Assert.Contains("$\"Version: {LocalBuildInfo.GitShaShort}/{(_apiBuildInfo?.GitShaShort ?? \"loading\")}\"", buildStamp);
         Assert.Contains("class=\"build-stamp @(Compact ? \"build-stamp--compact\" : string.Empty)\"", buildStamp);
+        var compactBuildStampBlock = appCss[(appCss.IndexOf(".build-stamp--compact {", StringComparison.Ordinal))..Math.Min(appCss.Length, appCss.IndexOf(".build-stamp-line {", StringComparison.Ordinal))];
+        Assert.Contains(".build-stamp--compact {", compactBuildStampBlock);
+        Assert.Contains("margin-top: 0;", compactBuildStampBlock);
+        Assert.Contains("margin-bottom:", compactBuildStampBlock);
     }
 }

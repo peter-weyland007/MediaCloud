@@ -6,7 +6,7 @@
     @if (Compact)
     {
         <div class="build-stamp-line build-stamp-line--compact">
-            <span>@($"Version: {LocalBuildInfo.GitShaShort}/{(_apiBuildInfo?.GitShaShort ?? "loading")}")</span>
+            <span>@CompactVersionLabel</span>
         </div>
     }
     else
@@ -20,6 +20,9 @@
     [Parameter] public bool Compact { get; set; }
 
     private BuildInfoSnapshot? _apiBuildInfo;
+    private string CompactVersionLabel => _apiBuildInfo is { } && LocalBuildInfo.GitShaShort == _apiBuildInfo.GitShaShort
+        ? $"Version: {LocalBuildInfo.GitShaShort}"
+        : $"Version: {LocalBuildInfo.GitShaShort}/{(_apiBuildInfo?.GitShaShort ?? "loading")}";
 
     protected override async Task OnInitializedAsync()
     {
