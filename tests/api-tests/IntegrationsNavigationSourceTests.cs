@@ -3,15 +3,21 @@ using Xunit;
 public sealed class IntegrationsNavigationSourceTests
 {
     [Fact]
-    public void Nav_menu_exposes_top_level_integrations_link_separate_from_settings()
+    public void Integrations_navigation_moves_under_settings_instead_of_sidebar()
     {
         var repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../../"));
         var navPath = Path.GetFullPath(Path.Combine(repoRoot, "apps/web/Components/Layout/NavMenu.razor"));
-        var content = File.ReadAllText(navPath);
+        var settingsPath = Path.GetFullPath(Path.Combine(repoRoot, "apps/web/Components/Pages/Settings.razor"));
+        var navContent = File.ReadAllText(navPath);
+        var settingsContent = File.ReadAllText(settingsPath);
 
-        Assert.Contains("href=\"integrations\"", content);
-        Assert.Contains(">Integrations</NavLink>", content);
-        Assert.Contains("href=\"settings\"", content);
+        Assert.DoesNotContain("href=\"integrations\"", navContent);
+        Assert.DoesNotContain(">Integrations</NavLink>", navContent);
+        Assert.Contains("href=\"settings\"", navContent);
+
+        Assert.Contains("INTEGRATIONS", settingsContent);
+        Assert.Contains("Open integrations settings", settingsContent);
+        Assert.Contains("href=\"/integrations\"", settingsContent);
     }
 
     [Fact]

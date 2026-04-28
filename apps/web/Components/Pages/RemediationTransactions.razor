@@ -1,0 +1,385 @@
+@page "/remediation"
+@attribute [Authorize(Roles = "Admin")]
+@inject HttpClient Http
+@inject AuthTokenStore TokenStore
+@inject ISnackbar Snackbar
+@using System.Net.Http.Headers
+@using web.Components.Shared
+
+<PageTitle>Remediation Transactions</PageTitle>
+
+<h1>Remediation transactions</h1>
+<p class="subtitle">Aggregate remediation jobs across the library so queued, active, and completed replacement work is visible in one operator table.</p>
+
+<div class="card" style="margin-bottom:1rem;">
+    <div style="display:flex; gap:0.6rem; align-items:end; flex-wrap:wrap;">
+        <div class="form-group" style="min-width:220px;">
+            <label>Search</label>
+            <input class="input" @bind="_query" @bind:event="oninput" @bind:after="OnFiltersChangedAsync" placeholder="Title, service, outcome…" />
+        </div>
+
+        <div class="form-group" style="min-width:160px;">
+            <label>Media Type</label>
+            <select class="input" @bind="_mediaTypeFilter" @bind:after="OnFiltersChangedAsync">
+                @foreach (var option in MediaTypeOptions)
+                {
+                    <option value="@option">@option</option>
+                }
+            </select>
+        </div>
+
+        <div class="form-group" style="min-width:180px;">
+            <label>Service</label>
+            <select class="input" @bind="_serviceFilter" @bind:after="OnFiltersChangedAsync">
+                <option value="">All</option>
+                @foreach (var option in _availableServices)
+                {
+                    <option value="@option">@option</option>
+                }
+            </select>
+        </div>
+
+        <div class="form-group" style="min-width:180px;">
+            <label>Status</label>
+            <select class="input" @bind="_statusFilter" @bind:after="OnFiltersChangedAsync">
+                <option value="">All</option>
+                @foreach (var option in _availableStatuses)
+                {
+                    <option value="@option">@option</option>
+                }
+            </select>
+        </div>
+
+        <div class="form-group" style="min-width:180px;">
+            <label>Verification</label>
+            <select class="input" @bind="_verificationStatusFilter" @bind:after="OnFiltersChangedAsync">
+                <option value="">All</option>
+                @foreach (var option in _availableVerificationStatuses)
+                {
+                    <option value="@option">@option</option>
+                }
+            </select>
+        </div>
+
+        <div class="form-group" style="min-width:180px;">
+            <label>Requested By</label>
+            <select class="input" @bind="_requestedByFilter" @bind:after="OnFiltersChangedAsync">
+                <option value="">All</option>
+                @foreach (var option in _availableRequestedBy)
+                {
+                    <option value="@option">@option</option>
+                }
+            </select>
+        </div>
+
+        <div class="form-group" style="min-width:110px;">
+            <label>Page Size</label>
+            <select class="input" value="@_pageSize" @onchange="OnPageSizeChangedAsync">
+                @foreach (var option in PageSizeOptions)
+                {
+                    <option value="@option">@option</option>
+                }
+            </select>
+        </div>
+
+        <button class="button-secondary" @onclick="ReloadAsync" disabled="@_loading">@(_loading ? "Refreshing..." : "Refresh")</button>
+    </div>
+</div>
+
+<div class="card">
+    <div style="display:flex; justify-content:space-between; gap:0.75rem; flex-wrap:wrap; align-items:center; margin-bottom:0.75rem;">
+        <span class="card-note">Page @CurrentPageDisplay of @TotalPages · Showing @PageStartRow-@PageEndRow of @_totalCount remediation transactions</span>
+        <div style="display:flex; gap:0.5rem; align-items:end; flex-wrap:wrap;">
+            <div class="form-group" style="min-width:120px; margin:0;">
+                <label>Jump to page</label>
+                <input class="input" type="number" min="1" max="@TotalPages" value="@_jumpPageText" @onchange="OnJumpPageChanged" />
+            </div>
+            <MudButtonGroup Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small">
+                <MudButton ButtonType="ButtonType.Button" Color="Color.Secondary" OnClick="GoToPageAsync" Disabled="@_loading">Go</MudButton>
+                <MudButton ButtonType="ButtonType.Button" Color="Color.Secondary" OnClick="PreviousPageAsync" Disabled="@(_loading || _pageIndex == 0)">Previous</MudButton>
+                <MudButton ButtonType="ButtonType.Button" Color="Color.Secondary" OnClick="NextPageAsync" Disabled="@(_loading || !CanGoNext)">Next</MudButton>
+            </MudButtonGroup>
+        </div>
+    </div>
+
+    @if (_loading)
+    {
+        <p class="card-note">Loading remediation transactions…</p>
+    }
+    else if (_rows.Count == 0)
+    {
+        <p class="card-note">No remediation transactions found for the selected filter.</p>
+    }
+    else
+    {
+        <table class="data-table" style="width:100%; border-collapse:collapse;">
+            <thead>
+                <tr>
+                    <th style="text-align:left; padding:0.5rem;"><button style="all:unset; cursor:pointer;" @onclick='() => ToggleSortAsync("requested")'>Requested @SortGlyph("requested")</button></th>
+                    <th style="text-align:left; padding:0.5rem;"><button style="all:unset; cursor:pointer;" @onclick='() => ToggleSortAsync("item")'>Item @SortGlyph("item")</button></th>
+                    <th style="text-align:left; padding:0.5rem;"><button style="all:unset; cursor:pointer;" @onclick='() => ToggleSortAsync("service")'>Service @SortGlyph("service")</button></th>
+                    <th style="text-align:left; padding:0.5rem;">Action</th>
+                    <th style="text-align:left; padding:0.5rem;"><button style="all:unset; cursor:pointer;" @onclick='() => ToggleSortAsync("status")'>Status @SortGlyph("status")</button></th>
+                    <th style="text-align:left; padding:0.5rem;"><button style="all:unset; cursor:pointer;" @onclick='() => ToggleSortAsync("verification")'>Verification @SortGlyph("verification")</button></th>
+                    <th style="text-align:left; padding:0.5rem;">Provider</th>
+                    <th style="text-align:left; padding:0.5rem;"><button style="all:unset; cursor:pointer;" @onclick='() => ToggleSortAsync("requestedby")'>Requested By @SortGlyph("requestedby")</button></th>
+                    <th style="text-align:left; padding:0.5rem;">Outcome</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var row in _rows)
+                {
+                    <tr>
+                        <td style="padding:0.5rem; border-top:1px solid rgba(148,163,184,0.15);">@FormatTimestamp(row.RequestedAtUtc)</td>
+                        <td style="padding:0.5rem; border-top:1px solid rgba(148,163,184,0.15);">
+                            <a href="@MediaItemRoutes.GetDetailsHref(row.MediaType, row.LibraryItemId)" style="color:#93c5fd; text-decoration:none;">@BuildItemDisplay(row)</a>
+                            <div class="card-note">@(string.IsNullOrWhiteSpace(row.MediaType) ? "—" : row.MediaType)</div>
+                        </td>
+                        <td style="padding:0.5rem; border-top:1px solid rgba(148,163,184,0.15);">@DisplayValue(row.ServiceDisplayName, row.ServiceKey)</td>
+                        <td style="padding:0.5rem; border-top:1px solid rgba(148,163,184,0.15);">@DisplayValue(row.RequestedAction, row.CommandName)</td>
+                        <td style="padding:0.5rem; border-top:1px solid rgba(148,163,184,0.15);"><span style="@GetStatusBadgeStyle(row.Status)">@DisplaySingleValue(row.Status)</span></td>
+                        <td style="padding:0.5rem; border-top:1px solid rgba(148,163,184,0.15);"><span style="@GetStatusBadgeStyle(row.VerificationStatus)">@DisplaySingleValue(row.VerificationStatus)</span></td>
+                        <td style="padding:0.5rem; border-top:1px solid rgba(148,163,184,0.15);">@DisplaySingleValue(row.ProviderCommandStatus)</td>
+                        <td style="padding:0.5rem; border-top:1px solid rgba(148,163,184,0.15);">@DisplaySingleValue(row.RequestedBy)</td>
+                        <td style="padding:0.5rem; border-top:1px solid rgba(148,163,184,0.15);">@DisplayValue(row.OutcomeSummary, row.ResultMessage)</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+</div>
+
+@code {
+    private bool _loading = true;
+    private string _query = string.Empty;
+    private string _mediaTypeFilter = "All";
+    private string _serviceFilter = string.Empty;
+    private string _statusFilter = string.Empty;
+    private string _verificationStatusFilter = string.Empty;
+    private string _requestedByFilter = string.Empty;
+    private string _sortBy = "requested";
+    private string _sortDir = "desc";
+    private int _pageIndex;
+    private int _pageSize = 50;
+    private int _totalCount;
+    private string _jumpPageText = "1";
+    private readonly List<LibraryRemediationTransactionDto> _rows = [];
+    private List<string> _availableServices = [];
+    private List<string> _availableStatuses = [];
+    private List<string> _availableVerificationStatuses = [];
+    private List<string> _availableRequestedBy = [];
+
+    private static readonly IReadOnlyList<string> MediaTypeOptions = ["All", "Movie", "Episode", "Series", "Album", "Track"];
+    private static readonly IReadOnlyList<int> PageSizeOptions = [25, 50, 100];
+
+    private int TotalPages => Math.Max(1, (int)Math.Ceiling(Math.Max(_totalCount, 1) / (double)_pageSize));
+    private int CurrentPageDisplay => Math.Min(_pageIndex + 1, TotalPages);
+    private bool CanGoNext => (_pageIndex + 1) < TotalPages;
+    private int PageStartRow => _totalCount == 0 ? 0 : (_pageIndex * _pageSize) + 1;
+    private int PageEndRow => _totalCount == 0 ? 0 : Math.Min(_totalCount, (_pageIndex * _pageSize) + _rows.Count);
+
+    protected override async Task OnInitializedAsync()
+        => await ReloadAsync();
+
+    private async Task OnFiltersChangedAsync()
+    {
+        _pageIndex = 0;
+        await ReloadAsync();
+    }
+
+    private async Task OnPageSizeChangedAsync(ChangeEventArgs args)
+    {
+        if (int.TryParse(args.Value?.ToString(), out var size) && PageSizeOptions.Contains(size))
+        {
+            _pageSize = size;
+            _pageIndex = 0;
+            await ReloadAsync();
+        }
+    }
+
+    private void OnJumpPageChanged(ChangeEventArgs args)
+        => _jumpPageText = args.Value?.ToString() ?? string.Empty;
+
+    private async Task GoToPageAsync()
+    {
+        if (!int.TryParse(_jumpPageText, out var targetPage))
+        {
+            Snackbar.Add("Enter a valid page number.", Severity.Warning);
+            _jumpPageText = CurrentPageDisplay.ToString();
+            return;
+        }
+
+        targetPage = Math.Clamp(targetPage, 1, TotalPages);
+        var targetPageIndex = targetPage - 1;
+        if (targetPageIndex == _pageIndex)
+        {
+            _jumpPageText = CurrentPageDisplay.ToString();
+            return;
+        }
+
+        _pageIndex = targetPageIndex;
+        await ReloadAsync();
+    }
+
+    private async Task NextPageAsync()
+    {
+        if (CanGoNext)
+        {
+            _pageIndex++;
+            await ReloadAsync();
+        }
+    }
+
+    private async Task PreviousPageAsync()
+    {
+        if (_pageIndex > 0)
+        {
+            _pageIndex--;
+            await ReloadAsync();
+        }
+    }
+
+    private async Task ToggleSortAsync(string field)
+    {
+        if (string.Equals(_sortBy, field, StringComparison.OrdinalIgnoreCase))
+        {
+            _sortDir = string.Equals(_sortDir, "asc", StringComparison.OrdinalIgnoreCase) ? "desc" : "asc";
+        }
+        else
+        {
+            _sortBy = field;
+            _sortDir = field == "requested" ? "desc" : "asc";
+        }
+
+        _pageIndex = 0;
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        _loading = true;
+        try
+        {
+            var query = new List<string>
+            {
+                $"pageIndex={_pageIndex}",
+                $"pageSize={_pageSize}",
+                $"sortBy={Uri.EscapeDataString(_sortBy)}",
+                $"sortDir={Uri.EscapeDataString(_sortDir)}"
+            };
+
+            if (!string.IsNullOrWhiteSpace(_query)) query.Add($"q={Uri.EscapeDataString(_query)}");
+            if (!string.Equals(_mediaTypeFilter, "All", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(_mediaTypeFilter)) query.Add($"mediaType={Uri.EscapeDataString(_mediaTypeFilter)}");
+            if (!string.IsNullOrWhiteSpace(_serviceFilter)) query.Add($"service={Uri.EscapeDataString(_serviceFilter)}");
+            if (!string.IsNullOrWhiteSpace(_statusFilter)) query.Add($"status={Uri.EscapeDataString(_statusFilter)}");
+            if (!string.IsNullOrWhiteSpace(_verificationStatusFilter)) query.Add($"verificationStatus={Uri.EscapeDataString(_verificationStatusFilter)}");
+            if (!string.IsNullOrWhiteSpace(_requestedByFilter)) query.Add($"requestedBy={Uri.EscapeDataString(_requestedByFilter)}");
+
+            using var request = new HttpRequestMessage(HttpMethod.Get, $"/api/remediation-jobs?{string.Join("&", query)}");
+            await AttachBearerAsync(request);
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                Snackbar.Add($"Failed to load remediation transactions ({(int)response.StatusCode}).", Severity.Error);
+                return;
+            }
+
+            var payload = await response.Content.ReadFromJsonAsync<LibraryRemediationTransactionPageDto>() ?? new LibraryRemediationTransactionPageDto([], 0, 0, _pageSize, [], [], [], []);
+            _rows.Clear();
+            _rows.AddRange(payload.Items);
+            _totalCount = payload.TotalCount;
+            _pageIndex = payload.PageIndex;
+            _pageSize = payload.PageSize;
+            _jumpPageText = CurrentPageDisplay.ToString();
+            _availableServices = payload.AvailableServices.ToList();
+            _availableStatuses = payload.AvailableStatuses.ToList();
+            _availableVerificationStatuses = payload.AvailableVerificationStatuses.ToList();
+            _availableRequestedBy = payload.AvailableRequestedBy.ToList();
+
+            if (!string.IsNullOrWhiteSpace(_serviceFilter) && !_availableServices.Contains(_serviceFilter, StringComparer.OrdinalIgnoreCase)) _serviceFilter = string.Empty;
+            if (!string.IsNullOrWhiteSpace(_statusFilter) && !_availableStatuses.Contains(_statusFilter, StringComparer.OrdinalIgnoreCase)) _statusFilter = string.Empty;
+            if (!string.IsNullOrWhiteSpace(_verificationStatusFilter) && !_availableVerificationStatuses.Contains(_verificationStatusFilter, StringComparer.OrdinalIgnoreCase)) _verificationStatusFilter = string.Empty;
+            if (!string.IsNullOrWhiteSpace(_requestedByFilter) && !_availableRequestedBy.Contains(_requestedByFilter, StringComparer.OrdinalIgnoreCase)) _requestedByFilter = string.Empty;
+        }
+        catch
+        {
+            Snackbar.Add("Failed to load remediation transactions.", Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task AttachBearerAsync(HttpRequestMessage request)
+    {
+        var token = await TokenStore.GetTokenAsync();
+        if (!string.IsNullOrWhiteSpace(token))
+        {
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        }
+    }
+
+    private string SortGlyph(string field)
+        => !string.Equals(_sortBy, field, StringComparison.OrdinalIgnoreCase)
+            ? "↕"
+            : (string.Equals(_sortDir, "asc", StringComparison.OrdinalIgnoreCase) ? "↑" : "↓");
+
+    private static string BuildItemDisplay(LibraryRemediationTransactionDto row)
+        => string.IsNullOrWhiteSpace(row.LibraryItemTitle)
+            ? MediaItemRoutes.GetFallbackDisplayName(row.MediaType, row.LibraryItemId)
+            : row.Year.HasValue ? $"{row.LibraryItemTitle} ({row.Year.Value})" : row.LibraryItemTitle;
+
+    private static string DisplaySingleValue(string? value, string fallback = "—")
+        => string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
+
+    private static string DisplayValue(string? primary, string? fallback)
+        => !string.IsNullOrWhiteSpace(primary)
+            ? primary.Trim()
+            : !string.IsNullOrWhiteSpace(fallback)
+                ? fallback.Trim()
+                : "—";
+
+    private static string FormatTimestamp(DateTimeOffset value)
+        => value.ToLocalTime().ToString("yyyy-MM-dd HH:mm");
+
+    private static string GetStatusBadgeStyle(string? status)
+    {
+        const string baseStyle = "display:inline-block; padding:0.2rem 0.52rem; border-radius:999px; font-size:0.78rem; font-weight:700; letter-spacing:0.01em;";
+        var value = (status ?? string.Empty).Trim().ToLowerInvariant();
+        return value switch
+        {
+            "verified" or "completed" => baseStyle + "background:rgba(34,197,94,0.18); color:#bbf7d0; border:1px solid rgba(34,197,94,0.45);",
+            "queued" or "searchqueued" or "processing" or "pending" or "started" => baseStyle + "background:rgba(59,130,246,0.18); color:#bfdbfe; border:1px solid rgba(59,130,246,0.45);",
+            "failed" or "blocked" => baseStyle + "background:rgba(239,68,68,0.18); color:#fecaca; border:1px solid rgba(239,68,68,0.48);",
+            _ => baseStyle + "background:rgba(148,163,184,0.18); color:#cbd5e1; border:1px solid rgba(148,163,184,0.35);"
+        };
+    }
+
+    private record LibraryRemediationTransactionPageDto(IReadOnlyList<LibraryRemediationTransactionDto> Items, int TotalCount, int PageIndex, int PageSize, IReadOnlyList<string> AvailableServices, IReadOnlyList<string> AvailableStatuses, IReadOnlyList<string> AvailableVerificationStatuses, IReadOnlyList<string> AvailableRequestedBy);
+
+    private record LibraryRemediationTransactionDto(
+        long Id,
+        long LibraryItemId,
+        string LibraryItemTitle,
+        string MediaType,
+        int? Year,
+        string ServiceKey,
+        string ServiceDisplayName,
+        string RequestedAction,
+        string CommandName,
+        string IssueType,
+        string Reason,
+        string Status,
+        string SearchStatus,
+        string VerificationStatus,
+        string ProviderCommandStatus,
+        string OutcomeSummary,
+        string ResultMessage,
+        string RequestedBy,
+        DateTimeOffset RequestedAtUtc,
+        DateTimeOffset? FinishedAtUtc,
+        DateTimeOffset? LastCheckedAtUtc,
+        DateTimeOffset? ProviderCommandCheckedAtUtc,
+        DateTimeOffset UpdatedAtUtc);
+}

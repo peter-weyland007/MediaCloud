@@ -2845,6 +2845,141 @@ app.MapGet("/api/library/items/{id:long}/remediation-jobs", async (long id, Medi
     return Results.Ok(rows.Select(MapLibraryRemediationJobDto).ToList());
 }).RequireAuthorization("AdminOnly");
 
+app.MapGet("/api/remediation-jobs", async (MediaCloudDbContext db, string? q, string? mediaType, string? service, string? status, string? verificationStatus, string? requestedBy, string? sortBy, string? sortDir, int? pageIndex, int? pageSize) =>
+{
+    var normalizedQuery = (q ?? string.Empty).Trim();
+    var normalizedMediaType = string.IsNullOrWhiteSpace(mediaType) ? string.Empty : mediaType.Trim();
+    var normalizedService = string.IsNullOrWhiteSpace(service) ? string.Empty : service.Trim();
+    var normalizedStatus = string.IsNullOrWhiteSpace(status) ? string.Empty : status.Trim();
+    var normalizedVerificationStatus = string.IsNullOrWhiteSpace(verificationStatus) ? string.Empty : verificationStatus.Trim();
+    var normalizedRequestedBy = string.IsNullOrWhiteSpace(requestedBy) ? string.Empty : requestedBy.Trim();
+    var normalizedSortBy = string.IsNullOrWhiteSpace(sortBy) ? "requested" : sortBy.Trim().ToLowerInvariant();
+    var normalizedSortDir = string.Equals(sortDir, "asc", StringComparison.OrdinalIgnoreCase) ? "asc" : "desc";
+    var normalizedPageIndex = Math.Max(0, pageIndex ?? 0);
+    var normalizedPageSize = Math.Clamp(pageSize ?? 50, 25, 100);
+
+    var allRows = await (
+        from job in db.LibraryRemediationJobs
+        join itemLink in db.LibraryItems on job.LibraryItemId equals itemLink.Id into itemGroup
+        from item in itemGroup.DefaultIfEmpty()
+        select new LibraryRemediationTransactionDto(
+            job.Id,
+            job.LibraryItemId,
+            item != null ? item.Title : string.Empty,
+            item != null ? item.MediaType : string.Empty,
+            item != null ? item.Year : null,
+            job.ServiceKey,
+            job.ServiceDisplayName,
+            job.RequestedAction,
+            job.CommandName,
+            job.IssueType,
+            job.Reason,
+            job.Status,
+            job.SearchStatus,
+            job.VerificationStatus,
+            job.ProviderCommandStatus,
+            job.OutcomeSummary,
+            job.ResultMessage,
+            job.RequestedBy,
+            job.RequestedAtUtc,
+            job.FinishedAtUtc,
+            job.LastCheckedAtUtc,
+            job.ProviderCommandCheckedAtUtc,
+            job.UpdatedAtUtc))
+        .ToListAsync();
+
+    var availableServices = allRows
+        .Select(x => string.IsNullOrWhiteSpace(x.ServiceDisplayName) ? x.ServiceKey : x.ServiceDisplayName)
+        .Where(x => !string.IsNullOrWhiteSpace(x))
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+        .ToList();
+    var availableStatuses = allRows
+        .Select(x => x.Status)
+        .Where(x => !string.IsNullOrWhiteSpace(x))
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+        .ToList();
+    var availableVerificationStatuses = allRows
+        .Select(x => x.VerificationStatus)
+        .Where(x => !string.IsNullOrWhiteSpace(x))
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+        .ToList();
+    var availableRequestedBy = allRows
+        .Select(x => x.RequestedBy)
+        .Where(x => !string.IsNullOrWhiteSpace(x))
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+        .ToList();
+
+    IEnumerable<LibraryRemediationTransactionDto> filtered = allRows;
+    if (!string.IsNullOrWhiteSpace(normalizedQuery))
+    {
+        filtered = filtered.Where(x =>
+            x.LibraryItemTitle.Contains(normalizedQuery, StringComparison.OrdinalIgnoreCase)
+            || x.ServiceDisplayName.Contains(normalizedQuery, StringComparison.OrdinalIgnoreCase)
+            || x.ServiceKey.Contains(normalizedQuery, StringComparison.OrdinalIgnoreCase)
+            || x.RequestedAction.Contains(normalizedQuery, StringComparison.OrdinalIgnoreCase)
+            || x.OutcomeSummary.Contains(normalizedQuery, StringComparison.OrdinalIgnoreCase)
+            || x.ResultMessage.Contains(normalizedQuery, StringComparison.OrdinalIgnoreCase));
+    }
+
+    if (!string.IsNullOrWhiteSpace(normalizedMediaType))
+    {
+        filtered = filtered.Where(x => string.Equals(x.MediaType, normalizedMediaType, StringComparison.OrdinalIgnoreCase));
+    }
+
+    if (!string.IsNullOrWhiteSpace(normalizedService))
+    {
+        filtered = filtered.Where(x =>
+            string.Equals(x.ServiceKey, normalizedService, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(x.ServiceDisplayName, normalizedService, StringComparison.OrdinalIgnoreCase));
+    }
+
+    if (!string.IsNullOrWhiteSpace(normalizedStatus))
+    {
+        filtered = filtered.Where(x => string.Equals(x.Status, normalizedStatus, StringComparison.OrdinalIgnoreCase));
+    }
+
+    if (!string.IsNullOrWhiteSpace(normalizedVerificationStatus))
+    {
+        filtered = filtered.Where(x => string.Equals(x.VerificationStatus, normalizedVerificationStatus, StringComparison.OrdinalIgnoreCase));
+    }
+
+    if (!string.IsNullOrWhiteSpace(normalizedRequestedBy))
+    {
+        filtered = filtered.Where(x => string.Equals(x.RequestedBy, normalizedRequestedBy, StringComparison.OrdinalIgnoreCase));
+    }
+
+    filtered = (normalizedSortBy, normalizedSortDir) switch
+    {
+        ("item", "asc") => filtered.OrderBy(x => x.LibraryItemTitle, StringComparer.OrdinalIgnoreCase).ThenByDescending(x => x.RequestedAtUtc),
+        ("item", _) => filtered.OrderByDescending(x => x.LibraryItemTitle, StringComparer.OrdinalIgnoreCase).ThenByDescending(x => x.RequestedAtUtc),
+        ("service", "asc") => filtered.OrderBy(x => x.ServiceDisplayName, StringComparer.OrdinalIgnoreCase).ThenByDescending(x => x.RequestedAtUtc),
+        ("service", _) => filtered.OrderByDescending(x => x.ServiceDisplayName, StringComparer.OrdinalIgnoreCase).ThenByDescending(x => x.RequestedAtUtc),
+        ("status", "asc") => filtered.OrderBy(x => x.Status, StringComparer.OrdinalIgnoreCase).ThenByDescending(x => x.RequestedAtUtc),
+        ("status", _) => filtered.OrderByDescending(x => x.Status, StringComparer.OrdinalIgnoreCase).ThenByDescending(x => x.RequestedAtUtc),
+        ("verification", "asc") => filtered.OrderBy(x => x.VerificationStatus, StringComparer.OrdinalIgnoreCase).ThenByDescending(x => x.RequestedAtUtc),
+        ("verification", _) => filtered.OrderByDescending(x => x.VerificationStatus, StringComparer.OrdinalIgnoreCase).ThenByDescending(x => x.RequestedAtUtc),
+        ("requestedby", "asc") => filtered.OrderBy(x => x.RequestedBy, StringComparer.OrdinalIgnoreCase).ThenByDescending(x => x.RequestedAtUtc),
+        ("requestedby", _) => filtered.OrderByDescending(x => x.RequestedBy, StringComparer.OrdinalIgnoreCase).ThenByDescending(x => x.RequestedAtUtc),
+        ("requested", "asc") => filtered.OrderBy(x => x.RequestedAtUtc).ThenByDescending(x => x.Id),
+        _ => filtered.OrderByDescending(x => x.RequestedAtUtc).ThenByDescending(x => x.Id)
+    };
+
+    var filteredList = filtered.ToList();
+    var totalCount = filteredList.Count;
+    var maxPageIndex = totalCount == 0 ? 0 : Math.Max(0, (int)Math.Ceiling(totalCount / (double)normalizedPageSize) - 1);
+    normalizedPageIndex = Math.Min(normalizedPageIndex, maxPageIndex);
+    var rows = filteredList
+        .Skip(normalizedPageIndex * normalizedPageSize)
+        .Take(normalizedPageSize)
+        .ToList();
+
+    return Results.Ok(new LibraryRemediationTransactionPageResponse(rows, totalCount, normalizedPageIndex, normalizedPageSize, availableServices, availableStatuses, availableVerificationStatuses, availableRequestedBy));
+}).RequireAuthorization("AdminOnly");
+
 app.MapGet("/api/library/items/{id:long}/sources", async (long id, MediaCloudDbContext db) =>
 {
     var itemExists = await db.LibraryItems.AnyAsync(x => x.Id == id);
@@ -8484,6 +8619,8 @@ public record RuntimePolicySettingsResponse(double ToleranceMinutesFloor, double
 public record UpdateIntegrationPullSettingsRequest(bool AutoPullEnabled, int IntervalMinutes);
 public record IntegrationPullSettingsResponse(bool AutoPullEnabled, int IntervalMinutes, DateTimeOffset? LastAutoPullAtUtc);
 public record LibraryIssuePageResponse(IReadOnlyList<LibraryIssueDto> Items, int TotalCount, int PageIndex, int PageSize, IReadOnlyList<string> AvailableIssueTypes);
+public record LibraryRemediationTransactionDto(long Id, long LibraryItemId, string LibraryItemTitle, string MediaType, int? Year, string ServiceKey, string ServiceDisplayName, string RequestedAction, string CommandName, string IssueType, string Reason, string Status, string SearchStatus, string VerificationStatus, string ProviderCommandStatus, string OutcomeSummary, string ResultMessage, string RequestedBy, DateTimeOffset RequestedAtUtc, DateTimeOffset? FinishedAtUtc, DateTimeOffset? LastCheckedAtUtc, DateTimeOffset? ProviderCommandCheckedAtUtc, DateTimeOffset UpdatedAtUtc);
+public record LibraryRemediationTransactionPageResponse(IReadOnlyList<LibraryRemediationTransactionDto> Items, int TotalCount, int PageIndex, int PageSize, IReadOnlyList<string> AvailableServices, IReadOnlyList<string> AvailableStatuses, IReadOnlyList<string> AvailableVerificationStatuses, IReadOnlyList<string> AvailableRequestedBy);
 public record IntegrationServiceResponse(string ServiceKey, string DisplayName, bool RequiresAuth, IReadOnlyList<string> AllowedAuthTypes);
 public record CreateIntegrationInstanceRequest(string ServiceKey, string InstanceName, string BaseUrl, string AuthType, string ApiKey, string Username, string Password, bool Enabled);
 public record UpdateIntegrationInstanceRequest(string InstanceName, string BaseUrl, string AuthType, string ApiKey, string Username, string Password, bool Enabled);
