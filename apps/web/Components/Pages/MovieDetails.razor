@@ -1121,8 +1121,8 @@ else
                                             </div>
                                         </td>
                                         <td style="padding:0.35rem 0; vertical-align:middle; text-align:right; width:1%; white-space:nowrap;">
-                                            <MudButton Variant="Variant.Outlined"
-                                                       Color="Color.Default"
+                                            <MudButton Variant="Variant.Filled"
+                                                       Color="Color.Secondary"
                                                        Size="Size.Small"
                                                        Style="text-transform:none; min-width:13.5rem;"
                                                        OnClick="LeaveAsIsAsync"
@@ -1137,7 +1137,7 @@ else
                                             </div>
                                         </td>
                                         <td style="padding:0.35rem 0; vertical-align:middle; text-align:right; width:1%; white-space:nowrap;">
-                                            <MudButton Variant="Variant.Outlined"
+                                            <MudButton Variant="Variant.Filled"
                                                        Color="Color.Warning"
                                                        Size="Size.Small"
                                                        Style="text-transform:none; min-width:13.5rem;"
@@ -2531,9 +2531,7 @@ else
         => "Request better file";
 
     private string GetRemediationV2SecondaryActionLabel()
-        => IsLanguageIssueRequiringManualRemediation()
-            ? "Leave as-is (possible client/default-track issue)"
-            : "Leave as-is";
+        => "Leave as-is";
 
     private string GetRemediationV2TertiaryActionLabel()
         => IsLanguageIssueRequiringManualRemediation()

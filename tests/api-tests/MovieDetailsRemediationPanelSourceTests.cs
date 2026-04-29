@@ -85,6 +85,8 @@ public sealed class MovieDetailsRemediationPanelSourceTests
         Assert.Contains("<tbody>", remediationV2Slice);
         Assert.Contains("<td style=\"padding:0.35rem 0.85rem 0.35rem 0; vertical-align:top;\">", remediationV2Slice);
         Assert.Contains("<td style=\"padding:0.35rem 0; vertical-align:middle; text-align:right; width:1%; white-space:nowrap;\">", remediationV2Slice);
+        Assert.Contains("Variant=\"Variant.Filled\"", remediationV2Slice);
+        Assert.DoesNotContain("Variant=\"Variant.Outlined\"", remediationV2Slice);
         Assert.Contains("Style=\"text-transform:none; min-width:13.5rem;\"", remediationV2Slice);
         Assert.Contains("GetRemediationV2ShowDecisionButtons()", remediationV2Slice);
         Assert.DoesNotContain("display:flex; flex-direction:column; gap:0.45rem; align-items:stretch; justify-self:end;", remediationV2Slice);
@@ -125,7 +127,8 @@ public sealed class MovieDetailsRemediationPanelSourceTests
         Assert.Contains("Do not queue a replacement or conversion. Use this when the file likely already has the right audio and the problem is client-side or default-track selection.", content);
         Assert.Contains("Do not auto-fix this. Keep it on the manual operator path only if you still want to force a generic conversion review.", content);
         Assert.Contains("GetRemediationV2SecondaryActionLabel()", remediationV2Slice);
-        Assert.Contains("Leave as-is (possible client/default-track issue)", content);
+        Assert.Contains("Leave as-is", content);
+        Assert.DoesNotContain("Leave as-is (possible client/default-track issue)", content);
         Assert.Contains("Possible client/default-track issue. MediaCloud did not queue a fix or request a replacement.", content);
         Assert.Contains("GetRemediationV2CurrentActionHelpText()", remediationV2Slice);
         Assert.DoesNotContain("Review audio-language issue", content);
