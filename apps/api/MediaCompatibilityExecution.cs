@@ -45,10 +45,62 @@ public static class MediaCompatibilityExecution
             .FirstOrDefault();
     }
 
+    public static async Task ReconcileStaleRunningPreviewJobsAsync(MediaCloudDbContext db, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var staleJobs = await db.LibraryRemediationJobs
+            .Where(x => x.ServiceKey == "ffmpeg"
+                        && x.CommandName == "ffmpeg-compat-preview"
+                        && x.Status == "Running"
+                        && x.FinishedAtUtc == null)
+            .ToListAsync(cancellationToken);
+
+        if (staleJobs.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var job in staleJobs)
+        {
+            var context = DeserializeContext(job.ReleaseContextJson);
+            var outputPath = context?.OutputPath ?? string.Empty;
+            var outputExists = !string.IsNullOrWhiteSpace(outputPath) && File.Exists(outputPath);
+            var reachedCompletion = job.ProgressPercent.HasValue && job.ProgressPercent.Value >= 100d;
+
+            if (!outputExists)
+            {
+                job.Status = "Queued";
+                job.ProgressPercent = null;
+                job.OutcomeSummary = "FFmpeg remediation was requeued after app restart interrupted the previous attempt.";
+                job.ResultMessage = "Previous FFmpeg attempt was interrupted by app restart before a finished output was detected.";
+            }
+            else if (!reachedCompletion)
+            {
+                TryDeleteFile(outputPath);
+                job.Status = "Queued";
+                job.ProgressPercent = null;
+                job.OutcomeSummary = "FFmpeg remediation was requeued after app restart interrupted the previous attempt and partial sidecar output was cleared.";
+                job.ResultMessage = "Previous FFmpeg attempt was interrupted by app restart. MediaCloud removed the partial sidecar output before requeueing.";
+            }
+            else
+            {
+                job.Status = "Failed";
+                job.OutcomeSummary = "FFmpeg remediation was interrupted by app restart after ffmpeg reached 100%. Review the sidecar output before rerunning.";
+                job.ResultMessage = "App restart interrupted the running FFmpeg worker after progress had reached 100%. MediaCloud left the detected sidecar output in place for manual review.";
+            }
+
+            job.ProgressUpdatedAtUtc = now;
+            job.LastCheckedAtUtc = now;
+            job.UpdatedAtUtc = now;
+        }
+
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
     private static async Task ProcessQueuedJobsAsync(IServiceProvider services, CancellationToken cancellationToken)
     {
         await using var scope = services.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<MediaCloudDbContext>();
+        await ReconcileStaleRunningPreviewJobsAsync(db, DateTimeOffset.UtcNow, cancellationToken);
         var job = await LoadNextQueuedPreviewJobAsync(db, cancellationToken);
         if (job is null)
         {
@@ -404,6 +456,22 @@ public static class MediaCompatibilityExecution
         return ProbeMediaFile(filePath).RuntimeMinutes is { } runtimeMinutes
             ? runtimeMinutes * 60d
             : null;
+    }
+
+    private static void TryDeleteFile(string filePath)
+    {
+        if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath))
+        {
+            return;
+        }
+
+        try
+        {
+            File.Delete(filePath);
+        }
+        catch
+        {
+        }
     }
 
     private static CompatibilityProbeResult ProbeMediaFile(string filePath)
