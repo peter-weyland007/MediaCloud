@@ -1013,14 +1013,14 @@ else
         <div style="display:grid; gap:1rem;">
             <p class="card-note">A simple answer-first view for end users.</p>
 
-            <div style="display:grid; grid-template-columns:1fr 1fr 2fr; gap:0.75rem; align-items:stretch;">
-                <div style="border:1px solid rgba(51,65,85,0.65); border-radius:0.75rem; padding:0.8rem; background:rgba(2,6,23,0.35); display:grid; gap:0.3rem; align-content:start; height:100%;">
+            <div style="display:grid; grid-template-columns:minmax(0, 1fr) minmax(22rem, 22rem); gap:0.75rem; align-items:start;">
+                <div style="grid-column:1; grid-row:1; border:1px solid rgba(51,65,85,0.65); border-radius:0.75rem; padding:0.8rem; background:rgba(2,6,23,0.35); display:grid; gap:0.3rem; align-content:start; height:100%;">
                     <p class="card-label">REMEDIATION STEPS</p>
                     <table style="width:100%; border-collapse:collapse; align-self:start;">
                         <thead>
                             <tr style="border-bottom:1px solid rgba(51,65,85,0.55);">
                                 <th scope="col" style="text-align:left; padding:0 0 0.45rem; color:#94a3b8; font-size:0.7rem; font-weight:700; letter-spacing:0.04em; text-transform:uppercase;">Step</th>
-                                <th scope="col" style="text-align:right; padding:0 0 0.45rem; color:#94a3b8; font-size:0.7rem; font-weight:700; letter-spacing:0.04em; text-transform:uppercase;">Action</th>
+                                <th scope="col" style="text-align:right; width:22%; padding:0 0 0.45rem; color:#94a3b8; font-size:0.7rem; font-weight:700; letter-spacing:0.04em; text-transform:uppercase;">Action</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -1035,7 +1035,7 @@ else
                                             <span class="card-note" style="color:@(step.Completed ? "#94a3b8" : step.IsCurrent ? "#e2e8f0" : "#cbd5e1"); text-decoration:@(step.Completed ? "line-through" : "none"); line-height:1.35;">@step.Label</span>
                                         </div>
                                     </td>
-                                    <td style="padding:0.65rem 0 0.65rem 0.65rem; vertical-align:top; text-align:right;">
+                                    <td style="padding:0.65rem 0 0.65rem 0.65rem; width:22%; vertical-align:top; text-align:right;">
                                         @if (!step.Completed && step.IsCurrent && string.Equals(step.Label, "Analyze this file", StringComparison.Ordinal))
                                         {
                                             <MudButton Variant="Variant.Text"
@@ -1068,33 +1068,7 @@ else
                                         }
                                         else if (step.IsCurrent && string.Equals(step.Label, "Choose which action to take", StringComparison.Ordinal))
                                         {
-                                            <div style="display:flex; flex-direction:column; gap:0.45rem; align-items:stretch; min-width:12rem; margin-left:auto;">
-                                                @if (_canManageRemediation)
-                                                {
-                                                    <MudButton Variant="Variant.Filled"
-                                                               Color="Color.Primary"
-                                                               Size="Size.Small"
-                                                               Style="text-transform:none;"
-                                                               OnClick="RequestBetterFileAsync"
-                                                               Disabled="@_requestingBetterFile">@(_requestingBetterFile ? "Requesting..." : "Request better file")</MudButton>
-                                                }
-                                                <MudButton Variant="Variant.Outlined"
-                                                           Color="Color.Default"
-                                                           Size="Size.Small"
-                                                           Style="text-transform:none;"
-                                                           OnClick="LeaveAsIsAsync"
-                                                           Disabled="@_requestingBetterFile">Leave as-is</MudButton>
-                                                <MudButton Variant="Variant.Outlined"
-                                                           Color="Color.Warning"
-                                                           Size="Size.Small"
-                                                           Style="text-transform:none;"
-                                                           OnClick="ConvertAnywayAsync"
-                                                           Disabled="@_requestingBetterFile">Convert anyway</MudButton>
-                                                @if (!_canManageRemediation)
-                                                {
-                                                    <span class="card-note" style="text-align:right; color:#94a3b8;">Admin access required to request a replacement or view remediation history.</span>
-                                                }
-                                            </div>
+                                            <span class="card-note" style="color:#93c5fd;">Review actions below</span>
                                         }
                                         else if (step.IsCurrent && step.Label.StartsWith("Wait", StringComparison.Ordinal))
                                         {
@@ -1113,8 +1087,74 @@ else
                             }
                         </tbody>
                     </table>
+
+                    @if (GetRemediationV2ShowDecisionButtons())
+                    {
+                        <div style="display:grid; gap:0.55rem; padding-top:0.75rem; border-top:1px solid rgba(51,65,85,0.55); margin-top:0.75rem;">
+                            <p class="card-note" style="color:#e2e8f0; margin:0;">@GetRemediationV2CurrentActionHelpText()</p>
+                            <table style="width:100%; border-collapse:collapse;">
+                                <tbody>
+                                    <tr>
+                                        <td style="padding:0.35rem 0.85rem 0.35rem 0; vertical-align:top;">
+                                            <div style="display:grid; gap:0.15rem;">
+                                                <span class="card-note" style="color:#f8fafc; font-weight:700;">@GetRemediationV2PrimaryActionLabel()</span>
+                                                <span class="card-note" style="color:#cbd5e1;">@GetRemediationV2PrimaryActionEffectText()</span>
+                                            </div>
+                                        </td>
+                                        <td style="padding:0.35rem 0; vertical-align:middle; text-align:right; width:1%; white-space:nowrap;">
+                                            @if (_canManageRemediation)
+                                            {
+                                                <MudButton Variant="Variant.Filled"
+                                                           Color="Color.Primary"
+                                                           Size="Size.Small"
+                                                           Style="text-transform:none; min-width:13.5rem;"
+                                                           OnClick="RequestBetterFileAsync"
+                                                           Disabled="@_requestingBetterFile">@(_requestingBetterFile ? "Requesting..." : GetRemediationV2PrimaryActionLabel())</MudButton>
+                                            }
+                                        </td>
+                                    </tr>
+                                    <tr>
+                                        <td style="padding:0.35rem 0.85rem 0.35rem 0; vertical-align:top;">
+                                            <div style="display:grid; gap:0.15rem;">
+                                                <span class="card-note" style="color:#f8fafc; font-weight:700;">@GetRemediationV2SecondaryActionLabel()</span>
+                                                <span class="card-note" style="color:#cbd5e1;">@GetRemediationV2SecondaryActionEffectText()</span>
+                                            </div>
+                                        </td>
+                                        <td style="padding:0.35rem 0; vertical-align:middle; text-align:right; width:1%; white-space:nowrap;">
+                                            <MudButton Variant="Variant.Outlined"
+                                                       Color="Color.Default"
+                                                       Size="Size.Small"
+                                                       Style="text-transform:none; min-width:13.5rem;"
+                                                       OnClick="LeaveAsIsAsync"
+                                                       Disabled="@_requestingBetterFile">@GetRemediationV2SecondaryActionLabel()</MudButton>
+                                        </td>
+                                    </tr>
+                                    <tr>
+                                        <td style="padding:0.35rem 0.85rem 0.35rem 0; vertical-align:top;">
+                                            <div style="display:grid; gap:0.15rem;">
+                                                <span class="card-note" style="color:#f8fafc; font-weight:700;">@GetRemediationV2TertiaryActionLabel()</span>
+                                                <span class="card-note" style="color:#cbd5e1;">@GetRemediationV2TertiaryActionEffectText()</span>
+                                            </div>
+                                        </td>
+                                        <td style="padding:0.35rem 0; vertical-align:middle; text-align:right; width:1%; white-space:nowrap;">
+                                            <MudButton Variant="Variant.Outlined"
+                                                       Color="Color.Warning"
+                                                       Size="Size.Small"
+                                                       Style="text-transform:none; min-width:13.5rem;"
+                                                       OnClick="ConvertAnywayAsync"
+                                                       Disabled="@_requestingBetterFile">@GetRemediationV2TertiaryActionLabel()</MudButton>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                            @if (!_canManageRemediation)
+                            {
+                                <span class="card-note" style="text-align:right; color:#94a3b8;">Admin access required to request a replacement or view remediation history.</span>
+                            }
+                        </div>
+                    }
                 </div>
-                <div id="remediation-v2-profile-comparison" style="border:1px solid rgba(51,65,85,0.65); border-radius:0.75rem; padding:0.8rem; background:rgba(2,6,23,0.35); display:grid; gap:0.1rem; align-content:start; height:100%;">
+                <div id="remediation-v2-profile-comparison" style="grid-column:2; grid-row:1; border:1px solid rgba(51,65,85,0.65); border-radius:0.75rem; padding:0.8rem; background:rgba(2,6,23,0.35); display:grid; gap:0.1rem; align-content:start; height:100%;">
                     <p class="card-label">PROFILE COMPARISON</p>
                     @if (_compatibilityRecommendation is null)
                     {
@@ -1160,14 +1200,10 @@ else
                         </div>
                     }
                 </div>
-                <div style="border:1px solid rgba(51,65,85,0.65); border-radius:0.75rem; padding:0.8rem; background:rgba(2,6,23,0.35); display:grid; gap:0.55rem; align-content:start; height:100%;">
+                <div style="grid-column:1 / span 2; grid-row:2; border:1px solid rgba(51,65,85,0.65); border-radius:0.75rem; padding:0.8rem; background:rgba(2,6,23,0.35); display:grid; gap:0.55rem; align-content:start; height:100%;">
                     <div style="display:grid; gap:0.2rem;">
                         <p class="card-label">REMEDIATION STATUS</p>
                         <p class="smoke-summary-title">@GetRemediationV2StatusLabel()</p>
-                    </div>
-                    <div style="display:grid; gap:0.3rem; padding-top:0.55rem; border-top:1px solid rgba(51,65,85,0.55);">
-                        <p class="card-label">BEST ACTION</p>
-                        <p class="card-note" style="color:#e2e8f0; font-weight:600;">@GetRemediationV2BestActionLabel()</p>
                     </div>
                     <div style="display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:0.75rem; padding-top:0.55rem; border-top:1px solid rgba(51,65,85,0.55);">
                         <div style="display:grid; gap:0.3rem;">
@@ -1183,6 +1219,27 @@ else
                         <p class="card-label">WHY</p>
                         <p class="card-note">@GetRemediationV2WhySummary()</p>
                     </div>
+                    @if (GetOpenRemediationIssues().Count > 0)
+                    {
+                        <div style="display:grid; gap:0.55rem; padding-top:0.55rem; border-top:1px solid rgba(51,65,85,0.55);">
+                            <div style="display:grid; gap:0.2rem;">
+                                <p class="card-label">OPEN REPORTED ISSUES</p>
+                                <p class="card-note">This issue is not automatically fixed just because MediaCloud can remux or convert the file.</p>
+                            </div>
+                            @foreach (var issue in GetOpenRemediationIssues())
+                            {
+                                <div style="display:grid; gap:0.25rem; padding:0.55rem 0.65rem; border:1px solid rgba(51,65,85,0.55); border-radius:0.65rem; background:rgba(15,23,42,0.45);">
+                                    <div style="display:flex; align-items:center; gap:0.45rem; flex-wrap:wrap;">
+                                        <strong style="color:#e2e8f0;">@GetIssueTypeLabel(issue.IssueType)</strong>
+                                        <span style="@GetIssueStatusBadgeStyle(issue.Status)">@issue.Status</span>
+                                        <span style="@GetIssueSeverityBadgeStyle(issue.Severity)">@issue.Severity</span>
+                                    </div>
+                                    <p class="card-note" style="color:#e2e8f0;">@BuildRemediationIssueContextSummary(issue)</p>
+                                    <p class="card-note">@BuildRemediationIssueFitSummary()</p>
+                                </div>
+                            }
+                        </div>
+                    }
                 </div>
             </div>
 
@@ -1523,14 +1580,18 @@ else
 
     private Task LeaveAsIsAsync()
     {
-        _compatibilityQueueStatusMessage = "Left as-is for now. MediaCloud did not queue a fix or request a replacement.";
+        _compatibilityQueueStatusMessage = IsLanguageIssueRequiringManualRemediation()
+            ? "Left as-is for now. Possible client/default-track issue. MediaCloud did not queue a fix or request a replacement."
+            : "Left as-is for now. MediaCloud did not queue a fix or request a replacement.";
         Snackbar.Add(_compatibilityQueueStatusMessage, Severity.Info);
         return Task.CompletedTask;
     }
 
     private Task ConvertAnywayAsync()
     {
-        _compatibilityQueueStatusMessage = "Manual conversion review is still required here. Use the operator remediation panel if you want to force a one-off conversion.";
+        _compatibilityQueueStatusMessage = IsLanguageIssueRequiringManualRemediation()
+            ? "MediaCloud still cannot guarantee the correct spoken language here. Use the operator remediation panel only if you want to force a generic conversion anyway."
+            : "Manual conversion review is still required here. Use the operator remediation panel if you want to force a one-off conversion.";
         Snackbar.Add(_compatibilityQueueStatusMessage, Severity.Warning);
         return Task.CompletedTask;
     }
@@ -2267,6 +2328,11 @@ else
             return "Needs scan";
         }
 
+        if (IsLanguageIssueRequiringManualRemediation())
+        {
+            return "Manual remediation required";
+        }
+
         return _compatibilityRecommendation.SafeToQueue
             ? "Needs attention"
             : "Needs review";
@@ -2342,6 +2408,16 @@ else
             ];
         }
 
+        if (IsLanguageIssueRequiringManualRemediation())
+        {
+            return
+            [
+                new("Analyze this file", true, false),
+                new("Review the profile comparison", false, false),
+                new("Choose which action to take", false, true)
+            ];
+        }
+
         if (_compatibilityRecommendation.SafeToQueue)
         {
             return
@@ -2358,28 +2434,6 @@ else
             new("Review the profile comparison", false, false),
             new("Choose which action to take", false, true)
         ];
-    }
-
-    private string GetRemediationV2BestActionLabel()
-    {
-        if (_compatibilityRecommendation is null)
-        {
-            return "Analyze file";
-        }
-
-        if (_compatibilityJobs.Any(x => string.Equals(x.Status, "Running", StringComparison.OrdinalIgnoreCase)))
-        {
-            return "Let the current fix finish";
-        }
-
-        if (_compatibilityJobs.Any(x => string.Equals(x.Status, "Queued", StringComparison.OrdinalIgnoreCase)))
-        {
-            return "Let the queued fix run";
-        }
-
-        return string.IsNullOrWhiteSpace(_compatibilityRecommendation.BestActionLabel)
-            ? (_compatibilityRecommendation.SafeToQueue ? "Convert this file" : "Review manually")
-            : _compatibilityRecommendation.BestActionLabel;
     }
 
     private string GetRemediationV2CurrentFileRiskLabel()
@@ -2410,6 +2464,11 @@ else
             return _compatibilityRecommendation.UserDecisionSummary;
         }
 
+        if (IsLanguageIssueRequiringManualRemediation())
+        {
+            return "MediaCloud cannot safely auto-fix a wrong-language report yet. Decide how to handle the audio-language issue after you confirm whether the preferred track is missing, mis-tagged, or just not selected by default.";
+        }
+
         if (!_compatibilityRecommendation.SafeToQueue)
         {
             return "This would need a full video conversion, so MediaCloud wants a human review before doing anything.";
@@ -2417,6 +2476,100 @@ else
 
         return "This looks like a lower-risk compatibility fix that MediaCloud can queue without changing the original file automatically.";
     }
+
+    private IReadOnlyList<LibraryIssueDto> GetOpenRemediationIssues()
+        => _issues
+            .Where(x => string.Equals(x.Status, "Open", StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(x => x.ReportedAtUtc ?? x.LastDetectedAtUtc)
+            .ThenByDescending(x => x.Id)
+            .ToList();
+
+    private string BuildRemediationIssueContextSummary(LibraryIssueDto issue)
+    {
+        var summary = string.IsNullOrWhiteSpace(issue.Summary)
+            ? GetIssueTypeLabel(issue.IssueType)
+            : issue.Summary.Trim();
+        var notes = string.IsNullOrWhiteSpace(issue.IssueNotes)
+            ? string.Empty
+            : $" Notes: {issue.IssueNotes.Trim()}";
+        var reportedAt = issue.ReportedAtUtc ?? issue.FirstDetectedAtUtc;
+        return $"{summary}.{notes} Reported {FormatIssueTimestamp(reportedAt)}.";
+    }
+
+    private string BuildRemediationIssueFitSummary()
+    {
+        if (HasOpenIssueType("audio_wrong_during_playback") && (_item?.AudioLanguages?.Contains("eng", StringComparer.OrdinalIgnoreCase) ?? false))
+        {
+            return "MediaCloud already sees English audio metadata on this file, so the reported wrong-language behavior may be default-track selection, stream-order drift, or bad metadata. A compatibility rebuild only helps if it deliberately rewrites stream defaults/metadata; otherwise a replacement or metadata fix is safer.";
+        }
+
+        if (HasOpenIssueType("audio_wrong_during_playback"))
+        {
+            return "An audio-language report should bias remediation, but it should not auto-queue a conversion blindly. MediaCloud should verify whether the preferred language track is actually missing before treating conversion as the fix.";
+        }
+
+        if (HasOpenIssueType("subtitle_unusable"))
+        {
+            return "Subtitle reports should steer remediation toward subtitle replacement or subtitle-specific cleanup first, not assume a generic compatibility conversion solves it.";
+        }
+
+        if (HasOpenIssueType("device_specific_issue") || HasOpenIssueType("resume_starts_over") || HasOpenIssueType("seeking_issue"))
+        {
+            return "This looks partly client- or playback-behavior-specific, so MediaCloud should treat the report as evidence, not as proof that a file conversion is the right fix.";
+        }
+
+        return "Open reported issues should stay visible inside remediation so operators can judge whether the recommended file action actually addresses the complaint.";
+    }
+
+    private bool HasOpenIssueType(string issueType)
+        => GetOpenRemediationIssues().Any(x => string.Equals(x.IssueType, issueType, StringComparison.OrdinalIgnoreCase));
+
+    private bool IsLanguageIssueRequiringManualRemediation()
+        => HasOpenIssueType("audio_wrong_during_playback");
+
+    private string GetRemediationV2PrimaryActionLabel()
+        => "Request better file";
+
+    private string GetRemediationV2SecondaryActionLabel()
+        => IsLanguageIssueRequiringManualRemediation()
+            ? "Leave as-is (possible client/default-track issue)"
+            : "Leave as-is";
+
+    private string GetRemediationV2TertiaryActionLabel()
+        => IsLanguageIssueRequiringManualRemediation()
+            ? "Attempt conversion anyway"
+            : "Convert anyway";
+
+    private bool GetRemediationV2ShowDecisionButtons()
+        => _compatibilityRecommendation is not null
+            && !_compatibilityJobs.Any(x => string.Equals(x.Status, "Running", StringComparison.OrdinalIgnoreCase))
+            && !_compatibilityJobs.Any(x => string.Equals(x.Status, "Queued", StringComparison.OrdinalIgnoreCase))
+            && (IsLanguageIssueRequiringManualRemediation() || !_compatibilityRecommendation.SafeToQueue);
+
+    private string GetRemediationV2CurrentActionSummary()
+        => IsLanguageIssueRequiringManualRemediation()
+            ? "Choose how to handle the audio-language issue."
+            : "Choose which remediation path to take.";
+
+    private string GetRemediationV2CurrentActionHelpText()
+        => IsLanguageIssueRequiringManualRemediation()
+            ? "Decide how to handle the audio-language issue."
+            : "Choose the remediation path that best matches how risky the current file is.";
+
+    private string GetRemediationV2PrimaryActionEffectText()
+        => IsLanguageIssueRequiringManualRemediation()
+            ? "Ask MediaCloud to request a different release because this file likely needs a better source."
+            : "Queue a replacement search for a different release instead of forcing a conversion on the current file.";
+
+    private string GetRemediationV2SecondaryActionEffectText()
+        => IsLanguageIssueRequiringManualRemediation()
+            ? "Do not queue a replacement or conversion. Use this when the file likely already has the right audio and the problem is client-side or default-track selection."
+            : "Do not queue a replacement or conversion. Use this when the current file is acceptable enough to leave alone for now.";
+
+    private string GetRemediationV2TertiaryActionEffectText()
+        => IsLanguageIssueRequiringManualRemediation()
+            ? "Do not auto-fix this. Keep it on the manual operator path only if you still want to force a generic conversion review."
+            : "Do not replace the file. Keep this on the manual operator path if you still want to force a one-off conversion review.";
 
     private static string GetRemediationHistoryActionLabel(LibraryRemediationJobDto job)
     {
