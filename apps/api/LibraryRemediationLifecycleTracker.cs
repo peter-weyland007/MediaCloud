@@ -539,7 +539,7 @@ public static class LibraryRemediationLifecycleTracker
                 : runtimeDelta.HasValue
                     ? (false, true, "Replacement imported, but the runtime issue is still present after verification.")
                     : (false, false, "Replacement imported. Runtime verification is waiting for a fresh ffprobe result."),
-            "corrupt_file" or "playback_failure" => !hasFreshPlayabilityEvidence
+            "corrupt_file" or "playback_failure" or "media_compatibility" => !hasFreshPlayabilityEvidence
                 ? (false, false, "Replacement imported. Verification is waiting for a fresh playability probe.")
                 : playability is "good" or "excellent"
                     ? (true, false, "Replacement imported and verification passed: playability is now healthy.")

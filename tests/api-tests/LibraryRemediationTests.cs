@@ -989,6 +989,45 @@ public sealed class LibraryRemediationTests
     }
 
     [Fact]
+    public void RefreshLiveState_resolves_media_compatibility_job_when_playability_becomes_healthy()
+    {
+        var requestedAt = new DateTimeOffset(2026, 4, 29, 1, 0, 0, TimeSpan.Zero);
+        var checkedAt = requestedAt.AddHours(3);
+        var job = new api.Models.LibraryRemediationJob
+        {
+            Status = "SearchQueued",
+            SearchStatus = "Queued",
+            BlacklistStatus = "Skipped",
+            ReleaseSummary = "Old.Release.1080p-GROUP · HD-1080p",
+            RequestedAtUtc = requestedAt,
+            IssueType = "media_compatibility",
+            Reason = "request_better_file"
+        };
+        var item = new api.Models.LibraryItem
+        {
+            UpdatedAtUtc = requestedAt.AddHours(2),
+            SourceUpdatedAtUtc = requestedAt.AddHours(2),
+            PlayabilityScore = "excellent",
+            PlayabilityCheckedAtUtc = requestedAt.AddHours(2).AddMinutes(5),
+            PrimaryFilePath = "/movies/New.Release.4K-GROUP.mkv",
+            QualityProfile = "UHD"
+        };
+
+        var changed = LibraryRemediationJobLiveState.Refresh(job, item, null, "New.Release.4K-GROUP", checkedAt);
+
+        Assert.True(changed);
+        Assert.Equal("Resolved", job.Status);
+        Assert.Equal("Completed", job.SearchStatus);
+        Assert.Equal("Verified", job.VerificationStatus);
+        Assert.Contains("playability is now healthy", job.VerificationSummary, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("NotNeeded", job.LoopbackStatus);
+        Assert.Equal(checkedAt, job.LastCheckedAtUtc);
+        Assert.Equal(checkedAt, job.VerificationCheckedAtUtc);
+        Assert.Equal(checkedAt, job.FinishedAtUtc);
+        Assert.Contains("verification passed", job.OutcomeSummary, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void RefreshLiveState_keeps_existing_terminal_finished_time()
     {
         var requestedAt = new DateTimeOffset(2026, 4, 9, 15, 0, 0, TimeSpan.Zero);
