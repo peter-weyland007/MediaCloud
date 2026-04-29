@@ -1,6 +1,7 @@
 @inject ApiAuthClient AuthClient
 @inject NavigationManager NavigationManager
-@implements IDisposable
+@inject IJSRuntime JSRuntime
+@implements IAsyncDisposable
 
 <nav class="nav-menu">
     <AuthorizeView>
@@ -8,20 +9,30 @@
             <NavLink class="nav-link" href="" Match="NavLinkMatch.All">Dashboard</NavLink>
             <NavLink class="nav-link" href="definitions">Definitions</NavLink>
 
-            <button type="button" class="nav-link nav-parent" @onclick="ToggleMediaGroup" aria-expanded="@_mediaExpanded" aria-controls="media-subitems">
+            <button type="button" class="nav-link nav-parent" @onclick="ToggleMediaGroupAsync" aria-expanded="@_mediaExpanded" aria-controls="media-subitems">
                 <span>Media</span>
                 <span class="nav-chevron">@(_mediaExpanded ? "▾" : "▸")</span>
             </button>
             <div id="media-subitems" class="nav-subitems @(_mediaExpanded ? "expanded" : "collapsed")" role="group" aria-label="Media sections">
-                <NavLink class="nav-link nav-sublink" href="media/recent">Recently Added</NavLink>
                 <NavLink class="nav-link nav-sublink" href="media/movies">Movies</NavLink>
                 <NavLink class="nav-link nav-sublink" href="media/tv-shows">TV Shows</NavLink>
                 <NavLink class="nav-link nav-sublink" href="media/music">Music</NavLink>
             </div>
 
+            <button type="button" class="nav-link nav-parent" @onclick="ToggleOperationsGroupAsync" aria-expanded="@_operationsExpanded" aria-controls="operations-subitems">
+                <span>Operations</span>
+                <span class="nav-chevron">@(_operationsExpanded ? "▾" : "▸")</span>
+            </button>
+            <div id="operations-subitems" class="nav-subitems @(_operationsExpanded ? "expanded" : "collapsed")" role="group" aria-label="Operations sections">
+                <NavLink class="nav-link nav-sublink" href="media/recent">Recently Added</NavLink>
+                <NavLink class="nav-link nav-sublink" href="media/requests">Requests</NavLink>
+                <AuthorizeView Roles="Admin" Context="adminState">
+                    <NavLink class="nav-link nav-sublink" href="issues">Issues</NavLink>
+                    <NavLink class="nav-link nav-sublink" href="remediation">Remediation</NavLink>
+                </AuthorizeView>
+            </div>
+
             <AuthorizeView Roles="Admin" Context="adminState">
-                <NavLink class="nav-link" href="issues">Issues</NavLink>
-                <NavLink class="nav-link" href="remediation">Remediation</NavLink>
                 <NavLink class="nav-link" href="settings">Settings</NavLink>
             </AuthorizeView>
 
@@ -35,34 +46,117 @@
 
 @code {
     private bool _mediaExpanded;
+    private bool _operationsExpanded;
+    private bool _menuStateLoaded;
+    private IJSObjectReference? _menuStateModule;
 
     protected override void OnInitialized()
     {
-        SetMediaExpandedFromCurrentRoute();
+        ApplyRouteDefaults(NavigationManager.Uri);
         NavigationManager.LocationChanged += HandleLocationChanged;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+        {
+            return;
+        }
+
+        await LoadMenuStateAsync();
+    }
+
+    private async Task LoadMenuStateAsync()
+    {
+        try
+        {
+            _menuStateModule ??= await JSRuntime.InvokeAsync<IJSObjectReference>("import", "./nav-menu-state.js");
+            var state = await _menuStateModule.InvokeAsync<NavMenuStateDto>("getMenuState");
+
+            if (state.MediaExpanded.HasValue)
+            {
+                _mediaExpanded = state.MediaExpanded.Value;
+            }
+
+            if (state.OperationsExpanded.HasValue)
+            {
+                _operationsExpanded = state.OperationsExpanded.Value;
+            }
+        }
+        catch (JSDisconnectedException)
+        {
+        }
+        finally
+        {
+            _menuStateLoaded = true;
+            await InvokeAsync(StateHasChanged);
+        }
     }
 
     private void HandleLocationChanged(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs e)
     {
-        if (IsMediaRoute(e.Location) && !_mediaExpanded)
+        if (_menuStateLoaded)
         {
-            _mediaExpanded = true;
-            _ = InvokeAsync(StateHasChanged);
+            return;
+        }
+
+        ApplyRouteDefaults(e.Location);
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    private async Task ToggleMediaGroupAsync()
+    {
+        _mediaExpanded = !_mediaExpanded;
+        await PersistMenuStateAsync();
+    }
+
+    private async Task ToggleOperationsGroupAsync()
+    {
+        _operationsExpanded = !_operationsExpanded;
+        await PersistMenuStateAsync();
+    }
+
+    private async Task PersistMenuStateAsync()
+    {
+        try
+        {
+            _menuStateModule ??= await JSRuntime.InvokeAsync<IJSObjectReference>("import", "./nav-menu-state.js");
+            await _menuStateModule.InvokeVoidAsync("setMenuState", _mediaExpanded, _operationsExpanded);
+        }
+        catch (JSDisconnectedException)
+        {
         }
     }
 
-    private void ToggleMediaGroup() => _mediaExpanded = !_mediaExpanded;
+    private void ApplyRouteDefaults(string absoluteUri)
+    {
+        _mediaExpanded = IsMediaContentRoute(absoluteUri);
+        _operationsExpanded = IsOperationsRoute(absoluteUri);
+    }
 
-    private void SetMediaExpandedFromCurrentRoute() => _mediaExpanded = IsMediaRoute(NavigationManager.Uri);
-
-    private static bool IsMediaRoute(string absoluteUri)
+    private static bool IsMediaContentRoute(string absoluteUri)
     {
         if (!Uri.TryCreate(absoluteUri, UriKind.Absolute, out var uri))
         {
             return false;
         }
 
-        return uri.AbsolutePath.StartsWith("/media", StringComparison.OrdinalIgnoreCase);
+        return uri.AbsolutePath.StartsWith("/media/movies", StringComparison.OrdinalIgnoreCase)
+            || uri.AbsolutePath.StartsWith("/media/tv-shows", StringComparison.OrdinalIgnoreCase)
+            || uri.AbsolutePath.StartsWith("/media/music", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsOperationsRoute(string absoluteUri)
+    {
+        if (!Uri.TryCreate(absoluteUri, UriKind.Absolute, out var uri))
+        {
+            return false;
+        }
+
+        return uri.AbsolutePath.StartsWith("/media/recent", StringComparison.OrdinalIgnoreCase)
+            || uri.AbsolutePath.StartsWith("/media/requests", StringComparison.OrdinalIgnoreCase)
+            || uri.AbsolutePath.StartsWith("/issues", StringComparison.OrdinalIgnoreCase)
+            || uri.AbsolutePath.StartsWith("/remediation", StringComparison.OrdinalIgnoreCase);
     }
 
     private async Task LogoutAsync()
@@ -71,8 +165,25 @@
         NavigationManager.NavigateTo("/login", forceLoad: false);
     }
 
-    public void Dispose()
+    public async ValueTask DisposeAsync()
     {
         NavigationManager.LocationChanged -= HandleLocationChanged;
+
+        if (_menuStateModule is not null)
+        {
+            try
+            {
+                await _menuStateModule.DisposeAsync();
+            }
+            catch (JSDisconnectedException)
+            {
+            }
+        }
+    }
+
+    private sealed class NavMenuStateDto
+    {
+        public bool? MediaExpanded { get; set; }
+        public bool? OperationsExpanded { get; set; }
     }
 }
