@@ -1,0 +1,645 @@
+@page "/media/requests"
+@attribute [Authorize]
+@inject HttpClient Http
+@inject AuthorizedApiRequestFactory RequestFactory
+@inject ISnackbar Snackbar
+@using System.Net.Http.Json
+@using web.Services.Auth
+
+<PageTitle>Requests</PageTitle>
+
+<div style="display:flex; justify-content:space-between; align-items:flex-start; gap:0.85rem; flex-wrap:wrap;">
+    <div>
+        <h1 style="margin:0;">Requests</h1>
+        <p class="subtitle" style="margin:0.25rem 0 0;">Request new movies or shows through Overseerr, then reflect the truth back from Overseerr plus Radarr or Sonarr.</p>
+    </div>
+</div>
+
+<div class="card" style="margin:1rem 0;">
+    <p class="card-label">SEARCH TITLES</p>
+    <div class="request-filter-grid">
+        <div>
+            <label for="request-search">Search titles</label>
+            <input id="request-search" class="input" @bind="_searchText" @bind:event="oninput" placeholder="Movie or show title…" />
+        </div>
+        <div>
+            <label for="request-media-type">Media type</label>
+            <InputSelect id="request-media-type" class="input" @bind-Value="_mediaTypeFilter">
+                @foreach (var option in MediaTypeOptions)
+                {
+                    <option value="@option.Key">@option.Label</option>
+                }
+            </InputSelect>
+        </div>
+        <div style="display:flex; align-items:flex-end; gap:0.5rem;">
+            <MudButton Class="media-btn media-btn--primary" Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small" OnClick="SearchAsync" Disabled="@_loading">@(_loading ? "Searching..." : "Search")</MudButton>
+            <MudButton Class="media-btn media-btn--secondary" Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Small" OnClick="ResetAsync" Disabled="@_loading">Reset</MudButton>
+        </div>
+    </div>
+    @if (!string.IsNullOrWhiteSpace(_statusMessage))
+    {
+        <p class="card-note" style="margin:0.75rem 0 0;">@_statusMessage</p>
+    }
+</div>
+
+<div class="card request-results-panel">
+    <div class="request-results-header">
+        <div>
+            <p class="card-label">REQUEST RESULTS</p>
+            <p class="card-note" style="margin:0.25rem 0 0;">Search first, then request from MediaCloud without bypassing Overseerr.</p>
+        </div>
+        <div class="request-results-summary" aria-label="Request results summary">
+            <span class="request-summary-pill">
+                <span class="request-summary-pill-label">Results</span>
+                <strong>@_results.Count</strong>
+            </span>
+            <span class="request-summary-pill">
+                <span class="request-summary-pill-label">Actionable</span>
+                <strong>@_results.Count(x => x.CanRequest || x.CanReconcileRequest)</strong>
+            </span>
+        </div>
+    </div>
+
+    @if (_loading)
+    {
+        <p class="card-note">Searching requests…</p>
+    }
+    else if (_results.Count == 0)
+    {
+        <p class="card-note">Search for a title to populate request candidates.</p>
+    }
+    else
+    {
+        <div class="request-table-shell">
+            <div class="request-table-scroll">
+                <table class="request-table">
+                    <thead>
+                        <tr>
+                            <th>Poster</th>
+                            <th>Title</th>
+                            <th>Type</th>
+                            <th>Year</th>
+                            <th>
+                                <span class="request-header-with-help">
+                                    <span>Library</span>
+                                    <span class="request-header-help" tabindex="0" aria-label="Library column meaning">
+                                        <span aria-hidden="true">ⓘ</span>
+                                        <span class="request-header-help-popup">Shows whether MediaCloud already sees the title in your library data.</span>
+                                    </span>
+                                </span>
+                            </th>
+                            <th>
+                                <span class="request-header-with-help">
+                                    <span>Overseerr</span>
+                                    <span class="request-header-help" tabindex="0" aria-label="Overseerr column meaning">
+                                        <span aria-hidden="true">ⓘ</span>
+                                        <span class="request-header-help-popup">Shows whether Overseerr already has this title in its media catalog.</span>
+                                    </span>
+                                </span>
+                            </th>
+                            <th>
+                                <span class="request-header-with-help">
+                                    <span>Request Record</span>
+                                    <span class="request-header-help" tabindex="0" aria-label="Request record column meaning">
+                                        <span aria-hidden="true">ⓘ</span>
+                                        <span class="request-header-help-popup">Shows whether Overseerr already has a request record for this title.</span>
+                                    </span>
+                                </span>
+                            </th>
+                            <th>
+                                <span class="request-header-with-help">
+                                    <span>Downstream</span>
+                                    <span class="request-header-help" tabindex="0" aria-label="Downstream column meaning">
+                                        <span aria-hidden="true">ⓘ</span>
+                                        <span class="request-header-help-popup">Shows whether Radarr or Sonarr is already tracking this title downstream.</span>
+                                    </span>
+                                </span>
+                            </th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var row in PagedResults)
+                        {
+                            var isSubmitting = _submittingTmdbId == row.TmdbId && string.Equals(_submittingMediaType, row.MediaType, StringComparison.OrdinalIgnoreCase);
+                            <tr>
+                                <td>
+                                    <div class="request-poster-preview-trigger" tabindex="0" aria-label="Preview larger poster for @row.Title">
+                                        <img class="request-poster" src="@GetPosterUrl(row.PosterPath)" alt="@($"{row.Title} poster")" loading="lazy" />
+                                        <div class="request-poster-preview-popup" role="presentation">
+                                            <img class="request-poster-preview-image" src="@GetLargePosterUrl(row.PosterPath)" alt="@($"Larger poster for {row.Title}")" loading="lazy" />
+                                        </div>
+                                    </div>
+                                </td>
+                                <td>
+                                    <div style="display:grid; gap:0.25rem;">
+                                        <span style="font-weight:600; color:#e2e8f0;">@row.Title</span>
+                                        <span class="card-note">@row.StatusSummary</span>
+                                    </div>
+                                </td>
+                                <td>@GetMediaTypeLabel(row.MediaType)</td>
+                                <td>@(row.Year?.ToString() ?? "—")</td>
+                                <td><span style="@GetStateBadgeStyle(row.AlreadyInLibrary, row.AlreadyInLibrary ? "success" : "muted")">@(row.AlreadyInLibrary ? "In library" : "Not in library")</span></td>
+                                <td><span style="@GetStateBadgeStyle(row.InOverseerrMedia, row.InOverseerrMedia ? "success" : "muted")">@GetOverseerrStateLabel(row)</span></td>
+                                <td><span style="@GetStateBadgeStyle(row.AlreadyRequested || row.CanReconcileRequest || row.InOverseerrMedia, row.AlreadyRequested ? "success" : row.CanReconcileRequest || row.InOverseerrMedia ? "warn" : "muted")">@(row.AlreadyRequested ? "Already requested" : row.CanReconcileRequest || row.InOverseerrMedia ? "No request record" : "Not requested")</span></td>
+                                <td><span style="@GetStateBadgeStyle(row.AlreadyInArr, row.AlreadyInArr ? "success" : "muted")">@GetDownstreamStateLabel(row)</span></td>
+                                <td>
+                                    <MudButton Class="media-btn media-btn--primary" Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small" OnClick="() => SubmitRequestAsync(row)" Disabled="@IsRequestActionDisabled(row, isSubmitting)">@(isSubmitting ? "Requesting..." : GetRequestActionLabel(row))</MudButton>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="request-results-footer">
+                <div class="request-results-footer-range">
+                    Showing @PageStartDisplay-@PageEndDisplay of @_results.Count
+                </div>
+                <div class="request-results-footer-controls">
+                    <label for="request-page-size" class="request-page-size-label">Rows per page</label>
+                    <select id="request-page-size" class="input request-page-size-select" @onchange="OnPageSizeChanged">
+                        @foreach (var option in PageSizeOptions)
+                        {
+                            <option value="@option" selected="@(option == _pageSize)">@option</option>
+                        }
+                    </select>
+                    <MudButton Class="media-btn media-btn--secondary" Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Small" OnClick="PreviousPage" Disabled="@(_pageIndex == 0)">Previous</MudButton>
+                    <span class="request-page-indicator">Page @(CurrentPageNumber) of @TotalPages</span>
+                    <MudButton Class="media-btn media-btn--secondary" Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Small" OnClick="NextPage" Disabled="@(_pageIndex >= TotalPages - 1)">Next</MudButton>
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+<style>
+    .request-filter-grid {
+        display: grid;
+        grid-template-columns: minmax(280px, 2fr) minmax(180px, 1fr) auto;
+        gap: 0.75rem;
+        align-items: end;
+    }
+
+    .request-results-panel {
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+    }
+
+    .request-table-shell {
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+        max-height: clamp(256px, calc(100vh - 25.25rem), 456px);
+        border: 1px solid rgba(51, 65, 85, 0.9);
+        border-radius: 0.75rem;
+        background: rgba(11, 18, 32, 0.95);
+        margin-top: 0.9rem;
+        overflow: hidden;
+    }
+
+    .request-table-scroll {
+        min-height: 0;
+        overflow: auto;
+        flex: 1 1 auto;
+    }
+
+    .request-results-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 0.85rem;
+        flex-wrap: wrap;
+    }
+
+    .request-results-summary {
+        display: flex;
+        gap: 0.6rem;
+        align-items: stretch;
+        flex-wrap: wrap;
+    }
+
+    .request-summary-pill {
+        display: inline-grid;
+        gap: 0.08rem;
+        min-width: 112px;
+        padding: 0.55rem 0.75rem;
+        border-radius: 0.75rem;
+        border: 1px solid rgba(51, 65, 85, 0.85);
+        background: rgba(15, 23, 42, 0.78);
+        color: #e2e8f0;
+    }
+
+    .request-summary-pill strong {
+        font-size: 1.1rem;
+        line-height: 1.1;
+    }
+
+    .request-summary-pill-label {
+        font-size: 0.7rem;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: #94a3b8;
+    }
+
+    .request-table {
+        width: 100%;
+        border-collapse: collapse;
+        min-width: 980px;
+    }
+
+    .request-table thead th {
+        position: sticky;
+        top: 0;
+        background: rgba(15, 23, 42, 0.96);
+        z-index: 1;
+        text-align: left;
+        font-size: 0.78rem;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: #94a3b8;
+        padding: 0.75rem;
+        border-bottom: 1px solid rgba(51, 65, 85, 0.85);
+    }
+
+    .request-header-with-help {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+    }
+
+    .request-header-help {
+        position: relative;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 1rem;
+        height: 1rem;
+        border-radius: 999px;
+        border: 1px solid rgba(100, 116, 139, 0.85);
+        background: rgba(15, 23, 42, 0.96);
+        color: #cbd5e1;
+        font-size: 0.72rem;
+        line-height: 1;
+        cursor: help;
+        text-transform: none;
+        outline: none;
+    }
+
+    .request-header-help-popup {
+        position: absolute;
+        top: calc(100% + 0.45rem);
+        left: 50%;
+        transform: translateX(-50%);
+        width: 220px;
+        padding: 0.55rem 0.65rem;
+        border-radius: 0.65rem;
+        border: 1px solid rgba(71, 85, 105, 0.9);
+        background: rgba(15, 23, 42, 0.98);
+        box-shadow: 0 18px 40px rgba(2, 6, 23, 0.45);
+        color: #e2e8f0;
+        font-size: 0.74rem;
+        font-weight: 500;
+        line-height: 1.35;
+        letter-spacing: normal;
+        text-transform: none;
+        white-space: normal;
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+        transition: opacity 0.14s ease, visibility 0.14s ease;
+        z-index: 30;
+    }
+
+    .request-header-help:hover .request-header-help-popup,
+    .request-header-help:focus .request-header-help-popup,
+    .request-header-help:focus-within .request-header-help-popup {
+        opacity: 1;
+        visibility: visible;
+    }
+
+    .request-table thead th:first-child,
+    .request-table tbody td:first-child {
+        width: 68px;
+    }
+
+    .request-poster {
+        width: 48px;
+        height: 72px;
+        object-fit: cover;
+        border-radius: 0.4rem;
+        border: 1px solid rgba(51, 65, 85, 0.85);
+        background: rgba(15, 23, 42, 0.96);
+        display: block;
+    }
+
+    .request-poster-preview-trigger {
+        position: relative;
+        display: inline-block;
+        line-height: 0;
+        cursor: zoom-in;
+        outline: none;
+    }
+
+    .request-poster-preview-popup {
+        position: absolute;
+        left: calc(100% + 0.75rem);
+        top: 50%;
+        transform: translateY(-50%);
+        padding: 0.4rem;
+        border-radius: 0.7rem;
+        border: 1px solid rgba(71, 85, 105, 0.85);
+        background: rgba(15, 23, 42, 0.98);
+        box-shadow: 0 18px 40px rgba(2, 6, 23, 0.55);
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+        transition: opacity 0.14s ease, visibility 0.14s ease;
+        z-index: 20;
+    }
+
+    .request-poster-preview-trigger:hover .request-poster-preview-popup,
+    .request-poster-preview-trigger:focus .request-poster-preview-popup,
+    .request-poster-preview-trigger:focus-within .request-poster-preview-popup {
+        opacity: 1;
+        visibility: visible;
+    }
+
+    .request-poster-preview-image {
+        width: 160px;
+        height: 240px;
+        object-fit: cover;
+        border-radius: 0.45rem;
+        display: block;
+        background: rgba(15, 23, 42, 0.96);
+    }
+
+    .request-table tbody td {
+        padding: 0.75rem;
+        border-bottom: 1px solid rgba(30, 41, 59, 0.8);
+        vertical-align: middle;
+    }
+
+    .request-table tbody tr:hover {
+        background: rgba(30, 41, 59, 0.35);
+    }
+
+    .request-results-footer {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 0.85rem;
+        flex-wrap: wrap;
+        padding: 0.75rem 0.9rem;
+        border-top: 1px solid rgba(51, 65, 85, 0.85);
+        background: rgba(15, 23, 42, 0.98);
+    }
+
+    .request-results-footer-range {
+        color: #cbd5e1;
+        font-size: 0.9rem;
+    }
+
+    .request-results-footer-controls {
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+        flex-wrap: wrap;
+    }
+
+    .request-page-size-label,
+    .request-page-indicator {
+        color: #94a3b8;
+        font-size: 0.82rem;
+    }
+
+    .request-page-size-select {
+        width: 84px;
+        min-width: 84px;
+        padding-right: 2rem;
+    }
+
+    @@media (max-width: 980px) {
+        .request-filter-grid {
+            grid-template-columns: 1fr;
+        }
+
+        .request-table-shell {
+            max-height: min(72vh, calc(100vh - 16rem));
+        }
+
+        .request-results-footer {
+            align-items: flex-start;
+        }
+    }
+</style>
+
+@code {
+    private string _searchText = string.Empty;
+    private string _mediaTypeFilter = "all";
+    private bool _loading;
+    private int? _submittingTmdbId;
+    private string _submittingMediaType = string.Empty;
+    private string _statusMessage = string.Empty;
+    private List<RequestSearchResultDto> _results = [];
+    private int _pageIndex;
+    private int _pageSize = 10;
+
+    private IReadOnlyList<RequestSearchResultDto> PagedResults
+        => _results.Skip(_pageIndex * _pageSize).Take(_pageSize).ToList();
+
+    private int TotalPages => Math.Max(1, (int)Math.Ceiling(_results.Count / (double)_pageSize));
+
+    private int CurrentPageNumber => TotalPages == 0 ? 0 : _pageIndex + 1;
+
+    private int PageStartDisplay => _results.Count == 0 ? 0 : (_pageIndex * _pageSize) + 1;
+
+    private int PageEndDisplay => _results.Count == 0 ? 0 : Math.Min(_results.Count, ((_pageIndex + 1) * _pageSize));
+
+    private static readonly int[] PageSizeOptions = [10, 20, 50];
+
+    private static readonly (string Key, string Label)[] MediaTypeOptions =
+    [
+        ("all", "All"),
+        ("movie", "Movie"),
+        ("tv", "TV")
+    ];
+
+    private async Task ResetAsync()
+    {
+        _searchText = string.Empty;
+        _mediaTypeFilter = "all";
+        _results.Clear();
+        _statusMessage = string.Empty;
+        _pageIndex = 0;
+        await Task.CompletedTask;
+    }
+
+    private async Task SearchAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_searchText))
+        {
+            _results.Clear();
+            _statusMessage = "Enter a title first.";
+            return;
+        }
+
+        _loading = true;
+        _statusMessage = string.Empty;
+        try
+        {
+            using var request = await RequestFactory.CreateAsync(HttpMethod.Get, $"/api/requests/search?q={Uri.EscapeDataString(_searchText.Trim())}&mediaType={Uri.EscapeDataString(_mediaTypeFilter)}");
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                _results.Clear();
+                _statusMessage = await response.Content.ReadAsStringAsync();
+                Snackbar.Add("Request search failed.", Severity.Error);
+                return;
+            }
+
+            _results = await response.Content.ReadFromJsonAsync<List<RequestSearchResultDto>>() ?? [];
+            _pageIndex = 0;
+            _statusMessage = _results.Count == 0
+                ? "No request candidates matched that search."
+                : $"Loaded {_results.Count} request candidate(s).";
+        }
+        catch (Exception ex)
+        {
+            _results.Clear();
+            _statusMessage = ex.Message;
+            Snackbar.Add("Request search failed.", Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task SubmitRequestAsync(RequestSearchResultDto row)
+    {
+        _submittingTmdbId = row.TmdbId;
+        _submittingMediaType = row.MediaType;
+        try
+        {
+            using var request = await RequestFactory.CreateAsync(HttpMethod.Post, "/api/requests", new CreateMediaRequestRequest(row.MediaType, row.TmdbId));
+            using var response = await Http.SendAsync(request);
+            var body = await response.Content.ReadAsStringAsync();
+            var payload = string.IsNullOrWhiteSpace(body)
+                ? null
+                : System.Text.Json.JsonSerializer.Deserialize<CreateMediaRequestResponse>(body, new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web));
+            if (!response.IsSuccessStatusCode || payload is null)
+            {
+                var message = string.IsNullOrWhiteSpace(body) ? "Request submit failed." : body;
+                Snackbar.Add(message, Severity.Error);
+                return;
+            }
+
+            Snackbar.Add(payload.Message, payload.Success ? Severity.Success : Severity.Warning);
+            await SearchAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Request submit failed: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _submittingTmdbId = null;
+            _submittingMediaType = string.Empty;
+        }
+    }
+
+    private void OnPageSizeChanged(ChangeEventArgs args)
+    {
+        if (args.Value is not null && int.TryParse(args.Value.ToString(), out var parsed) && PageSizeOptions.Contains(parsed))
+        {
+            _pageSize = parsed;
+            _pageIndex = 0;
+        }
+    }
+
+    private void PreviousPage()
+    {
+        if (_pageIndex > 0)
+        {
+            _pageIndex--;
+        }
+    }
+
+    private void NextPage()
+    {
+        if (_pageIndex < TotalPages - 1)
+        {
+            _pageIndex++;
+        }
+    }
+
+    private static string GetMediaTypeLabel(string mediaType)
+        => string.Equals(mediaType, "tv", StringComparison.OrdinalIgnoreCase) ? "TV" : "Movie";
+
+    private static string GetDownstreamStateLabel(RequestSearchResultDto row)
+        => row.AlreadyInArr
+            ? (string.Equals(row.MediaType, "tv", StringComparison.OrdinalIgnoreCase) ? "Tracked in Sonarr" : "Tracked in Radarr")
+            : "Not tracked";
+
+    private static string GetOverseerrStateLabel(RequestSearchResultDto row)
+        => row.InOverseerrMedia ? "Present in Overseerr" : "Not in Overseerr";
+
+    private static bool IsRequestActionDisabled(RequestSearchResultDto row, bool isSubmitting)
+        => isSubmitting || (!row.CanRequest && !row.CanReconcileRequest);
+
+    private static string GetRequestActionLabel(RequestSearchResultDto row)
+        => row.CanReconcileRequest ? "Create request record" : row.CanRequest ? "Request" : "No request action";
+
+    private static string GetPosterUrl(string? posterPath)
+        => string.IsNullOrWhiteSpace(posterPath)
+            ? "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='48' height='72' viewBox='0 0 48 72'%3E%3Crect width='48' height='72' rx='6' fill='%230f172a'/%3E%3Cpath d='M14 22h20v28H14z' fill='%231e293b' stroke='%23334155'/%3E%3Ccircle cx='20' cy='30' r='4' fill='%23334155'/%3E%3Cpath d='M16 46l6-6 5 5 4-4 3 5v2H16z' fill='%23334155'/%3E%3C/svg%3E"
+            : $"https://image.tmdb.org/t/p/w92{posterPath}";
+
+    private static string GetLargePosterUrl(string? posterPath)
+        => string.IsNullOrWhiteSpace(posterPath)
+            ? "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='240' viewBox='0 0 160 240'%3E%3Crect width='160' height='240' rx='12' fill='%230f172a'/%3E%3Cpath d='M42 68h76v104H42z' fill='%231e293b' stroke='%23334155' stroke-width='3'/%3E%3Ccircle cx='68' cy='100' r='14' fill='%23334155'/%3E%3Cpath d='M50 158l24-24 20 20 16-16 18 22v8H50z' fill='%23334155'/%3E%3C/svg%3E"
+            : $"https://image.tmdb.org/t/p/w342{posterPath}";
+
+    private static string GetStateBadgeStyle(bool active, string kind)
+    {
+        if (!active)
+        {
+            return "display:inline-flex; align-items:center; padding:0.14rem 0.45rem; border-radius:999px; font-size:0.72rem; font-weight:700; border:1px solid rgba(71,85,105,0.55); background:rgba(30,41,59,0.45); color:#cbd5e1; text-transform:uppercase; letter-spacing:0.04em;";
+        }
+
+        return kind switch
+        {
+            "success" => "display:inline-flex; align-items:center; padding:0.14rem 0.45rem; border-radius:999px; font-size:0.72rem; font-weight:700; border:1px solid rgba(34,197,94,0.45); background:rgba(21,128,61,0.18); color:#bbf7d0; text-transform:uppercase; letter-spacing:0.04em;",
+            "warn" => "display:inline-flex; align-items:center; padding:0.14rem 0.45rem; border-radius:999px; font-size:0.72rem; font-weight:700; border:1px solid rgba(250,204,21,0.45); background:rgba(161,98,7,0.18); color:#fde68a; text-transform:uppercase; letter-spacing:0.04em;",
+            _ => "display:inline-flex; align-items:center; padding:0.14rem 0.45rem; border-radius:999px; font-size:0.72rem; font-weight:700; border:1px solid rgba(71,85,105,0.55); background:rgba(30,41,59,0.45); color:#cbd5e1; text-transform:uppercase; letter-spacing:0.04em;"
+        };
+    }
+
+    private sealed record RequestSearchResultDto(
+        string MediaType,
+        int TmdbId,
+        string Title,
+        int? Year,
+        string PosterPath,
+        string Overview,
+        bool AlreadyRequested,
+        bool AlreadyInLibrary,
+        bool AlreadyInArr,
+        bool CanRequest,
+        string StatusSummary,
+        bool CanReconcileRequest,
+        bool InOverseerrMedia);
+
+    private sealed record CreateMediaRequestRequest(string MediaType, int TmdbId);
+
+    private sealed record CreateMediaRequestResponse(
+        bool Success,
+        string Message,
+        string MediaType,
+        int TmdbId,
+        bool CreatedOverseerrRequest,
+        bool RefreshedOverseerr,
+        bool RefreshedDownstream);
+}

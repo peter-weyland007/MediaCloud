@@ -980,6 +980,158 @@ app.MapGet("/api/integration-services", () =>
     return Results.Ok(services);
 }).RequireAuthorization("AdminOnly");
 
+app.MapGet("/api/requests/search", async (string? q, string? mediaType, MediaCloudDbContext db, IHttpClientFactory httpClientFactory) =>
+{
+    var query = (q ?? string.Empty).Trim();
+    if (string.IsNullOrWhiteSpace(query) || query.Length < 2)
+    {
+        return Results.Ok(Array.Empty<RequestSearchResultDto>());
+    }
+
+    var normalizedMediaType = (mediaType ?? string.Empty).Trim().ToLowerInvariant();
+    if (string.IsNullOrWhiteSpace(normalizedMediaType))
+    {
+        normalizedMediaType = "all";
+    }
+
+    if (normalizedMediaType is not ("all" or "movie" or "tv"))
+    {
+        return Results.BadRequest(new ErrorResponse("Media type must be all, movie, or tv."));
+    }
+
+    try
+    {
+        var results = await SearchRequestCandidatesAsync(query, normalizedMediaType, db, httpClientFactory);
+        return Results.Ok(results);
+    }
+    catch (InvalidOperationException ex)
+    {
+        return Results.BadRequest(new ErrorResponse(ex.Message));
+    }
+}).RequireAuthorization();
+
+app.MapPost("/api/requests", async (CreateMediaRequestRequest request, MediaCloudDbContext db, IHttpClientFactory httpClientFactory) =>
+{
+    var normalizedMediaType = (request.MediaType ?? string.Empty).Trim().ToLowerInvariant();
+    if (normalizedMediaType is not ("movie" or "tv"))
+    {
+        return Results.BadRequest(new ErrorResponse("Media type must be movie or tv."));
+    }
+
+    if (request.TmdbId <= 0)
+    {
+        return Results.BadRequest(new ErrorResponse("TMDB id must be greater than zero."));
+    }
+
+    var overseerr = await GetEnabledIntegrationByServiceAsync(db, "overseerr");
+    if (overseerr is null)
+    {
+        return Results.BadRequest(new ErrorResponse("No enabled Overseerr integration configured."));
+    }
+
+    var requestState = await GetRequestSubmissionStateAsync(normalizedMediaType, request.TmdbId, db, httpClientFactory);
+    if (requestState.AlreadyRequested)
+    {
+        return Results.Ok(new CreateMediaRequestResponse(false, "Already requested in Overseerr.", normalizedMediaType, request.TmdbId, false, false, false));
+    }
+
+    if (requestState.InOverseerrMedia)
+    {
+        return Results.Ok(new CreateMediaRequestResponse(false, "Already present in Overseerr media with no request record to create.", normalizedMediaType, request.TmdbId, false, false, false));
+    }
+
+    if (!requestState.CanRequest && !requestState.CanReconcileRequest)
+    {
+        return Results.Ok(new CreateMediaRequestResponse(false, requestState.BlockedReason, normalizedMediaType, request.TmdbId, false, false, false));
+    }
+
+    ExternalBackfillActionResult requestResult;
+    if (normalizedMediaType == "movie")
+    {
+        var candidate = new PlexBackfillCandidateDto(0, string.Empty, null, request.TmdbId, string.Empty, false, true, false, true, string.Empty);
+        requestResult = await EnsureMovieRequestedInOverseerrAsync(candidate, overseerr, httpClientFactory);
+    }
+    else if (normalizedMediaType == "tv")
+    {
+        requestResult = await EnsureTelevisionRequestedInOverseerrAsync(request.TmdbId, overseerr, httpClientFactory);
+    }
+    else
+    {
+        requestResult = new ExternalBackfillActionResult(false, false, "Unsupported media type.");
+    }
+
+    if (!requestResult.Success)
+    {
+        return Results.Ok(new CreateMediaRequestResponse(false, requestResult.Message, normalizedMediaType, request.TmdbId, false, false, false));
+    }
+
+    var refreshedOverseerr = false;
+    var refreshedDownstream = false;
+    var warnings = new List<string>();
+
+    var overseerrSyncOutcome = await SyncSingleIntegrationNowAsync(overseerr, db, httpClientFactory,
+        runtimeToleranceMinutesFloorKey,
+        runtimeTolerancePercentKey,
+        runtimeWarningPercentKey,
+        runtimeHighMinutesKey,
+        runtimeCriticalPercentKey,
+        runtimeCriticalMinutesKey,
+        runtimeToleranceMinutesFloorDefault,
+        runtimeTolerancePercentDefault,
+        runtimeWarningPercentDefault,
+        runtimeHighMinutesDefault,
+        runtimeCriticalPercentDefault,
+        runtimeCriticalMinutesDefault,
+        runtimeMismatchIssueType,
+        runtimePolicyVersion);
+    refreshedOverseerr = overseerrSyncOutcome.Success;
+    if (!overseerrSyncOutcome.Success)
+    {
+        warnings.Add($"Overseerr refresh failed: {overseerrSyncOutcome.Message}");
+    }
+
+    var downstreamServiceKey = normalizedMediaType == "movie" ? "radarr" : "sonarr";
+    var downstreamIntegration = await GetEnabledIntegrationByServiceAsync(db, downstreamServiceKey);
+    if (downstreamIntegration is null)
+    {
+        warnings.Add($"No enabled {IntegrationCatalog.GetName(downstreamServiceKey)} integration configured for downstream refresh.");
+    }
+    else
+    {
+        var downstreamSyncOutcome = await SyncSingleIntegrationNowAsync(downstreamIntegration, db, httpClientFactory,
+            runtimeToleranceMinutesFloorKey,
+            runtimeTolerancePercentKey,
+            runtimeWarningPercentKey,
+            runtimeHighMinutesKey,
+            runtimeCriticalPercentKey,
+            runtimeCriticalMinutesKey,
+            runtimeToleranceMinutesFloorDefault,
+            runtimeTolerancePercentDefault,
+            runtimeWarningPercentDefault,
+            runtimeHighMinutesDefault,
+            runtimeCriticalPercentDefault,
+            runtimeCriticalMinutesDefault,
+            runtimeMismatchIssueType,
+            runtimePolicyVersion);
+        refreshedDownstream = downstreamSyncOutcome.Success;
+        if (!downstreamSyncOutcome.Success)
+        {
+            warnings.Add($"{IntegrationCatalog.GetName(downstreamServiceKey)} refresh failed: {downstreamSyncOutcome.Message}");
+        }
+    }
+
+    var createdText = requestResult.PerformedAction
+        ? (requestState.CanReconcileRequest
+            ? "Created Overseerr request to reconcile downstream state."
+            : "Created Overseerr request.")
+        : requestResult.Message;
+    var hadWarnings = warnings.Count > 0;
+    var message = hadWarnings
+        ? $"{createdText} {string.Join(' ', warnings)}"
+        : $"{createdText} Refreshed Overseerr and downstream state.";
+
+    return Results.Ok(new CreateMediaRequestResponse(!hadWarnings, message, normalizedMediaType, request.TmdbId, requestResult.PerformedAction, refreshedOverseerr, refreshedDownstream));
+}).RequireAuthorization();
 app.MapGet("/api/integrations", async (MediaCloudDbContext db, IHttpClientFactory httpClientFactory) =>
 {
     var rows = await db.IntegrationConfigs.OrderBy(x => x.ServiceKey).ThenBy(x => x.InstanceName).ToListAsync();
@@ -5935,6 +6087,400 @@ static async Task SetMonitoringAutoSyncEnabledAsync(MediaCloudDbContext db, bool
     setting.UpdatedAtUtc = now;
 }
 
+static async Task<IReadOnlyList<RequestSearchResultDto>> SearchRequestCandidatesAsync(
+    string query,
+    string mediaType,
+    MediaCloudDbContext db,
+    IHttpClientFactory httpClientFactory)
+{
+    var overseerr = await GetEnabledIntegrationByServiceAsync(db, "overseerr");
+    if (overseerr is null)
+    {
+        throw new InvalidOperationException("No enabled Overseerr integration configured.");
+    }
+
+    var normalizedMediaType = (mediaType ?? string.Empty).Trim().ToLowerInvariant();
+    var results = await SearchOverseerrCandidatesAsync(overseerr, query, httpClientFactory);
+    var requestedMovies = await FetchOverseerrRequestTmdbIdsAsync(overseerr, "movie", httpClientFactory);
+    var requestedTelevision = await FetchOverseerrRequestTmdbIdsAsync(overseerr, "tv", httpClientFactory);
+    var radarr = await GetEnabledIntegrationByServiceAsync(db, "radarr");
+    var sonarr = await GetEnabledIntegrationByServiceAsync(db, "sonarr");
+    var trackedRadarrMovies = radarr is null
+        ? new HashSet<int>()
+        : await FetchTrackedRadarrTmdbIdsAsync(radarr, httpClientFactory);
+    var trackedSonarrSeries = sonarr is null
+        ? new HashSet<int>()
+        : await FetchTrackedSonarrTmdbIdsAsync(sonarr, httpClientFactory);
+
+    var items = new List<RequestSearchResultDto>();
+    foreach (var row in results)
+    {
+        var rowMediaType = (GetJsonString(row, "mediaType") ?? string.Empty).Trim().ToLowerInvariant();
+        if (rowMediaType is not ("movie" or "tv"))
+        {
+            continue;
+        }
+
+        if (normalizedMediaType != "all" && !string.Equals(normalizedMediaType, rowMediaType, StringComparison.OrdinalIgnoreCase))
+        {
+            continue;
+        }
+
+        var tmdbId = GetJsonInt(row, "id");
+        if (!tmdbId.HasValue || tmdbId.Value <= 0)
+        {
+            continue;
+        }
+
+        var title = rowMediaType == "movie"
+            ? (GetJsonString(row, "title") ?? GetJsonString(row, "originalTitle") ?? string.Empty)
+            : (GetJsonString(row, "name") ?? GetJsonString(row, "originalName") ?? string.Empty);
+        if (string.IsNullOrWhiteSpace(title))
+        {
+            continue;
+        }
+
+        var year = TryExtractYearFromRequestSearchResult(row, rowMediaType);
+        var posterPath = GetJsonString(row, "posterPath") ?? string.Empty;
+        var overview = GetJsonString(row, "overview") ?? string.Empty;
+        var alreadyRequested = rowMediaType == "movie"
+            ? requestedMovies.Contains(tmdbId.Value)
+            : requestedTelevision.Contains(tmdbId.Value);
+        var alreadyInLibrary = rowMediaType == "movie"
+            ? await db.LibraryItems.AnyAsync(x => x.MediaType == "Movie" && x.TmdbId == tmdbId.Value)
+            : await db.LibraryItems.AnyAsync(x => x.MediaType == "Series" && x.TmdbId == tmdbId.Value);
+
+        var alreadyInArr = false;
+        if (rowMediaType == "movie")
+        {
+            alreadyInArr = trackedRadarrMovies.Contains(tmdbId.Value) || OverseerrMediaInfoSuggestsDownstreamTracking(row);
+        }
+        else
+        {
+            alreadyInArr = trackedSonarrSeries.Contains(tmdbId.Value) || OverseerrMediaInfoSuggestsDownstreamTracking(row);
+        }
+
+        var inOverseerrMedia = OverseerrMediaExists(row);
+        var canRequest = !alreadyRequested && !alreadyInLibrary && !alreadyInArr;
+        var canReconcileRequest = !alreadyRequested && alreadyInArr && !inOverseerrMedia;
+        var statusSummary = BuildRequestStatusSummary(rowMediaType, alreadyRequested, alreadyInLibrary, alreadyInArr, inOverseerrMedia, canReconcileRequest);
+        items.Add(new RequestSearchResultDto(rowMediaType, tmdbId.Value, title, year, posterPath, overview, alreadyRequested, alreadyInLibrary, alreadyInArr, canRequest, statusSummary, canReconcileRequest, inOverseerrMedia));
+
+        if (items.Count >= 20)
+        {
+            break;
+        }
+    }
+
+    return items;
+}
+
+static async Task<List<JsonElement>> SearchOverseerrCandidatesAsync(IntegrationConfig overseerr, string query, IHttpClientFactory httpClientFactory)
+{
+    var client = httpClientFactory.CreateClient();
+    client.Timeout = TimeSpan.FromSeconds(20);
+    using var request = new HttpRequestMessage(HttpMethod.Get, $"{overseerr.BaseUrl.TrimEnd('/')}/api/v1/search?query={Uri.EscapeDataString(query)}&page=1&language=en");
+    ApplyIntegrationAuthHeaders(overseerr, request);
+    request.Headers.UserAgent.ParseAdd("MediaCloud/1.0");
+    request.Headers.Accept.ParseAdd("application/json");
+    using var response = await client.SendAsync(request);
+    if (!response.IsSuccessStatusCode)
+    {
+        var body = await response.Content.ReadAsStringAsync();
+        throw new InvalidOperationException(string.IsNullOrWhiteSpace(body)
+            ? $"Overseerr search failed with HTTP {(int)response.StatusCode}."
+            : $"Overseerr search failed: {body[..Math.Min(180, body.Length)]}");
+    }
+
+    var bodyText = await response.Content.ReadAsStringAsync();
+    using var doc = JsonDocument.Parse(bodyText);
+    if (!doc.RootElement.TryGetProperty("results", out var results) || results.ValueKind != JsonValueKind.Array)
+    {
+        throw new InvalidOperationException("Overseerr search returned an unexpected payload.");
+    }
+
+    return results.EnumerateArray().Select(x => x.Clone()).ToList();
+}
+
+static async Task<HashSet<int>> FetchOverseerrRequestTmdbIdsAsync(IntegrationConfig overseerr, string mediaType, IHttpClientFactory httpClientFactory)
+{
+    var ids = new HashSet<int>();
+    var client = httpClientFactory.CreateClient();
+    client.Timeout = TimeSpan.FromSeconds(20);
+    const int pageSize = 500;
+    var skip = 0;
+
+    while (true)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"{overseerr.BaseUrl.TrimEnd('/')}/api/v1/request?take={pageSize}&skip={skip}");
+        ApplyIntegrationAuthHeaders(overseerr, request);
+        request.Headers.UserAgent.ParseAdd("MediaCloud/1.0");
+        using var response = await client.SendAsync(request);
+        if (!response.IsSuccessStatusCode)
+        {
+            var body = await response.Content.ReadAsStringAsync();
+            throw new InvalidOperationException(string.IsNullOrWhiteSpace(body)
+                ? $"Overseerr request-state refresh failed with HTTP {(int)response.StatusCode}."
+                : $"Overseerr request-state refresh failed: {body[..Math.Min(180, body.Length)]}");
+        }
+
+        var bodyText = await response.Content.ReadAsStringAsync();
+        using var doc = JsonDocument.Parse(bodyText);
+        if (!doc.RootElement.TryGetProperty("results", out var results) || results.ValueKind != JsonValueKind.Array)
+        {
+            throw new InvalidOperationException("Overseerr request-state refresh returned an unexpected payload.");
+        }
+
+        var count = 0;
+        foreach (var row in results.EnumerateArray())
+        {
+            count++;
+            if (!row.TryGetProperty("media", out var media) || media.ValueKind != JsonValueKind.Object)
+            {
+                continue;
+            }
+
+            var requestMediaType = (GetJsonString(media, "mediaType") ?? string.Empty).Trim().ToLowerInvariant();
+            if (!string.Equals(requestMediaType, mediaType, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var tmdbId = GetJsonInt(media, "tmdbId");
+            if (tmdbId.HasValue && tmdbId.Value > 0)
+            {
+                ids.Add(tmdbId.Value);
+            }
+        }
+
+        if (count < pageSize)
+        {
+            break;
+        }
+
+        skip += pageSize;
+    }
+
+    return ids;
+}
+
+static async Task<HashSet<int>> FetchTrackedRadarrTmdbIdsAsync(IntegrationConfig radarr, IHttpClientFactory httpClientFactory)
+{
+    var ids = new HashSet<int>();
+    var client = httpClientFactory.CreateClient();
+    client.Timeout = TimeSpan.FromSeconds(30);
+    using var request = new HttpRequestMessage(HttpMethod.Get, $"{radarr.BaseUrl.TrimEnd('/')}/api/v3/movie");
+    ApplyIntegrationAuthHeaders(radarr, request);
+    request.Headers.UserAgent.ParseAdd("MediaCloud/1.0");
+    using var response = await client.SendAsync(request);
+    if (!response.IsSuccessStatusCode)
+    {
+        var body = await response.Content.ReadAsStringAsync();
+        throw new InvalidOperationException(string.IsNullOrWhiteSpace(body)
+            ? $"Radarr tracked-state refresh failed with HTTP {(int)response.StatusCode}."
+            : $"Radarr tracked-state refresh failed: {body[..Math.Min(180, body.Length)]}");
+    }
+
+    var bodyText = await response.Content.ReadAsStringAsync();
+    using var doc = JsonDocument.Parse(bodyText);
+    if (doc.RootElement.ValueKind != JsonValueKind.Array)
+    {
+        throw new InvalidOperationException("Radarr tracked-state refresh returned an unexpected payload.");
+    }
+
+    foreach (var row in doc.RootElement.EnumerateArray())
+    {
+        var tmdbId = GetJsonInt(row, "tmdbId");
+        if (tmdbId.HasValue && tmdbId.Value > 0)
+        {
+            ids.Add(tmdbId.Value);
+        }
+    }
+
+    return ids;
+}
+
+static async Task<HashSet<int>> FetchTrackedSonarrTmdbIdsAsync(IntegrationConfig sonarr, IHttpClientFactory httpClientFactory)
+{
+    var ids = new HashSet<int>();
+    var client = httpClientFactory.CreateClient();
+    client.Timeout = TimeSpan.FromSeconds(30);
+    using var request = new HttpRequestMessage(HttpMethod.Get, $"{sonarr.BaseUrl.TrimEnd('/')}/api/v3/series");
+    ApplyIntegrationAuthHeaders(sonarr, request);
+    request.Headers.UserAgent.ParseAdd("MediaCloud/1.0");
+    using var response = await client.SendAsync(request);
+    if (!response.IsSuccessStatusCode)
+    {
+        var body = await response.Content.ReadAsStringAsync();
+        throw new InvalidOperationException(string.IsNullOrWhiteSpace(body)
+            ? $"Sonarr tracked-state refresh failed with HTTP {(int)response.StatusCode}."
+            : $"Sonarr tracked-state refresh failed: {body[..Math.Min(180, body.Length)]}");
+    }
+
+    var bodyText = await response.Content.ReadAsStringAsync();
+    using var doc = JsonDocument.Parse(bodyText);
+    if (doc.RootElement.ValueKind != JsonValueKind.Array)
+    {
+        throw new InvalidOperationException("Sonarr tracked-state refresh returned an unexpected payload.");
+    }
+
+    foreach (var row in doc.RootElement.EnumerateArray())
+    {
+        var tmdbId = GetJsonInt(row, "tmdbId");
+        if (tmdbId.HasValue && tmdbId.Value > 0)
+        {
+            ids.Add(tmdbId.Value);
+        }
+    }
+
+    return ids;
+}
+
+static int? TryExtractYearFromRequestSearchResult(JsonElement row, string mediaType)
+{
+    var value = mediaType == "movie"
+        ? GetJsonString(row, "releaseDate")
+        : GetJsonString(row, "firstAirDate");
+
+    if (DateTimeOffset.TryParse(value, out var parsed))
+    {
+        return parsed.Year;
+    }
+
+    return null;
+}
+
+static bool OverseerrMediaExists(JsonElement row)
+{
+    return row.TryGetProperty("mediaInfo", out var mediaInfo) && mediaInfo.ValueKind == JsonValueKind.Object;
+}
+
+static bool OverseerrMediaInfoSuggestsDownstreamTracking(JsonElement row)
+{
+    if (!row.TryGetProperty("mediaInfo", out var mediaInfo) || mediaInfo.ValueKind != JsonValueKind.Object)
+    {
+        return false;
+    }
+
+    var externalServiceId = GetJsonInt(mediaInfo, "externalServiceId") ?? GetJsonInt(mediaInfo, "externalServiceId4k");
+    if (externalServiceId.HasValue && externalServiceId.Value > 0)
+    {
+        return true;
+    }
+
+    return !string.IsNullOrWhiteSpace(GetJsonString(mediaInfo, "serviceUrl"))
+        || !string.IsNullOrWhiteSpace(GetJsonString(mediaInfo, "serviceUrl4k"))
+        || !string.IsNullOrWhiteSpace(GetJsonString(mediaInfo, "externalServiceSlug"))
+        || !string.IsNullOrWhiteSpace(GetJsonString(mediaInfo, "externalServiceSlug4k"));
+}
+
+static string BuildRequestStatusSummary(string mediaType, bool alreadyRequested, bool alreadyInLibrary, bool alreadyInArr, bool inOverseerrMedia, bool canReconcileRequest)
+{
+    if (alreadyRequested)
+    {
+        return "Already requested in Overseerr.";
+    }
+
+    if (inOverseerrMedia)
+    {
+        return "Present in Overseerr media but missing a request record.";
+    }
+
+    if (canReconcileRequest)
+    {
+        return string.Equals(mediaType, "tv", StringComparison.OrdinalIgnoreCase)
+            ? "Tracked in Sonarr but missing an Overseerr request record."
+            : "Tracked in Radarr but missing an Overseerr request record.";
+    }
+
+    if (alreadyInLibrary)
+    {
+        return "Already present in the MediaCloud library.";
+    }
+
+    if (alreadyInArr)
+    {
+        return string.Equals(mediaType, "tv", StringComparison.OrdinalIgnoreCase)
+            ? "Already tracked downstream in Sonarr or equivalent TV workflow."
+            : "Already tracked downstream in Radarr.";
+    }
+
+    return "Ready to request through Overseerr.";
+}
+
+static async Task<RequestSubmissionState> GetRequestSubmissionStateAsync(string mediaType, int tmdbId, MediaCloudDbContext db, IHttpClientFactory httpClientFactory)
+{
+    var normalizedMediaType = (mediaType ?? string.Empty).Trim().ToLowerInvariant();
+    var alreadyInLibrary = normalizedMediaType == "movie"
+        ? await db.LibraryItems.AnyAsync(x => x.MediaType == "Movie" && x.TmdbId == tmdbId)
+        : await db.LibraryItems.AnyAsync(x => x.MediaType == "Series" && x.TmdbId == tmdbId);
+
+    var overseerr = await GetEnabledIntegrationByServiceAsync(db, "overseerr");
+    var alreadyRequested = false;
+    var inOverseerrMedia = false;
+    if (overseerr is not null)
+    {
+        var requestedIds = await FetchOverseerrRequestTmdbIdsAsync(overseerr, normalizedMediaType, httpClientFactory);
+        alreadyRequested = requestedIds.Contains(tmdbId);
+        inOverseerrMedia = await OverseerrMediaExistsAsync(overseerr, normalizedMediaType, tmdbId, httpClientFactory);
+    }
+
+    var downstreamServiceKey = normalizedMediaType == "movie" ? "radarr" : "sonarr";
+    var downstreamIntegration = await GetEnabledIntegrationByServiceAsync(db, downstreamServiceKey);
+    var trackedIds = downstreamIntegration is null
+        ? new HashSet<int>()
+        : normalizedMediaType == "movie"
+            ? await FetchTrackedRadarrTmdbIdsAsync(downstreamIntegration, httpClientFactory)
+            : await FetchTrackedSonarrTmdbIdsAsync(downstreamIntegration, httpClientFactory);
+    var alreadyInArr = trackedIds.Contains(tmdbId);
+
+    var canRequest = !alreadyRequested && !alreadyInLibrary && !alreadyInArr;
+    var canReconcileRequest = !alreadyRequested && alreadyInArr && !inOverseerrMedia;
+
+    var blockedReason = alreadyRequested
+        ? "Already requested in Overseerr."
+        : inOverseerrMedia
+            ? "Already present in Overseerr media with no request record to create."
+            : canReconcileRequest
+                ? string.Empty
+                : alreadyInLibrary
+                    ? "Already in library with no missing Overseerr request to reconcile."
+                    : alreadyInArr
+                        ? "Already tracked downstream."
+                        : "Not eligible for an Overseerr request.";
+
+    return new RequestSubmissionState(alreadyRequested, alreadyInLibrary, alreadyInArr, canRequest, canReconcileRequest, blockedReason, inOverseerrMedia);
+}
+
+static async Task<bool> OverseerrMediaExistsAsync(IntegrationConfig overseerr, string mediaType, int tmdbId, IHttpClientFactory httpClientFactory)
+{
+    if (tmdbId <= 0)
+    {
+        return false;
+    }
+
+    var normalizedMediaType = (mediaType ?? string.Empty).Trim().ToLowerInvariant();
+    if (normalizedMediaType is not ("movie" or "tv"))
+    {
+        return false;
+    }
+
+    try
+    {
+        var client = httpClientFactory.CreateClient();
+        client.Timeout = TimeSpan.FromSeconds(20);
+        var routeSegment = normalizedMediaType == "movie" ? "movie" : "tv";
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"{overseerr.BaseUrl.TrimEnd('/')}/api/v1/{routeSegment}/{tmdbId}");
+        ApplyIntegrationAuthHeaders(overseerr, request);
+        using var response = await client.SendAsync(request);
+        return response.IsSuccessStatusCode;
+    }
+    catch
+    {
+        return false;
+    }
+}
+
 static async Task<bool> OverseerrHasMovieRequestAsync(IntegrationConfig? overseerr, int? tmdbId, IHttpClientFactory httpClientFactory)
 {
     if (overseerr is null || !tmdbId.HasValue || tmdbId.Value <= 0) return false;
@@ -7057,6 +7603,51 @@ static async Task<ExternalBackfillActionResult> EnsureMovieInRadarrAsync(PlexBac
     return new ExternalBackfillActionResult(true, true, "Added to Radarr.");
 }
 
+static async Task<ExternalBackfillActionResult> EnsureTelevisionRequestedInOverseerrAsync(int tmdbId, IntegrationConfig overseerr, IHttpClientFactory httpClientFactory)
+{
+    if (tmdbId <= 0)
+    {
+        return new ExternalBackfillActionResult(false, false, "Missing TMDB id.");
+    }
+
+    var client = httpClientFactory.CreateClient();
+    client.Timeout = TimeSpan.FromSeconds(30);
+
+    var payload = new
+    {
+        mediaType = "tv",
+        mediaId = tmdbId,
+        is4k = false,
+        seasons = "all"
+    };
+
+    using var req = new HttpRequestMessage(HttpMethod.Post, $"{overseerr.BaseUrl.TrimEnd('/')}/api/v1/request")
+    {
+        Content = JsonContent.Create(payload)
+    };
+    ApplyIntegrationAuthHeaders(overseerr, req);
+    req.Headers.UserAgent.ParseAdd("MediaCloud/1.0");
+    using var response = await client.SendAsync(req);
+    var body = await response.Content.ReadAsStringAsync();
+
+    if (IsSuccessfulOverseerrRequestResponse(response.StatusCode, body))
+    {
+        return new ExternalBackfillActionResult(true, true, "Created Overseerr request.");
+    }
+
+    if ((int)response.StatusCode == 409 || body.Contains("already", StringComparison.OrdinalIgnoreCase))
+    {
+        return new ExternalBackfillActionResult(true, false, "Already requested in Overseerr.");
+    }
+
+    if (body.Contains("No seasons available to request", StringComparison.OrdinalIgnoreCase))
+    {
+        return new ExternalBackfillActionResult(false, false, "Overseerr did not create a request: no seasons are available to request.");
+    }
+
+    return new ExternalBackfillActionResult(false, false, string.IsNullOrWhiteSpace(body) ? $"HTTP {(int)response.StatusCode}" : body[..Math.Min(180, body.Length)]);
+}
+
 static async Task<ExternalBackfillActionResult> EnsureMovieRequestedInOverseerrAsync(PlexBackfillCandidateDto candidate, IntegrationConfig overseerr, IHttpClientFactory httpClientFactory)
 {
     if (!candidate.TmdbId.HasValue || candidate.TmdbId.Value <= 0)
@@ -7080,19 +7671,32 @@ static async Task<ExternalBackfillActionResult> EnsureMovieRequestedInOverseerrA
     };
     ApplyIntegrationAuthHeaders(overseerr, req);
     using var response = await client.SendAsync(req);
+    var body = await response.Content.ReadAsStringAsync();
 
-    if (response.IsSuccessStatusCode)
+    if (IsSuccessfulOverseerrRequestResponse(response.StatusCode, body))
     {
         return new ExternalBackfillActionResult(true, true, "Created Overseerr request.");
     }
 
-    var body = await response.Content.ReadAsStringAsync();
     if ((int)response.StatusCode == 409 || body.Contains("already", StringComparison.OrdinalIgnoreCase))
     {
         return new ExternalBackfillActionResult(true, false, "Already requested in Overseerr.");
     }
 
     return new ExternalBackfillActionResult(false, false, string.IsNullOrWhiteSpace(body) ? $"HTTP {(int)response.StatusCode}" : body[..Math.Min(180, body.Length)]);
+}
+
+static bool IsSuccessfulOverseerrRequestResponse(System.Net.HttpStatusCode statusCode, string? body)
+{
+    if ((int)statusCode == 202)
+    {
+        return !string.IsNullOrWhiteSpace(body)
+            && !body.Contains("No seasons available to request", StringComparison.OrdinalIgnoreCase)
+            && !body.Contains("already", StringComparison.OrdinalIgnoreCase)
+            && !body.Contains("error", StringComparison.OrdinalIgnoreCase);
+    }
+
+    return (int)statusCode >= 200 && (int)statusCode < 300;
 }
 
 static void ApplyIntegrationAuthHeaders(IntegrationConfig integration, HttpRequestMessage request)
@@ -8622,6 +9226,10 @@ public record LibraryIssuePageResponse(IReadOnlyList<LibraryIssueDto> Items, int
 public record LibraryRemediationTransactionDto(long Id, long LibraryItemId, string LibraryItemTitle, string MediaType, int? Year, string ServiceKey, string ServiceDisplayName, string RequestedAction, string CommandName, string IssueType, string Reason, string Status, string SearchStatus, string VerificationStatus, string ProviderCommandStatus, string OutcomeSummary, string ResultMessage, string RequestedBy, DateTimeOffset RequestedAtUtc, DateTimeOffset? FinishedAtUtc, DateTimeOffset? LastCheckedAtUtc, DateTimeOffset? ProviderCommandCheckedAtUtc, DateTimeOffset UpdatedAtUtc);
 public record LibraryRemediationTransactionPageResponse(IReadOnlyList<LibraryRemediationTransactionDto> Items, int TotalCount, int PageIndex, int PageSize, IReadOnlyList<string> AvailableServices, IReadOnlyList<string> AvailableStatuses, IReadOnlyList<string> AvailableVerificationStatuses, IReadOnlyList<string> AvailableRequestedBy);
 public record IntegrationServiceResponse(string ServiceKey, string DisplayName, bool RequiresAuth, IReadOnlyList<string> AllowedAuthTypes);
+public record RequestSearchResultDto(string MediaType, int TmdbId, string Title, int? Year, string PosterPath, string Overview, bool AlreadyRequested, bool AlreadyInLibrary, bool AlreadyInArr, bool CanRequest, string StatusSummary, bool CanReconcileRequest, bool InOverseerrMedia);
+public record RequestSubmissionState(bool AlreadyRequested, bool AlreadyInLibrary, bool AlreadyInArr, bool CanRequest, bool CanReconcileRequest, string BlockedReason, bool InOverseerrMedia);
+public record CreateMediaRequestRequest(string MediaType, int TmdbId);
+public record CreateMediaRequestResponse(bool Success, string Message, string MediaType, int TmdbId, bool CreatedOverseerrRequest, bool RefreshedOverseerr, bool RefreshedDownstream);
 public record CreateIntegrationInstanceRequest(string ServiceKey, string InstanceName, string BaseUrl, string AuthType, string ApiKey, string Username, string Password, bool Enabled);
 public record UpdateIntegrationInstanceRequest(string InstanceName, string BaseUrl, string AuthType, string ApiKey, string Username, string Password, bool Enabled);
 public record IntegrationInstanceResponse(long Id, string ServiceKey, string DisplayName, string InstanceName, string BaseUrl, string AuthType, string ApiKey, string Username, string Password, bool Enabled, DateTimeOffset? UpdatedAtUtc, string CurrentVersion, string LatestReleaseVersion, string RoleSummary, DateTimeOffset? LastAttemptedAtUtc, DateTimeOffset? LastSuccessfulAtUtc, string LastError, int ConsecutiveFailureCount, bool SupportsSync, ProwlarrSummaryResponse? ProwlarrSummary);
