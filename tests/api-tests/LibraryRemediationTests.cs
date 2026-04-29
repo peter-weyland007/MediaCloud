@@ -785,6 +785,36 @@ public sealed class LibraryRemediationTests
     }
 
     [Fact]
+    public void EvaluateLifecycle_resolves_imported_media_compatibility_job_when_playability_is_already_healthy()
+    {
+        var requestedAt = new DateTimeOffset(2026, 4, 29, 1, 0, 0, TimeSpan.Zero);
+        var job = new api.Models.LibraryRemediationJob
+        {
+            Status = "Processing",
+            SearchStatus = "Imported",
+            BlacklistStatus = "Skipped",
+            OutcomeSummary = "Radarr imported a replacement. MediaCloud is waiting for source refresh and verification.",
+            RequestedAtUtc = requestedAt,
+            IssueType = "media_compatibility",
+            Reason = "request_better_file"
+        };
+        var item = new api.Models.LibraryItem
+        {
+            UpdatedAtUtc = requestedAt.AddHours(2),
+            SourceUpdatedAtUtc = requestedAt.AddHours(2),
+            PlayabilityScore = "excellent",
+            PlayabilityCheckedAtUtc = requestedAt.AddHours(2).AddMinutes(5)
+        };
+
+        var snapshot = LibraryRemediationLifecycleTracker.Evaluate(job, item, null, null);
+
+        Assert.Equal("Resolved", snapshot.Status);
+        Assert.Equal("Completed", snapshot.SearchStatus);
+        Assert.Equal("Verified", snapshot.VerificationStatus);
+        Assert.Contains("playability is now healthy", snapshot.VerificationSummary, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void EvaluateLifecycle_marks_job_resolved_when_related_issue_is_closed()
     {
         var requestedAt = new DateTimeOffset(2026, 4, 9, 15, 0, 0, TimeSpan.Zero);

@@ -113,9 +113,44 @@ public static class LibraryRemediationLifecycleTracker
                 checkedAt);
         }
 
-        if (IsImportedStatus(searchStatus)
-            && !ReleaseChangedAfterRequest(job, item, latestContext))
+        if (IsImportedStatus(searchStatus))
         {
+            if (ItemUpdatedAfterRequest(item, job.RequestedAtUtc))
+            {
+                var verification = VerifyIssueAfterReplacement(job.IssueType, item, relatedIssue);
+                if (verification.IsVerified)
+                {
+                    return new(
+                        "Resolved",
+                        "Completed",
+                        blacklistStatus,
+                        verification.Message,
+                        "Verified",
+                        verification.Message,
+                        BuildVerificationDetailsJson(job.IssueType, item, relatedIssue, "Resolved", verification.Message),
+                        "NotNeeded",
+                        "Verification passed; no repeat remediation is recommended.",
+                        checkedAt,
+                        checkedAt);
+                }
+
+                if (verification.ShouldMarkFailed)
+                {
+                    return new(
+                        "VerificationFailed",
+                        "Completed",
+                        blacklistStatus,
+                        verification.Message,
+                        "Failed",
+                        verification.Message,
+                        BuildVerificationDetailsJson(job.IssueType, item, relatedIssue, "VerificationFailed", verification.Message),
+                        "Recommended",
+                        BuildLoopbackSummary(job, verification.Message),
+                        checkedAt,
+                        checkedAt);
+                }
+            }
+
             const string summary = "Radarr imported a replacement. MediaCloud is waiting for source refresh and verification.";
             return new(
                 "Processing",
