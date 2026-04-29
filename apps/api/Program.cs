@@ -381,6 +381,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS IX_WatchHistoryEntries_Item_Source_External ON
     EnsureSqliteColumn(db, "LibraryRemediationJobs", "VerificationCheckedAtUtc", "TEXT NULL");
     EnsureSqliteColumn(db, "LibraryRemediationJobs", "LoopbackStatus", "TEXT NOT NULL DEFAULT ''");
     EnsureSqliteColumn(db, "LibraryRemediationJobs", "LoopbackSummary", "TEXT NOT NULL DEFAULT ''");
+    EnsureSqliteColumn(db, "LibraryRemediationJobs", "ProgressPercent", "REAL NULL");
+    EnsureSqliteColumn(db, "LibraryRemediationJobs", "ProgressUpdatedAtUtc", "TEXT NULL");
     EnsureSqliteColumn(db, "LibraryRemediationJobs", "OperatorReviewStatus", "TEXT NOT NULL DEFAULT ''");
     EnsureSqliteColumn(db, "LibraryRemediationJobs", "OperatorReviewSummary", "TEXT NOT NULL DEFAULT ''");
     EnsureSqliteColumn(db, "LibraryRemediationJobs", "OperatorReviewedBy", "TEXT NOT NULL DEFAULT ''");
@@ -3956,6 +3958,8 @@ static LibraryRemediationJobDto MapLibraryRemediationJobDto(LibraryRemediationJo
         row.LoopbackStatus,
         row.LoopbackSummary,
         row.ReleaseSummary,
+        row.ProgressPercent,
+        row.ProgressUpdatedAtUtc,
         row.RequestedBy,
         row.RequestedAtUtc,
         row.FinishedAtUtc,
@@ -9280,7 +9284,7 @@ public record LibraryItemSourceSyncResponse(long LibraryItemId, string ServiceKe
 public record SearchReplacementRequest(string Reason, string Notes, string? IssueType = null);
 public record LibraryRemediationIntentDto(string IssueType, string RequestedAction, string ReasonCategory, string Confidence, bool ShouldSearchNow, bool ShouldBlacklistCurrentRelease, bool NeedsManualReview, bool NotesRecordedOnly, bool ApprovalRequired = false, string ApprovalReason = "", string PolicySummary = "", string NotesHandling = "", string ProfileDecision = "", string ProfileSummary = "", string PolicyState = "", string NextActionSummary = "");
 public record LibraryItemRemediationResponse(long LibraryItemId, bool Success, string ServiceKey, string ServiceDisplayName, string CommandName, int? ExternalItemId, bool LookedUpRemotely, string Reason, string Notes, string Message, LibraryRemediationIntentDto? Intent = null, string SearchStatusHint = "", int? ProviderCommandId = null, string ProviderCommandStatus = "", string ProviderCommandSummary = "");
-public record LibraryRemediationJobDto(long Id, long LibraryItemId, long? LibraryIssueId, string ServiceKey, string ServiceDisplayName, long? IntegrationId, string RequestedAction, string CommandName, int? ExternalItemId, string IssueType, string Reason, string Notes, string ReasonCategory, string Confidence, bool ShouldSearchNow, bool ShouldBlacklistCurrentRelease, bool NeedsManualReview, bool NotesRecordedOnly, bool LookedUpRemotely, string PolicySummary, string NotesHandling, string ProfileDecision, string ProfileSummary, string Status, string SearchStatus, string BlacklistStatus, string OutcomeSummary, string ResultMessage, int? ProviderCommandId, string ProviderCommandStatus, string ProviderCommandSummary, string DownloadType, DateTimeOffset? ProviderCommandCheckedAtUtc, string VerificationStatus, string VerificationSummary, DateTimeOffset? VerificationCheckedAtUtc, string LoopbackStatus, string LoopbackSummary, string ReleaseSummary, string RequestedBy, DateTimeOffset RequestedAtUtc, DateTimeOffset? FinishedAtUtc, DateTimeOffset? LastCheckedAtUtc);
+public record LibraryRemediationJobDto(long Id, long LibraryItemId, long? LibraryIssueId, string ServiceKey, string ServiceDisplayName, long? IntegrationId, string RequestedAction, string CommandName, int? ExternalItemId, string IssueType, string Reason, string Notes, string ReasonCategory, string Confidence, bool ShouldSearchNow, bool ShouldBlacklistCurrentRelease, bool NeedsManualReview, bool NotesRecordedOnly, bool LookedUpRemotely, string PolicySummary, string NotesHandling, string ProfileDecision, string ProfileSummary, string Status, string SearchStatus, string BlacklistStatus, string OutcomeSummary, string ResultMessage, int? ProviderCommandId, string ProviderCommandStatus, string ProviderCommandSummary, string DownloadType, DateTimeOffset? ProviderCommandCheckedAtUtc, string VerificationStatus, string VerificationSummary, DateTimeOffset? VerificationCheckedAtUtc, string LoopbackStatus, string LoopbackSummary, string ReleaseSummary, double? ProgressPercent, DateTimeOffset? ProgressUpdatedAtUtc, string RequestedBy, DateTimeOffset RequestedAtUtc, DateTimeOffset? FinishedAtUtc, DateTimeOffset? LastCheckedAtUtc);
 public record SetDesiredMonitoringRequest(bool DesiredMonitored);
 public record UpdateMonitoringSettingsRequest(bool ManagedByMediaCloud, bool AutoSyncEnabled);
 public record MonitoringSettingsResponse(bool ManagedByMediaCloud, bool AutoSyncEnabled);

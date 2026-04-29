@@ -42,6 +42,8 @@ public class LibraryRemediationJob
     public string LoopbackStatus { get; set; } = string.Empty;
     public string LoopbackSummary { get; set; } = string.Empty;
     public string ReleaseSummary { get; set; } = string.Empty;
+    public double? ProgressPercent { get; set; }
+    public DateTimeOffset? ProgressUpdatedAtUtc { get; set; }
     public string OperatorReviewStatus { get; set; } = string.Empty;
     public string OperatorReviewSummary { get; set; } = string.Empty;
     public string OperatorReviewedBy { get; set; } = string.Empty;

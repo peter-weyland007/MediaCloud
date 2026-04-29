@@ -1,5 +1,6 @@
 @page "/media/movies/{Id:long}"
 @attribute [Authorize]
+@implements IDisposable
 @inject HttpClient Http
 @inject ISnackbar Snackbar
 @inject AuthenticationStateProvider AuthStateProvider
@@ -485,6 +486,34 @@ else
         flex-wrap: wrap;
         gap: 0.4rem;
         align-items: center;
+    }
+
+    .movie-remediation-progress-shell {
+        display: grid;
+        gap: 0.35rem;
+        margin-top: 0.15rem;
+    }
+
+    .movie-remediation-progress-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.6rem;
+        align-items: center;
+    }
+
+    .movie-remediation-progress-bar {
+        width: 100%;
+    }
+
+    .movie-remediation-progress-text {
+        color: #e2e8f0;
+        font-size: 0.82rem;
+        font-weight: 600;
+    }
+
+    .movie-remediation-progress-heartbeat {
+        color: #94a3b8;
+        font-size: 0.76rem;
     }
 
     .movie-remediation-status-pill {
@@ -973,6 +1002,8 @@ else
     private MediaItemDetailDto? _item;
     private MediaCompatibilityRecommendationResponse? _compatibilityRecommendation;
     private readonly List<LibraryRemediationJobDto> _compatibilityJobs = [];
+    private CancellationTokenSource? _compatibilityJobPollingCts;
+    private Task? _compatibilityJobPollingTask;
     private MediaPlaybackSmokeTestResponse? _playbackSmokeTest;
     private bool _runningPlaybackSmokeTest;
     private bool _queueingCompatibilityAction;
@@ -1250,6 +1281,10 @@ else
                         <div style="display:grid; gap:0.2rem;">
                             <p class="card-label">RECENT REMEDIATION HISTORY</p>
                             <p class="card-note">The latest actions MediaCloud has already taken for this movie.</p>
+                            @if (HasActiveCompatibilityJob())
+                            {
+                                <p class="card-note">Compatibility remediation is active. MediaCloud will refresh this history automatically.</p>
+                            }
                             @if (_remediationHistoryRefreshedAtUtc.HasValue)
                             {
                                 <p class="card-note">Last refreshed: @FormatIssueTimestamp(_remediationHistoryRefreshedAtUtc.Value)</p>
@@ -1305,7 +1340,27 @@ else
                                         <span class="movie-remediation-status-pill @GetRemediationHistoryDownloadTypePillClass(job)">@GetRemediationHistoryDownloadTypeLabel(job)</span>
                                     </MudTooltip>
                                 </div>
-                                @if (!string.IsNullOrWhiteSpace(job.OutcomeSummary))
+                                @if (ShouldShowCompatibilityProgress(job))
+                                {
+                                    <div class="movie-remediation-progress-shell" role="status" aria-live="polite">
+                                        @if (IsCompatibilityProgressIndeterminate(job))
+                                        {
+                                            <MudProgressLinear Color="Color.Primary" Indeterminate="true" Rounded="true" Class="movie-remediation-progress-bar" />
+                                        }
+                                        else
+                                        {
+                                            <MudProgressLinear Color="Color.Primary" Value="@GetCompatibilityProgressPercent(job).GetValueOrDefault()" Rounded="true" Class="movie-remediation-progress-bar" />
+                                        }
+                                        <div class="movie-remediation-progress-meta">
+                                            <span class="movie-remediation-progress-text">@GetCompatibilityProgressLabel(job)</span>
+                                            @if (!string.IsNullOrWhiteSpace(GetCompatibilityProgressHeartbeat(job)))
+                                            {
+                                                <span class="movie-remediation-progress-heartbeat">@GetCompatibilityProgressHeartbeat(job)</span>
+                                            }
+                                        </div>
+                                    </div>
+                                }
+                                @if (!ShouldShowCompatibilityProgress(job) && !string.IsNullOrWhiteSpace(job.OutcomeSummary))
                                 {
                                     <p class="card-note">Outcome: @DisplayValue(job.OutcomeSummary)</p>
                                 }
@@ -1466,10 +1521,12 @@ else
                 .OrderByDescending(x => x.RequestedAtUtc)
                 .ThenByDescending(x => x.Id));
             _remediationHistoryRefreshedAtUtc = DateTimeOffset.Now;
+            SyncCompatibilityJobPolling();
         }
         catch
         {
             _compatibilityJobs.Clear();
+            StopCompatibilityJobPolling();
         }
     }
 
@@ -1490,6 +1547,74 @@ else
             _refreshingRemediationHistory = false;
         }
     }
+
+    private void SyncCompatibilityJobPolling()
+    {
+        if (HasActiveCompatibilityJob())
+        {
+            StartCompatibilityJobPolling();
+            return;
+        }
+
+        StopCompatibilityJobPolling();
+    }
+
+    private void StartCompatibilityJobPolling()
+    {
+        if (_compatibilityJobPollingTask is { IsCompleted: false })
+        {
+            return;
+        }
+
+        StopCompatibilityJobPolling();
+        _compatibilityJobPollingCts = new CancellationTokenSource();
+        _compatibilityJobPollingTask = RunCompatibilityJobPollingAsync(_compatibilityJobPollingCts.Token);
+    }
+
+    private async Task RunCompatibilityJobPollingAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(4), cancellationToken);
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    break;
+                }
+
+                await InvokeAsync(async () =>
+                {
+                    if (_refreshingRemediationHistory)
+                    {
+                        return;
+                    }
+
+                    await LoadCompatibilityJobsAsync();
+                    StateHasChanged();
+                });
+
+                if (!HasActiveCompatibilityJob())
+                {
+                    break;
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    private void StopCompatibilityJobPolling()
+    {
+        _compatibilityJobPollingCts?.Cancel();
+        _compatibilityJobPollingCts?.Dispose();
+        _compatibilityJobPollingCts = null;
+        _compatibilityJobPollingTask = null;
+    }
+
+    public void Dispose()
+        => StopCompatibilityJobPolling();
 
     private async Task QueueCompatibilityActionAsync()
     {
@@ -2569,6 +2694,42 @@ else
             ? "Do not auto-fix this. Keep it on the manual operator path only if you still want to force a generic conversion review."
             : "Do not replace the file. Keep this on the manual operator path if you still want to force a one-off conversion review.";
 
+    private bool HasActiveCompatibilityJob()
+        => _compatibilityJobs.Any(job =>
+            string.Equals(job.ServiceKey, "ffmpeg", StringComparison.OrdinalIgnoreCase)
+            && (string.Equals(job.Status, "Queued", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(job.Status, "Running", StringComparison.OrdinalIgnoreCase)));
+
+    private static bool ShouldShowCompatibilityProgress(LibraryRemediationJobDto job)
+        => string.Equals(job.ServiceKey, "ffmpeg", StringComparison.OrdinalIgnoreCase)
+           && (string.Equals(job.Status, "Queued", StringComparison.OrdinalIgnoreCase)
+               || string.Equals(job.Status, "Running", StringComparison.OrdinalIgnoreCase));
+
+    private static bool IsCompatibilityProgressIndeterminate(LibraryRemediationJobDto job)
+        => !GetCompatibilityProgressPercent(job).HasValue;
+
+    private static double? GetCompatibilityProgressPercent(LibraryRemediationJobDto job)
+        => job.ProgressPercent.HasValue
+            ? Math.Clamp(job.ProgressPercent.Value, 0d, 100d)
+            : null;
+
+    private static string GetCompatibilityProgressLabel(LibraryRemediationJobDto job)
+    {
+        if (!string.IsNullOrWhiteSpace(job.OutcomeSummary))
+        {
+            return job.OutcomeSummary;
+        }
+
+        return string.Equals(job.Status, "Queued", StringComparison.OrdinalIgnoreCase)
+            ? "Queued for the FFmpeg worker."
+            : "FFmpeg compatibility remediation is running.";
+    }
+
+    private string GetCompatibilityProgressHeartbeat(LibraryRemediationJobDto job)
+        => job.ProgressUpdatedAtUtc.HasValue
+            ? $"Last heartbeat: {FormatIssueTimestamp(job.ProgressUpdatedAtUtc.Value)}"
+            : string.Empty;
+
     private static string GetRemediationHistoryActionLabel(LibraryRemediationJobDto job)
     {
         if (job is null)
@@ -3034,6 +3195,8 @@ else
         string LoopbackStatus,
         string LoopbackSummary,
         string ReleaseSummary,
+        double? ProgressPercent,
+        DateTimeOffset? ProgressUpdatedAtUtc,
         string RequestedBy,
         DateTimeOffset RequestedAtUtc,
         DateTimeOffset? FinishedAtUtc,

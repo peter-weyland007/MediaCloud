@@ -66,6 +66,29 @@ public sealed class MediaCompatibilityWorkerQueueTests
         Assert.Equal("older", next!.Reason);
     }
 
+    [Fact]
+    public void TryBuildProgressSnapshot_parses_ffmpeg_progress_into_percent_summary_and_eta()
+    {
+        var snapshot = MediaCompatibilityExecution.TryBuildProgressSnapshot(
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["out_time"] = "00:00:30.000000",
+                ["speed"] = "2.0x",
+                ["progress"] = "continue"
+            },
+            120d);
+
+        Assert.NotNull(snapshot);
+        Assert.Equal(25d, snapshot!.Percent.GetValueOrDefault(), 3);
+        Assert.Equal(30d, snapshot.ProcessedSeconds.GetValueOrDefault(), 3);
+        Assert.Equal(120d, snapshot.TotalSeconds.GetValueOrDefault(), 3);
+        Assert.Equal(45d, snapshot.EtaSeconds.GetValueOrDefault(), 3);
+        Assert.Equal("2.0x", snapshot.Speed);
+        Assert.Contains("25%", snapshot.Summary, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("00:00:30 / 00:02:00", snapshot.Summary, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("ETA 00:00:45", snapshot.Summary, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static MediaCloudDbContext CreateDb()
     {
         var options = new DbContextOptionsBuilder<MediaCloudDbContext>()

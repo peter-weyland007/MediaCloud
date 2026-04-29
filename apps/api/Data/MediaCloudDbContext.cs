@@ -163,6 +163,7 @@ public class MediaCloudDbContext(DbContextOptions<MediaCloudDbContext> options) 
             entity.Property(x => x.LoopbackStatus).HasMaxLength(32).IsRequired();
             entity.Property(x => x.LoopbackSummary).HasMaxLength(2048).IsRequired();
             entity.Property(x => x.ReleaseSummary).HasMaxLength(512).IsRequired();
+            entity.Property(x => x.ProgressUpdatedAtUtc);
             entity.Property(x => x.OperatorReviewStatus).HasMaxLength(32).IsRequired();
             entity.Property(x => x.OperatorReviewSummary).HasMaxLength(2048).IsRequired();
             entity.Property(x => x.OperatorReviewedBy).HasMaxLength(64).IsRequired();
